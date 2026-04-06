@@ -11,7 +11,7 @@ const PERMISSIONS = {
   super_admin:  ['*'],
   hr_manager:   ['employee:*', 'attendance:*', 'payroll:*', 'leave:*', 'performance:*', 'document:*', 'recruitment:read'],
   recruiter:    ['recruitment:*', 'employee:read'],
-  employee:     ['employee:read:self', 'attendance:read:self', 'payroll:read:self', 'leave:*:self', 'document:read:self'],
+  employee:     ['employee:read:self', 'attendance:read:self', 'attendance:write:self', 'payroll:read:self', 'leave:*:self', 'document:read:self', 'performance:read:self', 'goal:read:self'],
 };
 
 function authenticateToken(req, res, next) {
@@ -40,14 +40,22 @@ function requirePermission(permission) {
   return (req, res, next) => {
     const userRole = req.user?.role;
     const perms = PERMISSIONS[userRole] || [];
+    const [reqMod, reqAction] = permission.split(':');
+
     const hasAll = perms.includes('*');
     const hasExact = perms.includes(permission);
+    // Check wildcard: employee:* matches employee:read
     const hasWildcard = perms.some(p => {
-      const [mod, action] = p.split(':');
-      const [reqMod] = permission.split(':');
-      return mod === reqMod && action === '*';
+      const parts = p.split(':');
+      return parts[0] === reqMod && parts[1] === '*';
     });
-    if (hasAll || hasExact || hasWildcard) return next();
+    // Check :self variant: attendance:read:self matches attendance:read
+    const hasSelf = perms.some(p => {
+      const parts = p.split(':');
+      return parts[0] === reqMod && (parts[1] === reqAction || parts[1] === '*') && parts[2] === 'self';
+    });
+
+    if (hasAll || hasExact || hasWildcard || hasSelf) return next();
     return res.status(403).json({ error: 'Permission denied' });
   };
 }
