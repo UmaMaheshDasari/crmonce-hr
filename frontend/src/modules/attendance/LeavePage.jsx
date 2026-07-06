@@ -236,11 +236,14 @@ function LeaveActions({ leave, user, isHR }) {
   const l1 = leave.hr_l1status;
   const l2 = leave.hr_l2status;
   const isSuperAdmin = user?.role === 'super_admin';
+  // You can never approve your own leave — hide L1/L2 buttons on your own request.
+  // (Backend already enforces this; this only corrects the button visibility.)
+  const isOwnLeave = user?.id && leave._hr_hremployee_value === user.id;
 
   const buttons = [];
 
   // L1 buttons: show when L1 is pending
-  if (l1 === 'pending') {
+  if (l1 === 'pending' && !isOwnLeave) {
     buttons.push(
       <button
         key="l1-approve"
@@ -264,7 +267,7 @@ function LeaveActions({ leave, user, isHR }) {
   }
 
   // L2 buttons: show when L2 is pending
-  if (l2 === 'pending_l2') {
+  if (l2 === 'pending_l2' && !isOwnLeave) {
     buttons.push(
       <button
         key="l2-approve"
