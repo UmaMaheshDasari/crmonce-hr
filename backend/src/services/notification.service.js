@@ -1,4 +1,5 @@
-const nodemailer = require('nodemailer');
+const axios = require('axios');
+const { ConfidentialClientApplication } = require('@azure/msal-node');
 
 let io;
 const userSockets = new Map(); // userId -> socketId
@@ -34,40 +35,89 @@ function broadcast(event, payload) {
   io?.emit(event, payload);
 }
 
-// Email transport
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587');
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_PORT === 465, // 465 = implicit TLS; 587/25 = STARTTLS
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+// ── Email transport: Microsoft Graph (app-only OAuth2 client credentials) ──
+// Reuses the existing Azure AD app registration (same credentials as D365).
+// Prerequisite: the app needs the Graph "Mail.Send" APPLICATION permission with
+// admin consent (recommended: scope it to GRAPH_SENDER via an Application Access
+// Policy). This replaces the previous Nodemailer/SMTP transport; the public
+// sendEmail(to, subject, html) contract is unchanged so all callers keep working.
+const GRAPH_SENDER = process.env.GRAPH_SENDER || 'info@crmonce.com';
+const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
+
+const graphMsal = new ConfidentialClientApplication({
+  auth: {
+    clientId: process.env.AZURE_CLIENT_ID,
+    clientSecret: process.env.AZURE_CLIENT_SECRET,
+    authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+  },
 });
 
-// Startup diagnostics — surface SMTP config/connection problems in the logs.
-// Deferred so global.logger (created later in server.js) is available.
-setImmediate(() => {
-  const log = global.logger || console;
-  const missing = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM']
-    .filter(k => !process.env[k]);
-  if (missing.length) {
-    log.warn(`SMTP not fully configured — missing: ${missing.join(', ')} (emails will NOT send)`);
-    return;
-  }
-  transporter.verify()
-    .then(() => log.info(`SMTP ready — ${process.env.SMTP_HOST}:${SMTP_PORT} as ${process.env.SMTP_USER}`))
-    .catch(err => log.error(`SMTP verify FAILED — ${process.env.SMTP_HOST}:${SMTP_PORT}: ${err.message}`));
-});
+// MSAL caches the token internally and refreshes it as needed.
+async function getGraphToken() {
+  const result = await graphMsal.acquireTokenByClientCredential({ scopes: [GRAPH_SCOPE] });
+  return result.accessToken;
+}
 
+/**
+ * Send an email via Microsoft Graph. Same signature/return shape as before so
+ * every caller (leave/late-permission notifiers, etc.) is unaffected.
+ *   to: string — a single address or a comma-separated list
+ * Best-effort: never throws; returns { success } (+ error on failure).
+ */
 async function sendEmail(to, subject, html) {
   try {
-    const info = await transporter.sendMail({ from: process.env.SMTP_FROM, to, subject, html });
-    global.logger?.info(`Email sent to ${to} — "${subject}"`);
-    return { success: true, info };
+    const toRecipients = String(to)
+      .split(',')
+      .map(a => a.trim())
+      .filter(Boolean)
+      .map(address => ({ emailAddress: { address } }));
+
+    if (toRecipients.length === 0) {
+      global.logger?.warn('Graph sendMail skipped: no recipients');
+      return { success: false, error: 'no recipients' };
+    }
+
+    const token = await getGraphToken();
+    await axios.post(
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(GRAPH_SENDER)}/sendMail`,
+      {
+        message: {
+          subject,
+          body: { contentType: 'HTML', content: html },
+          toRecipients,
+        },
+        saveToSentItems: true,
+      },
+      {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        timeout: 20000,
+      }
+    );
+
+    global.logger?.info(`Graph email sent to ${to} — "${subject}"`);
+    return { success: true };
   } catch (err) {
-    global.logger?.error(`Email send failed to ${to}: ${err.message}`);
-    return { success: false, error: err.message };
+    const msg = err.response?.data?.error?.message || err.message;
+    global.logger?.error(`Graph email failed to ${to}: ${msg}`);
+    return { success: false, error: msg };
   }
 }
+
+// Startup diagnostic — confirm app-only Graph auth is obtainable (sends no mail).
+// A successful token does NOT prove Mail.Send is granted; a missing permission
+// surfaces as a 403 on the first real send (logged by sendEmail).
+setImmediate(() => {
+  const log = global.logger || console;
+  const missing = ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET']
+    .filter(k => !process.env[k]);
+  if (missing.length) {
+    log.warn(`Graph email not configured — missing: ${missing.join(', ')} (emails will NOT send)`);
+    return;
+  }
+  getGraphToken()
+    .then(() => log.info(`Graph email ready — sender ${GRAPH_SENDER} (requires Mail.Send app permission)`))
+    .catch(err => log.error(`Graph token acquisition FAILED: ${err.message}`));
+});
 
 // Notification helpers
 async function notifyLeaveApproval(userId, status, leaveDates) {

@@ -1,47 +1,45 @@
 /**
- * Email + Super-Admin-lookup diagnostic.
+ * Email (Microsoft Graph) + Super-Admin-lookup diagnostic.
  * Run ON THE SERVER where backend/.env lives:
  *   node scripts/test-email.js                 # sends to the first Super Admin found
  *   node scripts/test-email.js you@domain.com  # sends to an explicit address
  *
- * Prints: SMTP env presence (names only), SMTP verify (connection+auth) with the
- * exact error, the D365 Super Admin lookup result, and a real test send.
- * Does NOT print secret values.
+ * Prints: Azure/Graph env presence (names only), Graph app-only token
+ * acquisition, the D365 Super Admin lookup, and a real test send via the same
+ * sendEmail() the app uses. Does NOT print secret values.
  */
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
-const nodemailer = require('nodemailer');
+const { ConfidentialClientApplication } = require('@azure/msal-node');
 
 (async () => {
-  // ── Step 4/10: which SMTP_* are set (by NAME; no secret values) ──
-  console.log('\n=== SMTP env presence ===');
-  for (const k of ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'FRONTEND_URL']) {
+  // ── env presence (names only; no secret values) ──
+  console.log('\n=== Graph email env presence ===');
+  for (const k of ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'GRAPH_SENDER']) {
     const v = process.env[k];
     const shown = !v ? 'MISSING'
-      : k === 'SMTP_PASS' ? `set (${v.length} chars)`
-      : k === 'SMTP_USER' ? v.replace(/(.).*(@.*)/, '$1***$2')
+      : k === 'AZURE_CLIENT_SECRET' ? `set (${v.length} chars)`
       : v;
-    console.log(`  ${k.padEnd(13)}: ${shown}`);
+    console.log(`  ${k.padEnd(20)}: ${shown}`);
   }
+  const sender = process.env.GRAPH_SENDER || 'info@crmonce.com';
 
-  const port = parseInt(process.env.SMTP_PORT || '587');
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: port === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-
-  // ── Step 5: SMTP connection + auth ──
-  console.log('\n=== SMTP verify (connection + authentication) ===');
+  // ── Graph app-only token (client credentials) ──
+  console.log('\n=== Graph token (OAuth2 client credentials) ===');
   try {
-    await transporter.verify();
-    console.log('  OK  SMTP connection + auth succeeded');
+    const msal = new ConfidentialClientApplication({
+      auth: {
+        clientId: process.env.AZURE_CLIENT_ID,
+        clientSecret: process.env.AZURE_CLIENT_SECRET,
+        authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+      },
+    });
+    const r = await msal.acquireTokenByClientCredential({ scopes: ['https://graph.microsoft.com/.default'] });
+    console.log(`  OK  token acquired (expires ${r.expiresOn?.toISOString?.() || 'n/a'})`);
   } catch (e) {
     console.log(`  FAIL  ${e.message}`);
-    if (e.code) console.log(`        code=${e.code}${e.responseCode ? ' responseCode=' + e.responseCode : ''}`);
   }
 
-  // ── Step 6: Super Admin lookup from D365 (never hardcoded) ──
+  // ── Super Admin lookup from D365 (never hardcoded) ──
   console.log('\n=== D365 Super Admin lookup ===');
   let recipients = [];
   try {
@@ -58,27 +56,25 @@ const nodemailer = require('nodemailer');
     console.log(`  FAIL  D365 lookup: ${e.message}`);
   }
 
-  // ── Step 5/7: real test send ──
+  // ── real test send via the app's sendEmail() (Graph) ──
   const to = process.argv[2] || recipients[0];
-  console.log('\n=== Test send ===');
+  console.log('\n=== Test send (via Graph) ===');
   if (!to) {
     console.log('  No recipient. Pass one:  node scripts/test-email.js you@domain.com');
     process.exit(1);
   }
   try {
-    const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM,
+    const { sendEmail } = require('../src/services/notification.service');
+    const result = await sendEmail(
       to,
-      subject: 'HRMS SMTP test',
-      html: '<p>HRMS SMTP diagnostic — if you received this, outbound email works.</p>',
-    });
-    console.log(`  OK  sent to ${to}`);
-    console.log(`      messageId=${info.messageId}`);
-    console.log(`      accepted=${JSON.stringify(info.accepted)} rejected=${JSON.stringify(info.rejected)}`);
-    if (info.response) console.log(`      response=${info.response}`);
+      'HRMS Graph email test',
+      '<p>HRMS Microsoft Graph diagnostic — if you received this, Graph email works.</p>'
+    );
+    console.log(result.success
+      ? `  OK  sent to ${to} (sender ${sender})`
+      : `  FAIL  ${result.error}`);
   } catch (e) {
     console.log(`  FAIL  ${e.message}`);
-    if (e.code) console.log(`        code=${e.code}${e.responseCode ? ' responseCode=' + e.responseCode : ''}`);
   }
   process.exit(0);
 })();
