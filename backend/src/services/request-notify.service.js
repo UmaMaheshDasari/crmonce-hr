@@ -2,16 +2,13 @@
  * Shared request notifications for approval workflows (Leave, Late Permission).
  *
  * Reuses existing infrastructure only:
- *   - Nodemailer  → sendEmail()          (notification.service.js)
- *   - Socket.io   → broadcast/notifyUser (notification.service.js)
- *   - D365        → d365.service.js
- *   - JWT tokens  → approval-token.js
+ *   - Email      → sendEmail()          (notification.service.js — Microsoft Graph)
+ *   - Socket.io  → broadcast/notifyUser (notification.service.js)
+ *   - D365       → d365.service.js
+ *   - JWT tokens → approval-token.js
  *
- * No new email provider, no duplicated notification logic. Both request types
- * call the same functions so they "behave exactly the same".
- *
- * Every function is best-effort: it never throws and never blocks the caller
- * (Apply / Approve must succeed even if email or sockets fail).
+ * No new email provider, no duplicated notification logic.
+ * Every function is best-effort: it never throws and never blocks the caller.
  */
 const d365 = require('./d365.service');
 const { toValue } = require('./picklist');
@@ -30,16 +27,24 @@ const rowHtml = (label, value) =>
   `<tr><td style="padding:3px 14px 3px 0;color:#374151;"><strong>${label}</strong></td>` +
   `<td style="padding:3px 0;color:#111827;">${value ?? '—'}</td></tr>`;
 
-/** Active Super Admin recipients — looked up from the Employees table (never hardcoded). */
-async function getSuperAdmins() {
+const wrap = (inner) =>
+  `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111;">${inner}` +
+  `<p>HR System:<br><a href="${APP_URL}">${APP_URL}</a></p></div>`;
+
+const greeting = (name) => `<p>Dear ${name || 'Approver'},</p>`;
+
+/** Active HR Managers + Super Admins — the only valid approvers (from the Employees table). */
+async function getApprovers() {
   try {
     const { data } = await d365.getList(EMP, {
-      filter: `hr_role eq ${toValue('hr_role', 'super_admin')} and hr_status eq ${toValue('hr_employee_status', 'active')}`,
-      select: 'hr_hremployeeid,hr_email,hr_hremployee1',
+      filter: `(hr_role eq ${toValue('hr_role', 'super_admin')} or hr_role eq ${toValue('hr_role', 'hr_manager')}) ` +
+              `and hr_status eq ${toValue('hr_employee_status', 'active')}`,
+      select: 'hr_hremployeeid,hr_hremployee1,hr_email',
+      orderby: 'hr_hremployee1 asc',
     });
     return (data || []).filter(a => a.hr_email);
   } catch (err) {
-    global.logger?.error(`getSuperAdmins failed: ${err.message}`);
+    global.logger?.error(`getApprovers failed: ${err.message}`);
     return [];
   }
 }
@@ -57,27 +62,23 @@ function approvalButtons(type, id) {
 }
 
 /**
- * New request → notify Super Admin(s) in-app + email with Approve/Reject buttons.
- * Call AFTER a successful D365 create.
- *   type      : 'leave' | 'late_permission'
- *   recordId  : D365 record id
- *   actor     : req.user (authenticated employee — id, name)
- *   details   : array of [label, value] rows specific to the request type
- *   applyTime : ISO string
+ * New request → email the SELECTED approver (with Approve/Reject buttons) and,
+ * optionally, CC recipients (informational, NO buttons). In-app notification
+ * goes only to the selected approver. Call AFTER a successful D365 create.
+ *   approver : { id, name, email }        (required — TO)
+ *   cc       : [{ id, name, email }]       (optional — informational)
  */
-async function notifyNewRequest({ type, recordId, actor, details, applyTime }) {
+async function notifyNewRequest({ type, recordId, actor, details, applyTime, approver, cc = [] }) {
   try {
     const cfg = TYPE_CFG[type] || { title: type };
-    const admins = await getSuperAdmins();
 
-    // In-app: notify each Super Admin + broadcast for any listening bell.
-    const payload = { requestType: type, id: recordId, employeeName: actor?.name };
-    admins.forEach(a => notifyUser(a.hr_hremployeeid, 'request:new', payload));
-    broadcast('request:new', payload);
+    // In-app: notify ONLY the selected approver.
+    if (approver?.id) {
+      notifyUser(approver.id, 'request:new', { requestType: type, id: recordId, employeeName: actor?.name });
+    }
 
-    const recipients = admins.map(a => a.hr_email);
-    if (recipients.length === 0) {
-      global.logger?.warn(`${cfg.title} new-request email skipped: no active Super Admin with an email`);
+    if (!approver?.email) {
+      global.logger?.warn(`${cfg.title} new-request email skipped: selected approver has no email`);
       return;
     }
 
@@ -90,39 +91,84 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime }) {
 
     const subject = `New ${cfg.title} Request - ${actor?.name || 'Employee'}`;
     const detailRows = (details || []).map(([k, v]) => rowHtml(k, v)).join('');
-    const html = `
-      <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111;">
-        <p>Hello Super Admin,</p>
-        <p>A new ${cfg.title.toLowerCase()} request has been submitted.</p>
-        <table style="border-collapse:collapse;">
-          ${rowHtml('Employee Name:', actor?.name)}
-          ${rowHtml('Employee ID:', actor?.id)}
-          ${rowHtml('Department:', department)}
-          ${detailRows}
-          ${rowHtml('Status:', 'L1 Pending')}
-          ${rowHtml('Apply Time:', applyTime || '—')}
-        </table>
-        ${approvalButtons(type, recordId)}
-        <p style="color:#6b7280;font-size:12px;margin-top:14px;">
-          These buttons open the HR System and require you to be signed in.
-          No change is made to any record until you confirm while logged in.
-        </p>
-        <p>HR System:<br><a href="${APP_URL}">${APP_URL}</a></p>
-      </div>`;
+    const infoTable = `
+      <table style="border-collapse:collapse;">
+        ${rowHtml('Employee Name:', actor?.name)}
+        ${rowHtml('Employee ID:', actor?.id)}
+        ${rowHtml('Department:', department)}
+        ${detailRows}
+        ${rowHtml('Status:', 'L1 Pending')}
+        ${rowHtml('Apply Time:', applyTime || '—')}
+      </table>`;
 
-    const r = await sendEmail(recipients.join(','), subject, html);
-    global.logger?.[r?.success ? 'info' : 'error'](
-      `${cfg.title} new-request email → ${recipients.join(', ')}: ${r?.success ? 'sent' : (r?.error || 'failed')}`
+    // ── Approver email (TO) — with action buttons ──
+    const approverHtml = wrap(`
+      ${greeting(approver.name)}
+      <p>A new ${cfg.title.toLowerCase()} request has been submitted for your approval.</p>
+      ${infoTable}
+      ${approvalButtons(type, recordId)}
+      <p style="color:#6b7280;font-size:12px;margin-top:14px;">
+        These buttons open the HR System and require you to be signed in.
+        No change is made until you confirm while logged in.
+      </p>`);
+    const ra = await sendEmail(approver.email, subject, approverHtml);
+    global.logger?.[ra?.success ? 'info' : 'error'](
+      `${cfg.title} approver email → ${approver.email}: ${ra?.success ? 'sent' : (ra?.error || 'failed')}`
     );
+
+    // ── CC recipients — informational only, NO buttons ──
+    for (const c of (cc || [])) {
+      if (!c?.email) continue;
+      const ccHtml = wrap(`
+        ${greeting(c.name)}
+        <p>A new ${cfg.title.toLowerCase()} request has been submitted.</p>
+        ${infoTable}
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;">
+        <p style="color:#6b7280;">
+          This email is for your information only.<br>
+          The ${cfg.title.toLowerCase()} request is awaiting approval from:
+          <strong>${approver.name || 'the approver'}</strong>.
+        </p>`);
+      const rc = await sendEmail(c.email, subject, ccHtml);
+      global.logger?.[rc?.success ? 'info' : 'error'](
+        `${cfg.title} CC email → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`
+      );
+    }
   } catch (err) {
     global.logger?.error(`notifyNewRequest(${type}) failed: ${err.message}`);
   }
 }
 
 /**
+ * Acknowledgement → email the employee immediately after submission. Best-effort.
+ */
+async function emailApplyAcknowledgement({ type, toEmail, employeeName, approverName }) {
+  try {
+    if (!toEmail) {
+      global.logger?.warn(`${type} acknowledgement skipped: employee has no email`);
+      return;
+    }
+    const cfg = TYPE_CFG[type] || { title: type };
+    const subject = `${cfg.title} Request Submitted`;
+    const html = wrap(`
+      ${greeting(employeeName)}
+      <p>Your ${cfg.title.toLowerCase()} request has been submitted successfully.</p>
+      <table style="border-collapse:collapse;">
+        ${rowHtml('Approver:', approverName)}
+        ${rowHtml('Current Status:', 'L1 Pending')}
+      </table>`);
+    const r = await sendEmail(toEmail, subject, html);
+    global.logger?.[r?.success ? 'info' : 'error'](
+      `${cfg.title} acknowledgement → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`
+    );
+  } catch (err) {
+    global.logger?.error(`emailApplyAcknowledgement(${type}) failed: ${err.message}`);
+  }
+}
+
+/**
  * Decision → email the employee (Approved / Rejected). Best-effort.
- * In-app notification is emitted by the caller's existing notify path, so this
- * only sends the email (avoids duplicate bell notifications for Leave).
+ * In-app notification is emitted by the caller's existing notify path.
  */
 async function emailDecisionToEmployee({ type, employeeId, decision, approverName, remarks, status }) {
   try {
@@ -135,19 +181,16 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approverNam
     }
     const decisionLabel = decision === 'approved' ? 'Approved' : 'Rejected';
     const subject = `${cfg.title} ${decisionLabel}`;
-    const html = `
-      <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111;">
-        <p>Hello ${emp.hr_hremployee1 || 'Employee'},</p>
-        <p>Your ${cfg.title.toLowerCase()} request has been <strong>${decisionLabel.toLowerCase()}</strong>.</p>
-        <table style="border-collapse:collapse;">
-          ${rowHtml('Employee Name:', emp.hr_hremployee1)}
-          ${rowHtml('Approver Name:', approverName)}
-          ${rowHtml('Approval Date:', new Date().toISOString().split('T')[0])}
-          ${rowHtml('Remarks:', remarks || '—')}
-          ${rowHtml('Current Status:', status || decisionLabel)}
-        </table>
-        <p>HR System:<br><a href="${APP_URL}">${APP_URL}</a></p>
-      </div>`;
+    const html = wrap(`
+      ${greeting(emp.hr_hremployee1)}
+      <p>Your ${cfg.title.toLowerCase()} request has been <strong>${decisionLabel.toLowerCase()}</strong>.</p>
+      <table style="border-collapse:collapse;">
+        ${rowHtml('Employee Name:', emp.hr_hremployee1)}
+        ${rowHtml('Approver Name:', approverName)}
+        ${rowHtml('Approval Date:', new Date().toISOString().split('T')[0])}
+        ${rowHtml('Remarks:', remarks || '—')}
+        ${rowHtml('Current Status:', status || decisionLabel)}
+      </table>`);
     const r = await sendEmail(emp.hr_email, subject, html);
     global.logger?.[r?.success ? 'info' : 'error'](
       `${cfg.title} decision email → ${emp.hr_email}: ${r?.success ? 'sent' : (r?.error || 'failed')}`
@@ -157,4 +200,6 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approverNam
   }
 }
 
-module.exports = { notifyNewRequest, emailDecisionToEmployee, getSuperAdmins };
+module.exports = {
+  notifyNewRequest, emailApplyAcknowledgement, emailDecisionToEmployee, getApprovers,
+};

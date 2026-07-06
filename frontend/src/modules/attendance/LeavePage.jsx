@@ -352,10 +352,34 @@ function LeaveActions({ leave, user, isHR }) {
 function ApplyLeaveModal({ onClose }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({ type: 'Casual Leave', from: '', to: '', reason: '' });
+  const [approverId, setApproverId] = useState('');
+  const [cc, setCc] = useState([]);              // selected employee ids
+  const [ccSearch, setCcSearch] = useState('');
+
+  // Approver options — active HR Managers / Super Admins (backend-filtered)
+  const { data: approversData } = useQuery({
+    queryKey: ['leave-approvers'],
+    queryFn: () => leaveApi.approvers().then(r => r.data),
+  });
+  const approvers = approversData?.data || [];
+
+  // CC candidates — employees
+  const { data: empData } = useQuery({
+    queryKey: ['employees-cc'],
+    queryFn: () => employeeApi.list({ limit: 200 }).then(r => r.data),
+  });
+  const employees = empData?.data || [];
+  const ccCandidates = (ccSearch
+    ? employees.filter(e => e.hr_hremployee1?.toLowerCase().includes(ccSearch.toLowerCase()))
+    : employees
+  ).filter(e => e.hr_hremployeeid !== approverId);
+
+  const toggleCc = (id) =>
+    setCc(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   const mutation = useMutation({
-    // Send only business data — the backend attaches the hr_hremployee lookup
-    // from the authenticated user.
+    // Business data + the selected approver/cc. The backend attaches the
+    // hr_hremployee lookup and resolves approver/cc details server-side.
     mutationFn: () => leaveApi.apply({
       hr_leavetype: form.type,
       hr_fromdate: form.from,
@@ -363,9 +387,11 @@ function ApplyLeaveModal({ onClose }) {
       hr_reason: form.reason,
       hr_days: differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1,
       hr_status: 'pending',
+      approverId,
+      cc,
     }),
     onSuccess: () => { toast.success('Leave applied!'); qc.invalidateQueries(['leaves']); onClose(); },
-    onError: () => toast.error('Failed to apply leave'),
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to apply leave'),
   });
 
   const days = form.from && form.to ? differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1 : 0;
@@ -459,6 +485,67 @@ function ApplyLeaveModal({ onClose }) {
               onChange={e => setForm(p => ({ ...p, reason: e.target.value }))}
             />
           </div>
+
+          {/* Approver (required) */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+              Approver <span className="text-rose-500">*</span>
+            </label>
+            <select
+              value={approverId}
+              onChange={e => { const v = e.target.value; setApproverId(v); setCc(prev => prev.filter(x => x !== v)); }}
+              className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
+            >
+              <option value="">Select an approver…</option>
+              {approvers.map(a => (
+                <option key={a.id} value={a.id}>{a.name}{a.email ? ` (${a.email})` : ''}</option>
+              ))}
+            </select>
+            {approvers.length === 0 && (
+              <p className="text-xs text-amber-600 mt-1">No HR Managers / Super Admins available to select.</p>
+            )}
+          </div>
+
+          {/* CC recipients (optional) */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+              CC <span className="text-gray-400 font-normal">(optional — informational only)</span>
+            </label>
+            {cc.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {cc.map(id => {
+                  const e = employees.find(x => x.hr_hremployeeid === id);
+                  return (
+                    <span key={id} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-medium px-2 py-1 rounded-lg">
+                      {e?.hr_hremployee1 || 'Employee'}
+                      <button type="button" onClick={() => toggleCc(id)} className="hover:text-indigo-900">
+                        <XMarkIcon className="w-3 h-3" />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            <input
+              type="text"
+              value={ccSearch}
+              onChange={e => setCcSearch(e.target.value)}
+              placeholder="Search employees to CC…"
+              className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
+            />
+            {ccSearch && (
+              <div className="mt-1.5 max-h-36 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-50">
+                {ccCandidates.slice(0, 20).map(e => (
+                  <label key={e.hr_hremployeeid} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={cc.includes(e.hr_hremployeeid)} onChange={() => toggleCc(e.hr_hremployeeid)} />
+                    <span>{e.hr_hremployee1}</span>
+                    {e.hr_email && <span className="text-xs text-gray-400 ml-auto truncate">{e.hr_email}</span>}
+                  </label>
+                ))}
+                {ccCandidates.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No matches</p>}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Modal Footer */}
@@ -468,7 +555,7 @@ function ApplyLeaveModal({ onClose }) {
           </button>
           <button
             onClick={() => mutation.mutate()}
-            disabled={!form.from || !form.to || mutation.isLoading}
+            disabled={!form.from || !form.to || !approverId || mutation.isLoading}
             className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
           >
             {mutation.isLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}

@@ -102,6 +102,21 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /api/attendance/leave/approvers — active HR Managers + Super Admins.
+// Powers the required "Approver" dropdown on the Apply Leave form.
+router.get('/approvers', async (req, res, next) => {
+  try {
+    const approvers = await requestNotify.getApprovers();
+    res.json({
+      data: approvers.map(a => ({
+        id: a.hr_hremployeeid,
+        name: a.hr_hremployee1,
+        email: a.hr_email,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
 // Shared HR/Super-Admin override decision — used by BOTH the PATCH /:id route
 // (UI override) and the POST /:id/email-action route (email button). Keeps a
 // single source of truth for the override logic (no duplication).
@@ -148,7 +163,10 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
 // POST /api/attendance/leave — Employee applies for leave
 router.post('/', async (req, res, next) => {
   try {
-    const body = { ...req.body };
+    // approverId (required) + cc (optional) are business inputs, not D365 columns
+    // that should be blindly written — pull them out and resolve them server-side.
+    const { approverId, cc, ...rest } = req.body;
+    const body = { ...rest };
     if (body.hr_leavetype) body.hr_leavetype = toValue('hr_leave_type', body.hr_leavetype);
 
     // Set initial approval status
@@ -160,11 +178,56 @@ router.post('/', async (req, res, next) => {
     // authenticated user; never trust a client-supplied lookup.
     body['hr_hremployee@odata.bind'] = `/hr_hremployees(${req.user.id})`;
 
+    // ── Approver (required, exactly one) — resolved & validated on the backend ──
+    if (!approverId) {
+      return res.status(400).json({ error: 'An approver is required' });
+    }
+    let approver;
+    try {
+      approver = await d365.getById(EMP_ENTITY, approverId, {
+        select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_role,hr_status',
+      });
+    } catch (_) {
+      return res.status(400).json({ error: 'Selected approver not found' });
+    }
+    const approverRole = toLabel('hr_role', approver.hr_role);
+    const approverActive = approver.hr_status === toValue('hr_employee_status', 'active');
+    if (!['super_admin', 'hr_manager'].includes(approverRole) || !approverActive) {
+      return res.status(400).json({ error: 'Selected approver must be an active HR Manager or Super Admin' });
+    }
+    if (!approver.hr_email) {
+      return res.status(400).json({ error: 'Selected approver has no email address' });
+    }
+
+    // ── CC recipients (optional) — resolve emails server-side ──
+    const ccIds = Array.isArray(cc) ? cc.filter(Boolean) : [];
+    const ccRecipients = [];
+    for (const cid of ccIds) {
+      try {
+        const c = await d365.getById(EMP_ENTITY, cid, { select: 'hr_hremployeeid,hr_hremployee1,hr_email' });
+        if (c?.hr_email) ccRecipients.push({ id: c.hr_hremployeeid, name: c.hr_hremployee1, email: c.hr_email });
+      } catch (_) { /* skip invalid id */ }
+    }
+
+    // Persist approver + CC with the leave (new hr_hrleave fields).
+    body.hr_approverid = approver.hr_hremployeeid;
+    body.hr_approveremail = approver.hr_email;
+    body.hr_approvername = approver.hr_hremployee1;
+    body.hr_ccrecipients = JSON.stringify(ccRecipients);
+
     const leave = await d365.create(ENTITY, body);
 
-    // Notify Super Admin (in-app + email w/ Approve/Reject buttons). Only reached
-    // after a successful create; fire-and-forget so mail/socket issues never block
-    // or fail Leave Apply.
+    // Immediate acknowledgement to the employee (best-effort, non-blocking).
+    requestNotify.emailApplyAcknowledgement({
+      type: 'leave',
+      toEmail: req.user.email,
+      employeeName: req.user.name,
+      approverName: approver.hr_hremployee1,
+    });
+
+    // Notify ONLY the selected approver (in-app + email w/ Approve/Reject buttons),
+    // plus an informational (button-less) email to any CC recipients. Fire-and-
+    // forget so mail/socket issues never block or fail Leave Apply.
     requestNotify.notifyNewRequest({
       type: 'leave',
       recordId: leave.hr_hrleaveid,
@@ -177,6 +240,8 @@ router.post('/', async (req, res, next) => {
         ['Reason', req.body.hr_reason],
       ],
       applyTime: new Date().toISOString(),
+      approver: { id: approver.hr_hremployeeid, name: approver.hr_hremployee1, email: approver.hr_email },
+      cc: ccRecipients,
     });
 
     // Notify L1 manager
@@ -363,6 +428,14 @@ router.post('/:id/email-action', requireRole('super_admin', 'hr_manager'), async
     const decision = action || claim.action;
     if (!['approved', 'rejected'].includes(decision)) {
       return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    // (#7) Only the ASSIGNED approver may act via the email link — anyone else
+    // (including CC recipients) is forbidden. Super Admin keeps override. Legacy
+    // leaves with no assigned approver fall back to the requireRole gate above.
+    const rec = await d365.getById(ENTITY, req.params.id, { select: 'hr_approverid' });
+    if (rec.hr_approverid && req.user.role !== 'super_admin' && rec.hr_approverid !== req.user.id) {
+      return res.status(403).json({ error: 'You are not authorized to approve this request.' });
     }
 
     const leave = await applyHrOverride(req.user, req.params.id, decision, remarks, { enforcePending: true });
