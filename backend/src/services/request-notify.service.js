@@ -33,6 +33,11 @@ const wrap = (inner) =>
 
 const greeting = (name) => `<p>Dear ${name || 'Approver'},</p>`;
 
+// Seed/placeholder addresses that must never receive mail (e.g. admin@yourcompany.com).
+const PLACEHOLDER_DOMAINS = ['yourcompany.com', 'yourdomain.com', 'example.com'];
+const isPlaceholderEmail = (email) =>
+  !email || PLACEHOLDER_DOMAINS.some(d => String(email).toLowerCase().endsWith('@' + d));
+
 /** Active HR Managers + Super Admins — the only valid approvers (from the Employees table). */
 async function getApprovers() {
   try {
@@ -42,7 +47,8 @@ async function getApprovers() {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email',
       orderby: 'hr_hremployee1 asc',
     });
-    return (data || []).filter(a => a.hr_email);
+    // Skip records with no email or placeholder/seed addresses.
+    return (data || []).filter(a => a.hr_email && !isPlaceholderEmail(a.hr_email));
   } catch (err) {
     global.logger?.error(`getApprovers failed: ${err.message}`);
     return [];
@@ -89,7 +95,9 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
       department = emp?.hr_department || '—';
     } catch (_) { /* non-fatal */ }
 
-    const subject = `New ${cfg.title} Request - ${actor?.name || 'Employee'}`;
+    const subject = `${cfg.title} Request - ${actor?.name || 'Employee'}`;
+    // Reply-To = the employee, so approver/CC can reply straight to them.
+    const replyTo = actor?.email ? { name: actor.name, email: actor.email } : undefined;
     const detailRows = (details || []).map(([k, v]) => rowHtml(k, v)).join('');
     const infoTable = `
       <table style="border-collapse:collapse;">
@@ -97,7 +105,7 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
         ${rowHtml('Employee ID:', actor?.id)}
         ${rowHtml('Department:', department)}
         ${detailRows}
-        ${rowHtml('Status:', 'L1 Pending')}
+        ${rowHtml('Current Status:', 'L1 Pending')}
         ${rowHtml('Apply Time:', applyTime || '—')}
       </table>`;
 
@@ -111,7 +119,7 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
         These buttons open the HR System and require you to be signed in.
         No change is made until you confirm while logged in.
       </p>`);
-    const ra = await sendEmail(approver.email, subject, approverHtml);
+    const ra = await sendEmail(approver.email, subject, approverHtml, { replyTo });
     global.logger?.[ra?.success ? 'info' : 'error'](
       `${cfg.title} approver email → ${approver.email}: ${ra?.success ? 'sent' : (ra?.error || 'failed')}`
     );
@@ -126,10 +134,10 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;">
         <p style="color:#6b7280;">
           This email is for your information only.<br>
-          The ${cfg.title.toLowerCase()} request is awaiting approval from:
-          <strong>${approver.name || 'the approver'}</strong>.
+          No action is required from your side.<br>
+          Awaiting approval from: <strong>${approver.name || 'the approver'}</strong>.
         </p>`);
-      const rc = await sendEmail(c.email, subject, ccHtml);
+      const rc = await sendEmail(c.email, subject, ccHtml, { replyTo });
       global.logger?.[rc?.success ? 'info' : 'error'](
         `${cfg.title} CC email → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`
       );
@@ -200,6 +208,34 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approverNam
   }
 }
 
+/**
+ * Optional FYI to CC recipients after a decision (only when configured).
+ * Informational only — no buttons. Best-effort.
+ */
+async function emailDecisionFyiToCc({ type, ccRecipients, decision, employeeName, approverName }) {
+  try {
+    if (!Array.isArray(ccRecipients) || ccRecipients.length === 0) return;
+    const cfg = TYPE_CFG[type] || { title: type };
+    const decisionLabel = decision === 'approved' ? 'Approved' : 'Rejected';
+    const subject = `${cfg.title} ${decisionLabel} - ${employeeName || 'Employee'}`;
+    for (const c of ccRecipients) {
+      if (!c?.email || isPlaceholderEmail(c.email)) continue;
+      const html = wrap(`
+        ${greeting(c.name)}
+        <p>The ${cfg.title.toLowerCase()} request from <strong>${employeeName || 'an employee'}</strong> has been
+        <strong>${decisionLabel.toLowerCase()}</strong> by ${approverName || 'the approver'}.</p>
+        <p style="color:#6b7280;">This email is for your information only. No action is required from your side.</p>`);
+      const r = await sendEmail(c.email, subject, html);
+      global.logger?.[r?.success ? 'info' : 'error'](
+        `${cfg.title} CC FYI (decision) → ${c.email}: ${r?.success ? 'sent' : (r?.error || 'failed')}`
+      );
+    }
+  } catch (err) {
+    global.logger?.error(`emailDecisionFyiToCc(${type}) failed: ${err.message}`);
+  }
+}
+
 module.exports = {
-  notifyNewRequest, emailApplyAcknowledgement, emailDecisionToEmployee, getApprovers,
+  notifyNewRequest, emailApplyAcknowledgement, emailDecisionToEmployee,
+  emailDecisionFyiToCc, getApprovers, isPlaceholderEmail,
 };

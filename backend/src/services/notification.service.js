@@ -59,12 +59,14 @@ async function getGraphToken() {
 }
 
 /**
- * Send an email via Microsoft Graph. Same signature/return shape as before so
- * every caller (leave/late-permission notifiers, etc.) is unaffected.
+ * Send an email via Microsoft Graph. Backward-compatible: the (to, subject, html)
+ * signature is unchanged; an optional 4th arg adds a Reply-To without changing
+ * the sender (Graph app-only can only send AS the licensed GRAPH_SENDER mailbox).
  *   to: string — a single address or a comma-separated list
+ *   opts.replyTo: string | { email, name } — "Reply" goes here (e.g. the employee)
  * Best-effort: never throws; returns { success } (+ error on failure).
  */
-async function sendEmail(to, subject, html) {
+async function sendEmail(to, subject, html, opts = {}) {
   try {
     const toRecipients = String(to)
       .split(',')
@@ -77,17 +79,24 @@ async function sendEmail(to, subject, html) {
       return { success: false, error: 'no recipients' };
     }
 
+    const message = {
+      subject,
+      body: { contentType: 'HTML', content: html },
+      toRecipients,
+    };
+
+    // Reply-To (does not spoof From) — makes "Reply" target the employee.
+    if (opts.replyTo) {
+      const emailAddress = typeof opts.replyTo === 'string'
+        ? { address: opts.replyTo }
+        : { address: opts.replyTo.email, name: opts.replyTo.name };
+      if (emailAddress.address) message.replyTo = [{ emailAddress }];
+    }
+
     const token = await getGraphToken();
     await axios.post(
       `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(GRAPH_SENDER)}/sendMail`,
-      {
-        message: {
-          subject,
-          body: { contentType: 'HTML', content: html },
-          toRecipients,
-        },
-        saveToSentItems: true,
-      },
+      { message, saveToSentItems: true },
       {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         timeout: 20000,

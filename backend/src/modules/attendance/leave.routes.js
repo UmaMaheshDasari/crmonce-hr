@@ -124,7 +124,7 @@ router.get('/approvers', async (req, res, next) => {
 //                          (prevents duplicate approvals / replay via email links).
 async function applyHrOverride(user, id, status, remarks, { enforcePending = false } = {}) {
   const current = await d365.getById(ENTITY, id, {
-    select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate',
+    select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate,hr_ccrecipients',
   });
 
   if (enforcePending) {
@@ -154,6 +154,15 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
       type: 'leave', employeeId, decision: status, approverName: user.name,
       remarks: remarks || '', status,
     });
+
+    // Optional FYI to CC recipients (only when NOTIFY_CC_ON_DECISION=true).
+    if (process.env.NOTIFY_CC_ON_DECISION === 'true' && current.hr_ccrecipients) {
+      let ccList = [];
+      try { ccList = JSON.parse(current.hr_ccrecipients || '[]'); } catch (_) {}
+      requestNotify.emailDecisionFyiToCc({
+        type: 'leave', ccRecipients: ccList, decision: status, approverName: user.name,
+      });
+    }
   }
 
   broadcast('leave:updated', { leaveId: id, action: status, level: 'HR' });
@@ -195,17 +204,20 @@ router.post('/', async (req, res, next) => {
     if (!['super_admin', 'hr_manager'].includes(approverRole) || !approverActive) {
       return res.status(400).json({ error: 'Selected approver must be an active HR Manager or Super Admin' });
     }
-    if (!approver.hr_email) {
-      return res.status(400).json({ error: 'Selected approver has no email address' });
+    if (!approver.hr_email || requestNotify.isPlaceholderEmail(approver.hr_email)) {
+      return res.status(400).json({ error: 'Selected approver has no valid email address' });
     }
 
-    // ── CC recipients (optional) — resolve emails server-side ──
+    // ── CC recipients (optional) — resolve server-side; skip inactive/placeholder ──
     const ccIds = Array.isArray(cc) ? cc.filter(Boolean) : [];
     const ccRecipients = [];
+    const ACTIVE_STATUS = toValue('hr_employee_status', 'active');
     for (const cid of ccIds) {
       try {
-        const c = await d365.getById(EMP_ENTITY, cid, { select: 'hr_hremployeeid,hr_hremployee1,hr_email' });
-        if (c?.hr_email) ccRecipients.push({ id: c.hr_hremployeeid, name: c.hr_hremployee1, email: c.hr_email });
+        const c = await d365.getById(EMP_ENTITY, cid, { select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_status' });
+        if (c?.hr_email && c.hr_status === ACTIVE_STATUS && !requestNotify.isPlaceholderEmail(c.hr_email)) {
+          ccRecipients.push({ id: c.hr_hremployeeid, name: c.hr_hremployee1, email: c.hr_email });
+        }
       } catch (_) { /* skip invalid id */ }
     }
 
