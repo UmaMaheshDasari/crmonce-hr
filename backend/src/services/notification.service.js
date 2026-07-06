@@ -35,11 +35,27 @@ function broadcast(event, payload) {
 }
 
 // Email transport
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587');
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false,
+  port: SMTP_PORT,
+  secure: SMTP_PORT === 465, // 465 = implicit TLS; 587/25 = STARTTLS
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+});
+
+// Startup diagnostics — surface SMTP config/connection problems in the logs.
+// Deferred so global.logger (created later in server.js) is available.
+setImmediate(() => {
+  const log = global.logger || console;
+  const missing = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM']
+    .filter(k => !process.env[k]);
+  if (missing.length) {
+    log.warn(`SMTP not fully configured — missing: ${missing.join(', ')} (emails will NOT send)`);
+    return;
+  }
+  transporter.verify()
+    .then(() => log.info(`SMTP ready — ${process.env.SMTP_HOST}:${SMTP_PORT} as ${process.env.SMTP_USER}`))
+    .catch(err => log.error(`SMTP verify FAILED — ${process.env.SMTP_HOST}:${SMTP_PORT}: ${err.message}`));
 });
 
 async function sendEmail(to, subject, html) {
