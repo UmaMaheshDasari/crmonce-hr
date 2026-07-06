@@ -583,7 +583,7 @@ export default function LeavePage() {
                       <div className="flex items-center gap-3 flex-wrap">
                         {isHR() && (
                           <h3 className="text-base font-bold text-gray-900">
-                            {leave['_hr_employee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee'}
+                            {leave['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee'}
                           </h3>
                         )}
                         <span className={`inline-flex items-center gap-1 text-xs font-medium border px-2.5 py-0.5 rounded-full ${typeConfig.color}`}>
