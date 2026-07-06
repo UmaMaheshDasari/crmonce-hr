@@ -44,9 +44,12 @@ const transporter = nodemailer.createTransport({
 
 async function sendEmail(to, subject, html) {
   try {
-    await transporter.sendMail({ from: process.env.SMTP_FROM, to, subject, html });
+    const info = await transporter.sendMail({ from: process.env.SMTP_FROM, to, subject, html });
+    global.logger?.info(`Email sent to ${to} — "${subject}"`);
+    return { success: true, info };
   } catch (err) {
     global.logger?.error(`Email send failed to ${to}: ${err.message}`);
+    return { success: false, error: err.message };
   }
 }
 

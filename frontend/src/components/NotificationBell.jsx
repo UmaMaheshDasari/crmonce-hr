@@ -56,7 +56,7 @@ export default function NotificationBell() {
     socketRef.current = socket;
     socket.emit('register', user.id);
 
-    const events = ['leave:updated', 'payroll:processed', 'recruitment:new_applicant', 'attendance:anomaly'];
+    const events = ['leave:updated', 'payroll:processed', 'recruitment:new_applicant', 'attendance:anomaly', 'request:new'];
     events.forEach(evt => {
       socket.on(evt, (payload) => {
         const notif = { id: Date.now(), event: evt, payload, time: new Date(), read: false };
@@ -81,6 +81,10 @@ export default function NotificationBell() {
     if (evt === 'payroll:processed') return `Payroll processed for ${payload.month}`;
     if (evt === 'recruitment:new_applicant') return `New applicant for ${payload.jobTitle}`;
     if (evt === 'attendance:anomaly') return `Attendance issue on ${payload.date}: ${payload.issue}`;
+    if (evt === 'request:new') {
+      const kind = payload.requestType === 'late_permission' ? 'late permission' : 'leave';
+      return `New ${kind} request from ${payload.employeeName || 'an employee'}`;
+    }
     return evt;
   };
 

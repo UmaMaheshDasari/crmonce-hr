@@ -25,7 +25,9 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(form.email, form.password);
-      navigate('/', { replace: true });
+      const dest = sessionStorage.getItem('postLoginRedirect');
+      sessionStorage.removeItem('postLoginRedirect');
+      navigate(dest || '/', { replace: true });
     } catch (err) {
       toast.error(err.response?.data?.error || 'Invalid credentials');
     } finally {

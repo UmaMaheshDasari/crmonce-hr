@@ -17,6 +17,7 @@ import PerformancePage from './modules/performance/PerformancePage';
 import DocumentsPage from './modules/documents/DocumentsPage';
 import TaxDeclarationPage from './modules/payroll/TaxDeclarationPage';
 import GoalsPage from './modules/performance/GoalsPage';
+import ApprovalAction from './modules/attendance/ApprovalAction';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 300000, refetchOnWindowFocus: false } },
@@ -40,6 +41,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route path="/auth/callback" element={<AzureCallback />} />
+      <Route path="/approve" element={<ApprovalAction />} />
       <Route path="/" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
         <Route path="employees" element={<EmployeeList />} />

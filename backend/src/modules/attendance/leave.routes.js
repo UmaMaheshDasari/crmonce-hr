@@ -3,7 +3,9 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { notifyLeaveApproval, broadcast } = require('../../services/notification.service');
-const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
+const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
+const requestNotify = require('../../services/request-notify.service');
+const { verifyApprovalToken } = require('../../services/approval-token');
 
 const ENTITY = d365.constructor.entities.leave;
 const EMP_ENTITY = d365.constructor.entities.employee;
@@ -100,6 +102,49 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Shared HR/Super-Admin override decision — used by BOTH the PATCH /:id route
+// (UI override) and the POST /:id/email-action route (email button). Keeps a
+// single source of truth for the override logic (no duplication).
+//   enforcePending=true  → refuse if the request is already finalised
+//                          (prevents duplicate approvals / replay via email links).
+async function applyHrOverride(user, id, status, remarks, { enforcePending = false } = {}) {
+  const current = await d365.getById(ENTITY, id, {
+    select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate',
+  });
+
+  if (enforcePending) {
+    const label = toLabel('hr_leave_status', current.hr_status);
+    if (['approved', 'rejected', 'cancelled'].includes(label)) {
+      const e = new Error(`This request is already ${label}`);
+      e.status = 409;
+      throw e;
+    }
+  }
+
+  const now = new Date().toISOString().split('T')[0];
+  const leave = await d365.update(ENTITY, id, {
+    hr_status: toValue('hr_leave_status', status),
+    hr_remarks: remarks || `${status} by ${user.name} (HR Override)`,
+    hr_l1status: status === 'approved' ? 'approved' : 'rejected',
+    hr_l1approvedby: user.name,
+    hr_l1date: now,
+    hr_l2status: 'not_required',
+  });
+
+  const employeeId = leave._hr_hremployee_value || current._hr_hremployee_value;
+  if (employeeId) {
+    // In-app notification (existing) + employee decision email (shared service).
+    await notifyLeaveApproval(employeeId, status, { from: current.hr_fromdate, to: current.hr_todate });
+    requestNotify.emailDecisionToEmployee({
+      type: 'leave', employeeId, decision: status, approverName: user.name,
+      remarks: remarks || '', status,
+    });
+  }
+
+  broadcast('leave:updated', { leaveId: id, action: status, level: 'HR' });
+  return leave;
+}
+
 // POST /api/attendance/leave — Employee applies for leave
 router.post('/', async (req, res, next) => {
   try {
@@ -116,6 +161,23 @@ router.post('/', async (req, res, next) => {
     body['hr_hremployee@odata.bind'] = `/hr_hremployees(${req.user.id})`;
 
     const leave = await d365.create(ENTITY, body);
+
+    // Notify Super Admin (in-app + email w/ Approve/Reject buttons). Only reached
+    // after a successful create; fire-and-forget so mail/socket issues never block
+    // or fail Leave Apply.
+    requestNotify.notifyNewRequest({
+      type: 'leave',
+      recordId: leave.hr_hrleaveid,
+      actor: req.user,
+      details: [
+        ['Leave Type', toLabel('hr_leave_type', req.body.hr_leavetype)],
+        ['From Date', req.body.hr_fromdate],
+        ['To Date', req.body.hr_todate],
+        ['Number of Days', req.body.hr_days],
+        ['Reason', req.body.hr_reason],
+      ],
+      applyTime: new Date().toISOString(),
+    });
 
     // Notify L1 manager
     try {
@@ -188,11 +250,17 @@ router.patch('/:id/l1', async (req, res, next) => {
 
     const leave = await d365.update(ENTITY, req.params.id, updatePayload);
 
-    // Notify employee
+    // Notify employee (only when L1 produced a FINAL decision)
     if (action === 'rejected' || (!chain.l2Manager && action === 'approved')) {
-      await notifyLeaveApproval(leaveRecord._hr_hremployee_value, action === 'approved' ? 'approved' : 'rejected', {
+      const finalStatus = action === 'approved' ? 'approved' : 'rejected';
+      await notifyLeaveApproval(leaveRecord._hr_hremployee_value, finalStatus, {
         from: leaveRecord.hr_fromdate,
         to: leaveRecord.hr_todate,
+      });
+      requestNotify.emailDecisionToEmployee({
+        type: 'leave', employeeId: leaveRecord._hr_hremployee_value,
+        decision: finalStatus, approverName: req.user.name,
+        remarks: updatePayload.hr_remarks, status: finalStatus,
       });
     }
 
@@ -241,10 +309,16 @@ router.patch('/:id/l2', async (req, res, next) => {
 
     const leave = await d365.update(ENTITY, req.params.id, updatePayload);
 
-    // Notify employee of final decision
-    await notifyLeaveApproval(leaveRecord._hr_hremployee_value, action === 'approved' ? 'approved' : 'rejected', {
+    // Notify employee of final decision (in-app + email)
+    const l2Final = action === 'approved' ? 'approved' : 'rejected';
+    await notifyLeaveApproval(leaveRecord._hr_hremployee_value, l2Final, {
       from: leaveRecord.hr_fromdate,
       to: leaveRecord.hr_todate,
+    });
+    requestNotify.emailDecisionToEmployee({
+      type: 'leave', employeeId: leaveRecord._hr_hremployee_value,
+      decision: l2Final, approverName: req.user.name,
+      remarks: updatePayload.hr_remarks, status: l2Final,
     });
 
     broadcast('leave:updated', { leaveId: req.params.id, action, level: 'L2' });
@@ -252,27 +326,51 @@ router.patch('/:id/l2', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// PATCH /api/attendance/leave/:id — Legacy single approval (HR/admin override)
+// PATCH /api/attendance/leave/:id — Single-step approval (HR / Super-Admin override, from the UI)
 router.patch('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
     const { status, remarks } = req.body;
-    const now = new Date().toISOString().split('T')[0];
-    const leave = await d365.update(ENTITY, req.params.id, {
-      hr_status: toValue('hr_leave_status', status),
-      hr_remarks: remarks || `${status} by ${req.user.name} (HR Override)`,
-      hr_l1status: status === 'approved' ? 'approved' : 'rejected',
-      hr_l1approvedby: req.user.name,
-      hr_l1date: now,
-      hr_l2status: 'not_required',
-    });
+    // UI override keeps existing behaviour (no pending-only guard).
+    const leave = await applyHrOverride(req.user, req.params.id, status, remarks);
+    res.json(labelsForEntity('hr_hrleaves', leave));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
 
-    if (leave._hr_hremployee_value) {
-      await notifyLeaveApproval(leave._hr_hremployee_value, status, { from: leave.hr_fromdate, to: leave.hr_todate });
+// POST /api/attendance/leave/:id/email-action — Approve/Reject from an email button.
+// Security (backend is the only source of truth — frontend permission never trusted):
+//   1. authenticateToken (mounted globally) → valid login JWT + logged-in user
+//   2. requireRole → only Super Admin / HR may act on the emailed link
+//   3. verifyApprovalToken → link is authentic and NOT expired
+//   4. token {type,id} must match the URL → no tampering
+//   5. enforcePending inside applyHrOverride → blocks duplicate approvals / replay
+//      / already-finalised requests
+router.post('/:id/email-action', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { action, token, remarks } = req.body;
+    if (!token) return res.status(400).json({ error: 'Approval token required' });
+
+    let claim;
+    try { claim = verifyApprovalToken(token); }
+    catch (_) { return res.status(401).json({ error: 'Approval link is invalid or has expired' }); }
+
+    if (claim.type !== 'leave' || claim.id !== req.params.id) {
+      return res.status(400).json({ error: 'Approval link does not match this request' });
     }
 
-    broadcast('leave:updated', { leaveId: req.params.id, action: status, level: 'HR' });
+    const decision = action || claim.action;
+    if (!['approved', 'rejected'].includes(decision)) {
+      return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    const leave = await applyHrOverride(req.user, req.params.id, decision, remarks, { enforcePending: true });
     res.json(labelsForEntity('hr_hrleaves', leave));
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 // GET /api/attendance/leave/pending-approvals — Leaves pending my approval

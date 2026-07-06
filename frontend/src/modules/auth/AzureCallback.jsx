@@ -28,7 +28,9 @@ export default function AzureCallback() {
     handleAzureCallback(code)
       .then(() => {
         toast.success('Signed in with Microsoft');
-        navigate('/', { replace: true });
+        const dest = sessionStorage.getItem('postLoginRedirect');
+        sessionStorage.removeItem('postLoginRedirect');
+        navigate(dest || '/', { replace: true });
       })
       .catch((err) => {
         setError(err.response?.data?.error || 'Authentication failed');
