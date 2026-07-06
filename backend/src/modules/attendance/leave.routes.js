@@ -111,10 +111,9 @@ router.post('/', async (req, res, next) => {
     body.hr_l1status = 'pending';
     body.hr_l2status = '';
 
-    // Bind to employee
-    if (!body['hr_hremployee@odata.bind']) {
-      body['hr_hremployee@odata.bind'] = `/hr_hremployees(${req.user.id})`;
-    }
+    // Employee lookup is owned solely by the backend — always bind to the
+    // authenticated user; never trust a client-supplied lookup.
+    body['hr_hremployee@odata.bind'] = `/hr_hremployees(${req.user.id})`;
 
     const leave = await d365.create(ENTITY, body);
 

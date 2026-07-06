@@ -43,8 +43,8 @@ function NewReviewModal({ onClose }) {
     : employees;
 
   const mutation = useMutation({
+    // Send only business data — the backend attaches the hr_hremployee lookup.
     mutationFn: () => performanceApi.create({
-      'hr_employee@odata.bind': `/hr_employees(${form.employeeId})`,
       hr_cycle: form.cycle, hr_rating: form.rating,
       hr_goals: form.goals, hr_kpis: form.kpis, hr_reviewernotes: form.notes,
       hr_status: 'draft',

@@ -348,12 +348,12 @@ function LeaveActions({ leave, user, isHR }) {
 
 function ApplyLeaveModal({ onClose }) {
   const qc = useQueryClient();
-  const { user } = useAuth();
   const [form, setForm] = useState({ type: 'Casual Leave', from: '', to: '', reason: '' });
 
   const mutation = useMutation({
+    // Send only business data — the backend attaches the hr_hremployee lookup
+    // from the authenticated user.
     mutationFn: () => leaveApi.apply({
-      'hr_employee@odata.bind': `/hr_employees(${user.id})`,
       hr_leavetype: form.type,
       hr_fromdate: form.from,
       hr_todate: form.to,
