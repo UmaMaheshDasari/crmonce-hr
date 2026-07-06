@@ -93,6 +93,14 @@ async function sendEmail(to, subject, html, opts = {}) {
       if (emailAddress.address) message.replyTo = [{ emailAddress }];
     }
 
+    // Optional attachments (e.g. .ics calendar invite) — Graph fileAttachment.
+    if (Array.isArray(opts.attachments) && opts.attachments.length) {
+      message.attachments = opts.attachments.map(a => ({
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name: a.name, contentType: a.contentType, contentBytes: a.contentBytes,
+      }));
+    }
+
     const token = await getGraphToken();
     await axios.post(
       `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(GRAPH_SENDER)}/sendMail`,
@@ -104,10 +112,12 @@ async function sendEmail(to, subject, html, opts = {}) {
     );
 
     global.logger?.info(`Graph email sent to ${to} — "${subject}"`);
+    global.logger?.info(`EMAIL_AUDIT ${JSON.stringify({ to, subject, type: opts.meta?.type || 'generic', status: 'sent', at: new Date().toISOString() })}`);
     return { success: true };
   } catch (err) {
     const msg = err.response?.data?.error?.message || err.message;
     global.logger?.error(`Graph email failed to ${to}: ${msg}`);
+    global.logger?.error(`EMAIL_AUDIT ${JSON.stringify({ to, subject, type: opts.meta?.type || 'generic', status: 'failed', error: msg, at: new Date().toISOString() })}`);
     return { success: false, error: msg };
   }
 }

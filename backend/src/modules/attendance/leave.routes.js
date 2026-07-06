@@ -124,7 +124,7 @@ router.get('/approvers', async (req, res, next) => {
 //                          (prevents duplicate approvals / replay via email links).
 async function applyHrOverride(user, id, status, remarks, { enforcePending = false } = {}) {
   const current = await d365.getById(ENTITY, id, {
-    select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate,hr_ccrecipients',
+    select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate,hr_ccrecipients,hr_leavetype',
   });
 
   if (enforcePending) {
