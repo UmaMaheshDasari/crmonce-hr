@@ -25,6 +25,7 @@ const performanceRoutes= require('./modules/performance/performance.routes');
 const documentRoutes   = require('./modules/documents/document.routes');
 
 const { authenticateToken } = require('./middleware/auth.middleware');
+const { isAxiosError, formatAxiosError, summarize } = require('./utils/axiosError');
 const { initJobs }          = require('./jobs');
 const { initSocket }        = require('./services/notification.service');
 const zkPushService         = require('./services/zk-push.service');
@@ -96,7 +97,15 @@ app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.u
 
 // ── Global error handler ──────────────────────────────────────────
 app.use((err, req, res, next) => {
-  logger.error(`${err.message} — ${req.method} ${req.url}`);
+  const route = `${req.method} ${req.url}`;
+  if (isAxiosError(err)) {
+    // Surface the underlying upstream (e.g. D365 / Graph) failure detail.
+    logger.error(`Upstream request failed on ${route} → ${summarize(err)}`);
+    logger.error(`Upstream error detail: ${JSON.stringify(formatAxiosError(err, { route }))}`);
+  } else {
+    logger.error(`${err.message} — ${route}\n${err.stack || ''}`);
+  }
+  // Response contract unchanged (diagnostics only).
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 

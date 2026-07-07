@@ -1,5 +1,20 @@
 const axios = require('axios');
 const { ConfidentialClientApplication } = require('@azure/msal-node');
+const { formatAxiosError, summarize } = require('../utils/axiosError');
+
+// Diagnostics: log full detail for any failed D365 Web API request, then
+// re-throw the original error unchanged (no behaviour change — callers still
+// receive the same rejection and control flow).
+axios.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.config?.url?.includes('/api/data/')) {
+      global.logger?.error(`D365 request failed → ${summarize(err)}`);
+      global.logger?.error(`D365 error detail: ${JSON.stringify(formatAxiosError(err))}`);
+    }
+    return Promise.reject(err);
+  }
+);
 
 class D365Service {
   constructor() {
