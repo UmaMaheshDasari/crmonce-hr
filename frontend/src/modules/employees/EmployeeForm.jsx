@@ -138,7 +138,7 @@ export default function EmployeeForm() {
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               <Field label="Basic Salary" name="hr_salary" type="number" placeholder="50000" />
-              <Field label="eTime Office Code" name="hr_etime_code" placeholder="EMP001" />
+              <Field label="eTime Office Code" name="hr_etimecode" placeholder="EMP001" />
             </div>
           </div>
         </div>

@@ -41,12 +41,30 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
+// Normalise an employee payload before writing to D365:
+//  - drop empty/nullish values ('' is rejected by typed columns: Money/DateTime/Picklist)
+//  - convert picklists (role/status) from label → numeric option-set value
+//  - coerce money fields to numbers
+function sanitizeEmployee(input) {
+  const data = { ...input };
+  for (const k of Object.keys(data)) {
+    if (data[k] === '' || data[k] === null || data[k] === undefined) delete data[k];
+  }
+  if (data.hr_role !== undefined) data.hr_role = toValue('hr_role', data.hr_role);
+  if (data.hr_status !== undefined) data.hr_status = toValue('hr_employee_status', data.hr_status);
+  for (const f of ['hr_salary', 'hr_allowances', 'hr_deductions']) {
+    if (data[f] !== undefined) data[f] = Number(data[f]) || 0;
+  }
+  return data;
+}
+
 // POST /api/employees
 router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
-    const { password, ...employeeData } = req.body;
+    const { password, ...raw } = req.body;
+    const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
-    employeeData.hr_status = toValue('hr_employee_status', employeeData.hr_status || 'active');
+    if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
     const emp = await d365.create(ENTITY, employeeData);
     res.status(201).json(emp);
   } catch (err) { next(err); }
@@ -55,7 +73,8 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
 // PATCH /api/employees/:id
 router.patch('/:id', requirePermission('employee:write'), async (req, res, next) => {
   try {
-    const { password, ...updateData } = req.body;
+    const { password, ...raw } = req.body;
+    const updateData = sanitizeEmployee(raw);
     if (password) updateData.hr_password = await authService.hashPassword(password);
     const emp = await d365.update(ENTITY, req.params.id, updateData);
     res.json(emp);
