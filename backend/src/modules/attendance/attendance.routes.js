@@ -364,7 +364,9 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
   } catch (err) { next(err); }
 });
 
-// ── Excel export (only the CURRENT filtered data) ────────────────────────────
+// ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
+const { rangeCounts, summarizeEmployee } = require('../../services/attendance-summary.util');
+const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
   const v = Number(h);
   if (!Number.isFinite(v) || v <= 0) return '0m';
@@ -374,54 +376,91 @@ const fmtDur = (h) => {
 };
 const fmtMin = (m) => fmtDur((Number(m) || 0) / 60);
 
-function countWorkingDaysRange(from, to) {
-  if (!from || !to) return 0;
-  let count = 0;
-  const end = new Date(`${to}T00:00:00Z`);
-  for (let d = new Date(`${from}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-    const ds = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-    if (attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
-    if (attnCfg.holidays.includes(ds)) continue;
-    count++;
-  }
-  return count;
-}
-
-// GET /api/attendance/export — .xlsx of the CURRENT filtered data (detail + optional summary)
+// GET /api/attendance/export — .xlsx: Employee Attendance Summary (default sheet) + Daily detail
 router.get('/export', requirePermission('attendance:read'), async (req, res, next) => {
   try {
-    const { from, to, employeeId, status, department, designation, source, view } = req.query;
+    const { employeeId, status, department, designation, source, view } = req.query;
     const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
 
-    // Server-side (OData) filters — we never fetch everything.
-    const f = [];
-    if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
-    if (from) f.push(`hr_date ge ${from}`);
-    if (to) f.push(`hr_date le ${to}`);
-    if (status && ['present', 'absent', 'half_day', 'incomplete', 'holiday'].includes(status)) {
-      f.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
-    }
-    if (source) f.push(`hr_source eq ${toValue('hr_attendance_source', source)}`);
-    const filterStr = f.join(' and ') || undefined;
+    // Date range (defaults to the current calendar month).
+    const now = new Date();
+    const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+    const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
 
-    // Paginate up to a cap (supports 10k+ rows).
+    // Attendance in range (date + employee scope) — feeds BOTH sheets. Paginated (10k+).
+    const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
+    if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
     const CAP = 10000, PAGE = 1000;
     let recs = [], skip = 0;
     while (recs.length < CAP) {
-      const { data } = await d365.getList(ENTITY, { select: PUNCH_SELECT, filter: filterStr, orderby: 'hr_date desc', top: PAGE, skip });
+      const { data } = await d365.getList(ENTITY, { select: PUNCH_SELECT, filter: f.join(' and '), orderby: 'hr_date desc', top: PAGE, skip });
       if (!data || !data.length) break;
       recs.push(...data);
       if (data.length < PAGE) break;
       skip += PAGE;
     }
 
-    // Employee lookup (name / dept / designation).
+    // Active employees + approved leaves (for the summary).
     const { data: emps } = await d365.getList(d365.constructor.entities.employee, {
-      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation', top: 5000,
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
+      filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
     });
     const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
+    const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
+      select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
+      filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+    });
+    const leaveByEmp = {};
+    (leaves || []).forEach(l => {
+      const d = String(l.hr_fromdate || '').slice(0, 10);
+      if (d < from || d > to) return;
+      leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
+    });
 
     const shift = resolveShift();
+    const rc = rangeCounts(from, to);
+
+    // Compute each session once; group by employee.
+    const byEmp = {};
+    const computed = recs.map(r => {
+      const c = computeSession(punchesFromRecord(r), shift);
+      (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push(c);
+      return { r, c, emp: empMap.get(r._hr_hremployee_value) || {} };
+    });
+
+    // Employees in scope for the summary.
+    let scope = emps || [];
+    if (targetId) scope = scope.filter(e => e.hr_hremployeeid === targetId);
+    if (department) scope = scope.filter(e => e.hr_department === department);
+    if (designation) scope = scope.filter(e => e.hr_designation === designation);
+
+    const wb = new ExcelJS.Workbook();
+
+    // ── Sheet 1 (default): Employee Attendance Summary ──
+    const sum = wb.addWorksheet('Employee Attendance Summary');
+    sum.columns = [
+      { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
+      { header: 'Designation', key: 'desig', width: 18 }, { header: 'Total Calendar Days', key: 'cal', width: 17 },
+      { header: 'Working Days', key: 'wd', width: 12 }, { header: 'Present', key: 'present', width: 9 },
+      { header: 'Half Day', key: 'half', width: 9 }, { header: 'Absent', key: 'absent', width: 9 },
+      { header: 'Approved Leave', key: 'leave', width: 14 }, { header: 'Office Holidays', key: 'hol', width: 14 },
+      { header: 'Weekly Off', key: 'woff', width: 11 }, { header: 'Incomplete', key: 'incomplete', width: 11 },
+      { header: 'Total Effective Hours', key: 'eff', width: 18 }, { header: 'Total Break Hours', key: 'brk', width: 16 },
+      { header: 'Total Overtime', key: 'ot', width: 14 },
+    ];
+    sum.getRow(1).font = { bold: true };
+    for (const e of scope) {
+      const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
+      const s = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working: rc.working, leaveDays });
+      sum.addRow({
+        emp: e.hr_hremployee1 || 'Employee', dept: e.hr_department || '', desig: e.hr_designation || '',
+        cal: rc.calendar, wd: rc.working, present: s.present, half: s.half, absent: s.absent,
+        leave: leaveDays, hol: rc.holidays, woff: rc.weeklyOff, incomplete: s.incomplete,
+        eff: fmtDur(s.effectiveHours), brk: fmtDur(s.breakHours), ot: fmtDur(s.overtimeHours),
+      });
+    }
+
+    // ── Sheet 2: Daily Attendance (filtered by status / source / view / dept / desig) ──
     const matchView = (c) => {
       switch (view) {
         case 'present': return c.status === 'present';
@@ -437,20 +476,8 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
         default: return true;
       }
     };
-
-    const rows = [];
-    for (const r of recs) {
-      const emp = empMap.get(r._hr_hremployee_value) || {};
-      if (department && emp.hr_department !== department) continue;
-      if (designation && emp.hr_designation !== designation) continue;
-      const c = computeSession(punchesFromRecord(r), shift);
-      if (!matchView(c)) continue;
-      rows.push({ r, emp, c });
-    }
-
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Attendance');
-    ws.columns = [
+    const detail = wb.addWorksheet('Daily Attendance');
+    detail.columns = [
       { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
       { header: 'Designation', key: 'desig', width: 18 }, { header: 'Date', key: 'date', width: 12 },
       { header: 'First Punch', key: 'first', width: 11 }, { header: 'Last Punch', key: 'last', width: 11 },
@@ -460,9 +487,14 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       { header: 'Status', key: 'status', width: 12 }, { header: 'Source', key: 'source', width: 12 },
       { header: 'Remarks', key: 'remarks', width: 20 },
     ];
-    ws.getRow(1).font = { bold: true };
-    for (const { r, emp, c } of rows) {
-      ws.addRow({
+    detail.getRow(1).font = { bold: true };
+    for (const { r, c, emp } of computed) {
+      if (department && emp.hr_department !== department) continue;
+      if (designation && emp.hr_designation !== designation) continue;
+      if (status && c.status !== status) continue;
+      if (source && r.hr_source !== toValue('hr_attendance_source', source)) continue;
+      if (!matchView(c)) continue;
+      detail.addRow({
         emp: emp.hr_hremployee1 || r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee',
         dept: emp.hr_department || '', desig: emp.hr_designation || '',
         date: String(r.hr_date || '').slice(0, 10),
@@ -473,51 +505,10 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       });
     }
 
-    // Summary worksheet when the range is larger than one week.
-    const rangeDays = (from && to) ? Math.round((new Date(to) - new Date(from)) / 86400000) + 1 : 0;
-    if (rangeDays > 7) {
-      const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-        select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
-        filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
-      });
-      const leaveByEmp = {};
-      (leaves || []).forEach(l => {
-        const d = String(l.hr_fromdate || '').slice(0, 10);
-        if ((from && d < from) || (to && d > to)) return;
-        leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
-      });
-      const agg = {};
-      for (const { r, emp, c } of rows) {
-        const id = r._hr_hremployee_value;
-        const a = agg[id] || (agg[id] = { name: emp.hr_hremployee1 || 'Employee', present: 0, half: 0, incomplete: 0, late: 0, early: 0, eff: 0, brk: 0, ot: 0 });
-        if (c.status === 'present') a.present++; else if (c.status === 'half_day') a.half++; else if (c.status === 'incomplete') a.incomplete++;
-        if (c.lateArrivalMin > 0) a.late++;
-        if (c.earlyDepartureMin > 0) a.early++;
-        a.eff += c.effectiveHours; a.brk += c.breakHours; a.ot += c.overtimeHours;
-      }
-      const wd = countWorkingDaysRange(from, to);
-      const ws2 = wb.addWorksheet('Summary');
-      ws2.columns = [
-        { header: 'Employee', key: 'name', width: 22 }, { header: 'Working Days', key: 'wd', width: 12 },
-        { header: 'Present', key: 'present', width: 9 }, { header: 'Absent', key: 'absent', width: 9 },
-        { header: 'Half Days', key: 'half', width: 10 }, { header: 'Approved Leave', key: 'leave', width: 14 },
-        { header: 'Incomplete', key: 'incomplete', width: 11 }, { header: 'Late Count', key: 'late', width: 10 },
-        { header: 'Early Exit Count', key: 'early', width: 15 }, { header: 'Total Effective Hours', key: 'eff', width: 18 },
-        { header: 'Total Break Hours', key: 'brk', width: 16 }, { header: 'Total Overtime', key: 'ot', width: 14 },
-      ];
-      ws2.getRow(1).font = { bold: true };
-      for (const [id, a] of Object.entries(agg)) {
-        const leaveDays = leaveByEmp[id] || 0;
-        ws2.addRow({
-          name: a.name, wd, present: a.present, absent: Math.max(0, wd - a.present - a.half - leaveDays),
-          half: a.half, leave: leaveDays, incomplete: a.incomplete, late: a.late, early: a.early,
-          eff: fmtDur(a.eff), brk: fmtDur(a.brk), ot: fmtDur(a.ot),
-        });
-      }
-    }
+    wb.views = [{ activeTab: 0 }]; // open on the Summary sheet by default
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=Attendance_${from || 'all'}_to_${to || 'now'}.xlsx`);
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_${from}_to_${to}.xlsx`);
     await wb.xlsx.write(res);
     res.end();
   } catch (err) { next(err); }
