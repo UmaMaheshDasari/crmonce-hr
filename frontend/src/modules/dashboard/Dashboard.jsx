@@ -178,7 +178,7 @@ export default function Dashboard() {
   // ── Recent activity (real system events, auto-refresh every 30s) ─────────
   const { data: activityData, isLoading: activityLoading } = useQuery({
     queryKey: ['recent-activity'],
-    queryFn: () => activityApi.list(20),
+    queryFn: () => activityApi.list(4),
     refetchInterval: 30000,
   });
   const activityItems = activityData?.data?.data ?? [];
