@@ -14,6 +14,7 @@
  *  - Night shifts (end <= start) handled for span/overtime.
  */
 const cfg = require('./attendance.config');
+const policy = require('./company.policy');
 
 const toMin = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -82,8 +83,9 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   const breakH = breakHours(punches);
   const effectiveHours = Math.max(0, round2(totalSpanHours - breakH));
   const overtimeHours = Math.max(0, round2(effectiveHours - shift.durationHours));
-  const halfDayThreshold = round2(shift.durationHours / 2);
-  const requiredHours = Number.isFinite(opts.requiredHours) ? opts.requiredHours : shift.durationHours;
+  // Thresholds come from the Company Policy layer (fall back to the shift).
+  const halfDayThreshold = Number.isFinite(opts.halfDayThreshold) ? opts.halfDayThreshold : policy.attendance.halfDayThreshold(shift.durationHours);
+  const requiredHours = Number.isFinite(opts.requiredHours) ? opts.requiredHours : policy.attendance.requiredShiftHours(shift.durationHours);
 
   // Late baseline = max(shift start, approved-leave end) — leave offsets late (#4).
   let lateArrivalMin = 0, earlyDepartureMin = 0;
@@ -107,17 +109,15 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   else if (effectiveHours < halfDayThreshold) status = 'half_day';
   else status = 'present';
 
-  // Compensation — late/early but completed required hours ⇒ compensated (no deduction).
-  const hadLateOrEarly = lateArrivalMin > 0 || earlyDepartureMin > 0;
-  const metRequired = effectiveHours >= requiredHours;
-  const compensationStatus = !hadLateOrEarly ? 'on_time' : (metRequired ? 'compensated' : 'shortfall');
-  const compensated = compensationStatus === 'compensated';
+  // FACT only — did the employee complete the required hours? The Payroll Engine
+  // (not attendance) decides compensation / salary deduction from this fact.
+  const metRequiredHours = effectiveHours >= requiredHours;
 
   return {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
     halfDayThreshold, requiredHours, lateArrivalMin, earlyDepartureMin,
-    status, compensated, compensationStatus,
+    status, metRequiredHours,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };
 }

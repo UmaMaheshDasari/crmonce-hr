@@ -117,28 +117,21 @@ test('normalizePunches infers direction by pairing', () => {
   assert.deepStrictEqual(p.map(x => x.d), ['in', 'out', 'in']);
 });
 
-// ── Company policy ─────────────────────────────────────────────────────────
-test('policy: late but completes shift hours → Present + compensated', () => {
+// ── Company policy (attendance emits FACTS only; compensation is Payroll's job) ──
+test('policy: late but completes required hours → Present + metRequiredHours', () => {
   const c = computeSession(['07:30', '17:30'], S('07:00', '17:00', 10)); // 10h shift
   assert.strictEqual(c.effectiveHours, 10);
   assert.strictEqual(c.lateArrivalMin, 30);
   assert.strictEqual(c.status, 'present');               // status by effective hours only
-  assert.strictEqual(c.compensationStatus, 'compensated');
-  assert.strictEqual(c.compensated, true);
+  assert.strictEqual(c.metRequiredHours, true);
 });
 
-test('policy: late AND short of required → present-by-hours but shortfall', () => {
+test('policy: late AND short of required → present-by-hours, metRequiredHours false', () => {
   const c = computeSession(['10:00', '17:00']);          // GENERAL 9h; effective 7
   assert.strictEqual(c.lateArrivalMin, 60);
   assert.strictEqual(c.effectiveHours, 7);
   assert.strictEqual(c.status, 'present');               // late does NOT reduce status
-  assert.strictEqual(c.compensationStatus, 'shortfall');
-  assert.strictEqual(c.compensated, false);
-});
-
-test('policy: on time full shift → on_time', () => {
-  const c = computeSession(['09:00', '18:00']);
-  assert.strictEqual(c.compensationStatus, 'on_time');
+  assert.strictEqual(c.metRequiredHours, false);
 });
 
 test('policy: approved leave offsets late calculation', () => {
