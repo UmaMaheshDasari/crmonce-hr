@@ -52,8 +52,20 @@ function breakHours(punches) {
   return round2(total);
 }
 
-/** Compute the full attendance session for a set of punches under a shift. */
-function computeSession(rawPunches, shiftInput) {
+/**
+ * Compute the full attendance session for a set of punches under a shift.
+ * opts:
+ *   leaveUntil     "HH:MM" — approved leave end time; offsets the late-arrival
+ *                  baseline (company policy #4: leave offsets late calculation).
+ *   requiredHours  number  — hours needed to "complete the shift" for compensation
+ *                  (default = shift duration).
+ *
+ * Company policy: STATUS is decided by EFFECTIVE HOURS only — late arrival never
+ * reduces attendance. Late/early are recorded for reporting; if the employee
+ * completes the required hours despite arriving late, compensation = compensated
+ * (no payroll deduction).
+ */
+function computeSession(rawPunches, shiftInput, opts = {}) {
   const shift = (shiftInput && shiftInput.durationHours) ? shiftInput : cfg.resolveShift(shiftInput);
   const punches = normalizePunches(rawPunches);
   const count = punches.length;
@@ -71,10 +83,13 @@ function computeSession(rawPunches, shiftInput) {
   const effectiveHours = Math.max(0, round2(totalSpanHours - breakH));
   const overtimeHours = Math.max(0, round2(effectiveHours - shift.durationHours));
   const halfDayThreshold = round2(shift.durationHours / 2);
+  const requiredHours = Number.isFinite(opts.requiredHours) ? opts.requiredHours : shift.durationHours;
 
+  // Late baseline = max(shift start, approved-leave end) — leave offsets late (#4).
   let lateArrivalMin = 0, earlyDepartureMin = 0;
   if (firstPunch) {
-    let d = toMin(firstPunch) - toMin(shift.start);
+    const baseline = opts.leaveUntil ? Math.max(toMin(shift.start), toMin(opts.leaveUntil)) : toMin(shift.start);
+    let d = toMin(firstPunch) - baseline;
     if (shift.isNight && d < -720) d += 1440;
     lateArrivalMin = Math.max(0, d - cfg.lateGraceMinutes);
   }
@@ -84,6 +99,7 @@ function computeSession(rawPunches, shiftInput) {
     earlyDepartureMin = Math.max(0, (endMin - lastMin) - cfg.earlyGraceMinutes);
   }
 
+  // Status — EFFECTIVE HOURS ONLY (late never reduces attendance; policy #1–3).
   let status;
   if (count === 0) status = 'absent';
   else if (state === 'in') status = 'incomplete';       // open session / forgot final checkout
@@ -91,10 +107,17 @@ function computeSession(rawPunches, shiftInput) {
   else if (effectiveHours < halfDayThreshold) status = 'half_day';
   else status = 'present';
 
+  // Compensation — late/early but completed required hours ⇒ compensated (no deduction).
+  const hadLateOrEarly = lateArrivalMin > 0 || earlyDepartureMin > 0;
+  const metRequired = effectiveHours >= requiredHours;
+  const compensationStatus = !hadLateOrEarly ? 'on_time' : (metRequired ? 'compensated' : 'shortfall');
+  const compensated = compensationStatus === 'compensated';
+
   return {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
-    halfDayThreshold, lateArrivalMin, earlyDepartureMin, status,
+    halfDayThreshold, requiredHours, lateArrivalMin, earlyDepartureMin,
+    status, compensated, compensationStatus,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };
 }
