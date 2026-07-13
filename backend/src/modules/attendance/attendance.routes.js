@@ -4,6 +4,7 @@ const d365 = require('../../services/d365.service');
 const etimeService = require('../../services/etime.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
+const { computeFromPunches, punchesFromRecord } = require('../../services/attendance.util');
 const leaveRoutes = require('./leave.routes');
 
 router.use('/leave', leaveRoutes);
@@ -106,98 +107,96 @@ router.get('/device/logs', requireRole('super_admin', 'hr_manager'), async (req,
   } catch (err) { next(err); }
 });
 
-// POST /api/attendance/checkin — Employee web check-in
+// ── Web punch session (multi-punch: IN/OUT/IN/OUT…, never locks) ──────────────
+const PUNCH_SELECT = 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours';
+const nowHHMM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; };
+
+async function findTodayRecord(employeeId) {
+  const today = new Date().toISOString().split('T')[0];
+  const existing = await d365.getList(ENTITY, {
+    select: PUNCH_SELECT,
+    filter: `_hr_hremployee_value eq '${employeeId}' and hr_date eq ${today}`,
+    top: 1,
+  });
+  return { today, record: (existing.data && existing.data[0]) || null };
+}
+
+// Map computed session → the D365 fields (shared by check-in / check-out).
+function punchPayload(c) {
+  return {
+    hr_intime: c.firstPunch || '',
+    hr_outtime: c.state === 'out' ? c.lastPunch : '',   // "final" out only while currently OUT
+    hr_workedhours: c.workedHours,
+    hr_overtime: c.overtime,
+    hr_breakduration: c.breakDuration,
+    hr_effectivehours: c.effectiveHours,
+    hr_punchcount: c.count,
+    hr_allpunches: JSON.stringify(c.punches),
+    hr_status: toValue('hr_attendance_status', c.status),
+  };
+}
+
+// POST /api/attendance/checkin — append an IN punch (allowed only when currently OUT/none)
 router.post('/checkin', requirePermission('attendance:read'), async (req, res, next) => {
   try {
     const employeeId = req.user.id;
-    const today = new Date().toISOString().split('T')[0];
+    const { today, record } = await findTodayRecord(employeeId);
 
-    // Check if attendance record already exists for today
-    const existing = await d365.getList(ENTITY, {
-      select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours',
-      filter: `_hr_hremployee_value eq '${employeeId}' and hr_date eq ${today}`,
-      top: 1,
-    });
-
-    if (existing.data && existing.data.length > 0 && existing.data[0].hr_intime) {
-      return res.status(400).json({ error: 'Already checked in today' });
+    if (!record) {
+      const c = computeFromPunches([nowHHMM()]);
+      const created = await d365.create(ENTITY, {
+        'hr_hremployee@odata.bind': `/hr_hremployees(${employeeId})`,
+        hr_date: today,
+        hr_source: toValue('hr_attendance_source', 'web_checkin'),
+        ...punchPayload(c),
+      });
+      return res.json(labelsForEntity('hr_hrattendances', created));
     }
 
-    const now = new Date();
-    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-    const record = await d365.create(ENTITY, {
-      'hr_hremployee@odata.bind': `/hr_hremployees(${employeeId})`,
-      hr_date: today,
-      hr_intime: currentTime,
-      hr_source: toValue('hr_attendance_source', 'web_checkin'),
-      hr_status: toValue('hr_attendance_status', 'incomplete'),
-    });
-
-    res.json(labelsForEntity('hr_hrattendances', record));
-  } catch (err) { next(err); }
-});
-
-// POST /api/attendance/checkout — Employee web check-out
-router.post('/checkout', requirePermission('attendance:read'), async (req, res, next) => {
-  try {
-    const employeeId = req.user.id;
-    const today = new Date().toISOString().split('T')[0];
-
-    const existing = await d365.getList(ENTITY, {
-      select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours',
-      filter: `_hr_hremployee_value eq '${employeeId}' and hr_date eq ${today}`,
-      top: 1,
-    });
-
-    if (!existing.data || existing.data.length === 0) {
-      return res.status(400).json({ error: "You haven't checked in today" });
+    const punches = punchesFromRecord(record);
+    if (punches.length % 2 === 1) {
+      return res.status(400).json({ error: 'You are already checked in — check out first' });
     }
-
-    const record = existing.data[0];
-    if (record.hr_outtime) {
-      return res.status(400).json({ error: 'Already checked out today' });
-    }
-
-    const now = new Date();
-    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-    // Calculate worked hours from hr_intime to now
-    const [inH, inM] = record.hr_intime.split(':').map(Number);
-    const workedMinutes = (now.getHours() * 60 + now.getMinutes()) - (inH * 60 + inM);
-    const workedHours = Math.max(0, parseFloat((workedMinutes / 60).toFixed(2)));
-    const overtime = Math.max(0, parseFloat((workedHours - 8).toFixed(2)));
-
-    const statusLabel = workedHours < 4 ? 'half_day' : 'present';
-
-    const updated = await d365.update(ENTITY, record.hr_hrattendanceid, {
-      hr_outtime: currentTime,
-      hr_workedhours: workedHours,
-      hr_overtime: overtime,
-      hr_status: toValue('hr_attendance_status', statusLabel),
-    });
-
+    const c = computeFromPunches([...punches, nowHHMM()]);
+    const updated = await d365.update(ENTITY, record.hr_hrattendanceid, punchPayload(c));
     res.json(labelsForEntity('hr_hrattendances', updated));
   } catch (err) { next(err); }
 });
 
-// GET /api/attendance/my-status — Today's attendance status for logged-in employee
-router.get('/my-status', requirePermission('attendance:read'), async (req, res, next) => {
+// POST /api/attendance/checkout — append an OUT punch (only when currently IN). Session stays open.
+router.post('/checkout', requirePermission('attendance:read'), async (req, res, next) => {
   try {
     const employeeId = req.user.id;
-    const today = new Date().toISOString().split('T')[0];
+    const { record } = await findTodayRecord(employeeId);
+    if (!record) return res.status(400).json({ error: "You haven't checked in today" });
 
-    const existing = await d365.getList(ENTITY, {
-      select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours',
-      filter: `_hr_hremployee_value eq '${employeeId}' and hr_date eq ${today}`,
-      top: 1,
-    });
+    const punches = punchesFromRecord(record);
+    if (punches.length % 2 === 0) {
+      return res.status(400).json({ error: 'You are not currently checked in' });
+    }
+    const c = computeFromPunches([...punches, nowHHMM()]);
+    const updated = await d365.update(ENTITY, record.hr_hrattendanceid, punchPayload(c));
+    res.json(labelsForEntity('hr_hrattendances', updated));
+  } catch (err) { next(err); }
+});
 
-    const record = existing.data && existing.data.length > 0 ? existing.data[0] : null;
-
+// GET /api/attendance/my-status — session state so the UI always offers the right next action
+router.get('/my-status', requirePermission('attendance:read'), async (req, res, next) => {
+  try {
+    const { record } = await findTodayRecord(req.user.id);
+    const c = computeFromPunches(record ? punchesFromRecord(record) : []);
     res.json({
-      checkedIn: !!(record && record.hr_intime),
-      checkedOut: !!(record && record.hr_outtime),
+      state: c.state,                 // 'none' | 'in' | 'out'
+      canCheckIn: c.state !== 'in',   // after any OUT you can check in again
+      canCheckOut: c.state === 'in',
+      punchCount: c.count,
+      punches: c.punches,
+      workedHours: c.workedHours,
+      breakDuration: c.breakDuration,
+      effectiveHours: c.effectiveHours,
+      // backward-compatible flags (kept so nothing else breaks)
+      checkedIn: c.state === 'in',
+      checkedOut: c.state === 'out',
       record: record ? labelsForEntity('hr_hrattendances', record) : null,
     });
   } catch (err) { next(err); }
