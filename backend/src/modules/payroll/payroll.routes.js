@@ -68,6 +68,11 @@ payrollRouter.get('/:id/payslip', requirePermission('payroll:read'), async (req,
       select: 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,hr_processeddate,_hr_hremployee_value',
     });
 
+    // Employees may only download their own payslip.
+    if (req.user.role === 'employee' && payroll._hr_hremployee_value !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
     // Get employee details
     const empId = payroll._hr_hremployee_value;
     const employee = empId ? await d365.getById(d365.constructor.entities.employee, empId, {

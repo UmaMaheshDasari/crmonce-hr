@@ -14,7 +14,7 @@ const NAV = [
   { to: '/employees',   label: 'Employees',    icon: UsersIcon },
   { to: '/attendance',  label: 'Attendance',    icon: ClockIcon },
   { to: '/leave',       label: 'Leave',        icon: CalendarDaysIcon },
-  { to: '/payroll',     label: 'Payroll',      icon: CurrencyDollarIcon,  roles: ['super_admin','hr_manager'] },
+  { to: '/payroll',     label: 'Payroll',      icon: CurrencyDollarIcon },
   { to: '/tax-declarations', label: 'Tax Declarations', icon: DocumentTextIcon },
   { to: '/recruitment', label: 'Recruitment',  icon: BriefcaseIcon },
   { to: '/performance', label: 'Performance',  icon: ChartBarIcon },

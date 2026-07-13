@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { payrollApi } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
 import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -111,6 +112,7 @@ function ProcessPayrollModal({ onClose }) {
 }
 
 export default function PayrollPage() {
+  const { isHR } = useAuth();
   const qc = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
@@ -167,19 +169,21 @@ export default function PayrollPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Payroll</h1>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{isHR() ? 'Payroll' : 'My Payslips'}</h1>
           <p className="text-sm text-gray-500 mt-1">{total} records</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="inline-flex items-center gap-2.5 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200"
-        >
-          <PlayIcon className="w-4.5 h-4.5" /> Process Payroll
-        </button>
+        {isHR() && (
+          <button
+            onClick={() => setShowModal(true)}
+            className="inline-flex items-center gap-2.5 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200"
+          >
+            <PlayIcon className="w-4.5 h-4.5" /> Process Payroll
+          </button>
+        )}
       </div>
 
-      {/* Summary Cards */}
-      {records.length > 0 && (
+      {/* Summary Cards (HR only) */}
+      {isHR() && records.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {summaryCards.map(s => (
             <div key={s.label} className={`bg-white rounded-xl border border-gray-100 border-l-4 ${s.border} p-5 shadow-sm hover:shadow-md transition-shadow duration-200`}>

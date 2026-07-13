@@ -50,7 +50,7 @@ function AppRoutes() {
         <Route path="employees/:id/edit" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="leave" element={<LeavePage />} />
-        <Route path="payroll" element={<ProtectedRoute roles={['super_admin','hr_manager']}><PayrollPage /></ProtectedRoute>} />
+        <Route path="payroll" element={<PayrollPage />} />
         <Route path="recruitment" element={<RecruitmentPage />} />
         <Route path="performance" element={<PerformancePage />} />
         <Route path="goals" element={<GoalsPage />} />
