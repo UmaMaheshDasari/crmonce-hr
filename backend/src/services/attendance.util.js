@@ -1,64 +1,113 @@
 /**
- * Attendance punch-session math — single source of truth for both web and
- * device punches. Pure functions, unit-testable.
+ * Attendance punch-session math — SINGLE SOURCE OF TRUTH for web + device.
  *
- * Model: hr_allpunches is a sorted array of "HH:MM" strings [IN, OUT, IN, OUT…].
- *   - odd count  → currently IN  (working)
- *   - even count → currently OUT (break / left, but re-openable)
- * The session NEVER locks: a new IN is always allowed after an OUT.
+ * Punch model: hr_allpunches is an array of {t:"HH:MM", d:"in"|"out"}.
+ *  - Device direction (AttendStat) is used when present.
+ *  - Legacy string arrays ["09:00","12:00"] and intime/outtime-only records are
+ *    accepted and paired by order (backward compatible — no migration).
+ *
+ * All thresholds are SHIFT-AWARE (no fixed office timing):
+ *  - halfDayThreshold = shiftDuration / 2
+ *  - Present = effective >= halfDayThreshold ; Half Day = 0 < effective < threshold
+ *  - Overtime = max(0, effective - shiftDuration)
+ *  - Late = firstPunch - shiftStart ; Early = shiftEnd - lastPunch
+ *  - Night shifts (end <= start) handled for span/overtime.
  */
-function calcHours(a, b) {
-  if (!a || !b) return 0;
-  const [ah, am] = a.split(':').map(Number);
-  const [bh, bm] = b.split(':').map(Number);
-  return Math.round(((bh * 60 + bm) - (ah * 60 + am)) / 60 * 100) / 100;
+const cfg = require('./attendance.config');
+
+const toMin = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const round2 = (n) => Math.round(n * 100) / 100;
+
+/** Normalize raw punches (strings or {t,d}) → sorted [{t,d}] with a direction on each. */
+function normalizePunches(raw) {
+  let arr = Array.isArray(raw) ? raw : [];
+  arr = arr
+    .map(p => (p && typeof p === 'object') ? { t: p.t || p.time, d: p.d || p.dir || null } : { t: p, d: null })
+    .filter(p => p.t);
+  // Preserve chronological insertion order (punches arrive in time order).
+  // Do NOT sort by HH:MM — that would misorder night shifts crossing midnight.
+  return arr.map((p, i) => ({ t: p.t, d: p.d || (i % 2 === 0 ? 'in' : 'out') }));
 }
 
-/** Sum of every OUT→IN gap: punch[1]→[2], [3]→[4], … (break time). */
-function calcBreakDuration(punches) {
-  if (punches.length < 3) return 0;
-  let total = 0;
-  for (let i = 1; i < punches.length - 1; i += 2) {
-    total += calcHours(punches[i], punches[i + 1]);
-  }
-  return Math.round(total * 100) / 100;
-}
-
-/** Reconstruct a punch array from a record (handles legacy intime/outtime-only rows). */
+/** Extract raw punches from a record (handles legacy hr_intime/hr_outtime rows). */
 function punchesFromRecord(record) {
   let p = [];
   try { p = JSON.parse(record?.hr_allpunches || '[]'); } catch (_) { p = []; }
   if (!Array.isArray(p)) p = [];
-  p = p.filter(Boolean);
-  if (p.length === 0) {                       // legacy record without hr_allpunches
+  if (p.length === 0) {
     if (record?.hr_intime) p.push(record.hr_intime);
     if (record?.hr_outtime) p.push(record.hr_outtime);
   }
   return p;
 }
 
-/** Compute all derived fields + session state from a punch list. */
-function computeFromPunches(rawPunches) {
-  const punches = (Array.isArray(rawPunches) ? rawPunches : []).filter(Boolean).slice().sort();
+/** Sum of break time: every OUT→IN gap. */
+function breakHours(punches) {
+  let total = 0;
+  for (let i = 0; i < punches.length - 1; i++) {
+    if (punches[i].d === 'out' && punches[i + 1].d === 'in') {
+      total += (toMin(punches[i + 1].t) - toMin(punches[i].t)) / 60;
+    }
+  }
+  return round2(total);
+}
+
+/** Compute the full attendance session for a set of punches under a shift. */
+function computeSession(rawPunches, shiftInput) {
+  const shift = (shiftInput && shiftInput.durationHours) ? shiftInput : cfg.resolveShift(shiftInput);
+  const punches = normalizePunches(rawPunches);
   const count = punches.length;
-  const state = count === 0 ? 'none' : (count % 2 === 1 ? 'in' : 'out');
-  const firstPunch = count ? punches[0] : null;
-  const lastPunch = count ? punches[count - 1] : null;
+  const state = count === 0 ? 'none' : (punches[count - 1].d === 'in' ? 'in' : 'out');
+  const firstPunch = count ? punches[0].t : null;
+  const lastPunch = count ? punches[count - 1].t : null;
 
-  const workedHours = count >= 2 ? calcHours(firstPunch, lastPunch) : 0;       // total span
-  const breakDuration = calcBreakDuration(punches);
-  const effectiveHours = Math.max(0, Math.round((workedHours - breakDuration) * 100) / 100);
-  const overtime = Math.max(0, Math.round((effectiveHours - 8) * 100) / 100);
+  let totalSpanHours = 0;
+  if (count >= 2) {
+    let diff = toMin(lastPunch) - toMin(firstPunch);
+    if (diff < 0) diff += 1440; // crossed midnight (night shift)
+    totalSpanHours = round2(diff / 60);
+  }
+  const breakH = breakHours(punches);
+  const effectiveHours = Math.max(0, round2(totalSpanHours - breakH));
+  const overtimeHours = Math.max(0, round2(effectiveHours - shift.durationHours));
+  const halfDayThreshold = round2(shift.durationHours / 2);
 
-  let status;                                  // never a locked/final state
+  let lateArrivalMin = 0, earlyDepartureMin = 0;
+  if (firstPunch) {
+    let d = toMin(firstPunch) - toMin(shift.start);
+    if (shift.isNight && d < -720) d += 1440;
+    lateArrivalMin = Math.max(0, d - cfg.lateGraceMinutes);
+  }
+  if (lastPunch && state === 'out') {
+    const endMin = toMin(shift.end) + (shift.isNight ? 1440 : 0);
+    const lastMin = toMin(lastPunch) + ((shift.isNight && toMin(lastPunch) < toMin(shift.start)) ? 1440 : 0);
+    earlyDepartureMin = Math.max(0, (endMin - lastMin) - cfg.earlyGraceMinutes);
+  }
+
+  let status;
   if (count === 0) status = 'absent';
-  else if (state === 'in') status = 'incomplete';               // working, or forgot final checkout
-  else status = effectiveHours < 4 ? 'half_day' : 'present';    // out, but re-openable
+  else if (state === 'in') status = 'incomplete';       // open session / forgot final checkout
+  else if (effectiveHours <= 0) status = 'absent';
+  else if (effectiveHours < halfDayThreshold) status = 'half_day';
+  else status = 'present';
 
   return {
     punches, count, state, firstPunch, lastPunch,
-    workedHours, breakDuration, effectiveHours, overtime, status,
+    totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
+    halfDayThreshold, lateArrivalMin, earlyDepartureMin, status,
+    shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };
 }
 
-module.exports = { calcHours, calcBreakDuration, punchesFromRecord, computeFromPunches };
+/** Backward-compatible wrapper (used by existing routes/tests). Default shift unless a code is passed. */
+function computeFromPunches(rawPunches, shiftCode) {
+  const c = computeSession(rawPunches, shiftCode);
+  return {
+    punches: c.punches, count: c.count, state: c.state,
+    firstPunch: c.firstPunch, lastPunch: c.lastPunch,
+    workedHours: c.totalSpanHours, breakDuration: c.breakHours,
+    effectiveHours: c.effectiveHours, overtime: c.overtimeHours, status: c.status,
+  };
+}
+
+module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches };
