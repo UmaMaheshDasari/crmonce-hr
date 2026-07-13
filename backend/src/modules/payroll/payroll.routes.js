@@ -96,16 +96,16 @@ payrollRouter.get('/:id/payslip', requirePermission('payroll:read'), async (req,
     doc.fontSize(10).font('Helvetica').fillColor('#c7d2fe')
        .text(`${monthName} ${payroll.hr_year}`, 50, 58);
     const company = {
-      name:    process.env.COMPANY_NAME    || 'CRMONCE (OPC) Private Limited',
-      address: process.env.COMPANY_ADDRESS || 'Hyderabad, Telangana, India',
-      email:   process.env.COMPANY_EMAIL   || process.env.GRAPH_SENDER || 'info@crmonce.com',
-      phone:   process.env.COMPANY_PHONE   || '',
+      name:  process.env.COMPANY_NAME     || 'CRMONCE (OPC) Private Limited',
+      addr1: process.env.COMPANY_ADDRESS  || '8-112, Gamallapalem, Kodurupadu',
+      addr2: process.env.COMPANY_ADDRESS2 || 'Nellore, Andhra Pradesh, India',
+      email: process.env.COMPANY_EMAIL    || process.env.GRAPH_SENDER || 'info@crmonce.com',
+      phone: process.env.COMPANY_PHONE    || '+91 8096556344',
     };
-    doc.fontSize(9).fillColor('#e0e7ff')
-       .text(company.name, 350, 26, { align: 'right', width: 195 })
-       .text(company.address, 350, 40, { align: 'right', width: 195 })
-       .text(company.email, 350, 54, { align: 'right', width: 195 });
-    if (company.phone) doc.text(company.phone, 350, 68, { align: 'right', width: 195 });
+    const companyLines = [company.name, company.addr1, company.addr2, company.email, company.phone].filter(Boolean);
+    doc.fontSize(8).font('Helvetica').fillColor('#e0e7ff');
+    let cy = 22;
+    for (const line of companyLines) { doc.text(line, 350, cy, { align: 'right', width: 195 }); cy += 12; }
 
     // ── Employee Info ───────────────────────────────────────────
     let y = 120;
