@@ -3,7 +3,8 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const etimeService = require('../../services/etime.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
-const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
+const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
+const ExcelJS = require('exceljs');
 const { computeFromPunches, computeSession, punchesFromRecord } = require('../../services/attendance.util');
 const attnCfg = require('../../services/attendance.config');
 const leaveRoutes = require('./leave.routes');
@@ -15,7 +16,7 @@ const ENTITY = d365.constructor.entities.attendance;
 // GET /api/attendance
 router.get('/', requirePermission('attendance:read'), async (req, res, next) => {
   try {
-    const { employeeId, from, to, status, page = 1, limit = 30 } = req.query;
+    const { employeeId, from, to, status, source, page = 1, limit = 30 } = req.query;
     const filters = [];
 
     // Employees can only see their own attendance
@@ -24,6 +25,7 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
     if (from) filters.push(`hr_date ge ${from}`);
     if (to) filters.push(`hr_date le ${to}`);
     if (status) filters.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
+    if (source) filters.push(`hr_source eq ${toValue('hr_attendance_source', source)}`);
 
     const result = await d365.getList(ENTITY, {
       select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours',
@@ -359,6 +361,165 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
       overtimeHours: Math.round(overtime * 100) / 100,
       totalMarkedToday: (recs || []).length,
     });
+  } catch (err) { next(err); }
+});
+
+// ── Excel export (only the CURRENT filtered data) ────────────────────────────
+const fmtDur = (h) => {
+  const v = Number(h);
+  if (!Number.isFinite(v) || v <= 0) return '0m';
+  let H = Math.floor(v), M = Math.round((v - H) * 60);
+  if (M === 60) { H++; M = 0; }
+  return H === 0 ? `${M}m` : (M === 0 ? `${H}h` : `${H}h ${M}m`);
+};
+const fmtMin = (m) => fmtDur((Number(m) || 0) / 60);
+
+function countWorkingDaysRange(from, to) {
+  if (!from || !to) return 0;
+  let count = 0;
+  const end = new Date(`${to}T00:00:00Z`);
+  for (let d = new Date(`${from}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const ds = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    if (attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
+    if (attnCfg.holidays.includes(ds)) continue;
+    count++;
+  }
+  return count;
+}
+
+// GET /api/attendance/export — .xlsx of the CURRENT filtered data (detail + optional summary)
+router.get('/export', requirePermission('attendance:read'), async (req, res, next) => {
+  try {
+    const { from, to, employeeId, status, department, designation, source, view } = req.query;
+    const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
+
+    // Server-side (OData) filters — we never fetch everything.
+    const f = [];
+    if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
+    if (from) f.push(`hr_date ge ${from}`);
+    if (to) f.push(`hr_date le ${to}`);
+    if (status && ['present', 'absent', 'half_day', 'incomplete', 'holiday'].includes(status)) {
+      f.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
+    }
+    if (source) f.push(`hr_source eq ${toValue('hr_attendance_source', source)}`);
+    const filterStr = f.join(' and ') || undefined;
+
+    // Paginate up to a cap (supports 10k+ rows).
+    const CAP = 10000, PAGE = 1000;
+    let recs = [], skip = 0;
+    while (recs.length < CAP) {
+      const { data } = await d365.getList(ENTITY, { select: PUNCH_SELECT, filter: filterStr, orderby: 'hr_date desc', top: PAGE, skip });
+      if (!data || !data.length) break;
+      recs.push(...data);
+      if (data.length < PAGE) break;
+      skip += PAGE;
+    }
+
+    // Employee lookup (name / dept / designation).
+    const { data: emps } = await d365.getList(d365.constructor.entities.employee, {
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation', top: 5000,
+    });
+    const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
+
+    const shift = resolveShift();
+    const matchView = (c) => {
+      switch (view) {
+        case 'present': return c.status === 'present';
+        case 'absent': return c.status === 'absent';
+        case 'half': return c.status === 'half_day';
+        case 'incomplete': return c.status === 'incomplete';
+        case 'late': return c.lateArrivalMin > 0;
+        case 'early': return c.earlyDepartureMin > 0;
+        case 'overtime': return c.overtimeHours > 0;
+        case 'less': return c.effectiveHours < c.requiredHours;
+        case 'more': return c.effectiveHours > c.requiredHours;
+        case 'working': return c.count > 0 && c.effectiveHours > 0;
+        default: return true;
+      }
+    };
+
+    const rows = [];
+    for (const r of recs) {
+      const emp = empMap.get(r._hr_hremployee_value) || {};
+      if (department && emp.hr_department !== department) continue;
+      if (designation && emp.hr_designation !== designation) continue;
+      const c = computeSession(punchesFromRecord(r), shift);
+      if (!matchView(c)) continue;
+      rows.push({ r, emp, c });
+    }
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Attendance');
+    ws.columns = [
+      { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
+      { header: 'Designation', key: 'desig', width: 18 }, { header: 'Date', key: 'date', width: 12 },
+      { header: 'First Punch', key: 'first', width: 11 }, { header: 'Last Punch', key: 'last', width: 11 },
+      { header: 'Punch Count', key: 'pc', width: 11 }, { header: 'Effective Hours', key: 'eff', width: 14 },
+      { header: 'Break', key: 'brk', width: 10 }, { header: 'Late', key: 'late', width: 10 },
+      { header: 'Early Exit', key: 'early', width: 11 }, { header: 'Overtime', key: 'ot', width: 11 },
+      { header: 'Status', key: 'status', width: 12 }, { header: 'Source', key: 'source', width: 12 },
+      { header: 'Remarks', key: 'remarks', width: 20 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    for (const { r, emp, c } of rows) {
+      ws.addRow({
+        emp: emp.hr_hremployee1 || r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee',
+        dept: emp.hr_department || '', desig: emp.hr_designation || '',
+        date: String(r.hr_date || '').slice(0, 10),
+        first: c.firstPunch || '', last: c.lastPunch || '', pc: c.count,
+        eff: fmtDur(c.effectiveHours), brk: fmtDur(c.breakHours),
+        late: fmtMin(c.lateArrivalMin), early: fmtMin(c.earlyDepartureMin), ot: fmtDur(c.overtimeHours),
+        status: c.status, source: toLabel('hr_attendance_source', r.hr_source), remarks: '',
+      });
+    }
+
+    // Summary worksheet when the range is larger than one week.
+    const rangeDays = (from && to) ? Math.round((new Date(to) - new Date(from)) / 86400000) + 1 : 0;
+    if (rangeDays > 7) {
+      const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
+        select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
+        filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+      });
+      const leaveByEmp = {};
+      (leaves || []).forEach(l => {
+        const d = String(l.hr_fromdate || '').slice(0, 10);
+        if ((from && d < from) || (to && d > to)) return;
+        leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
+      });
+      const agg = {};
+      for (const { r, emp, c } of rows) {
+        const id = r._hr_hremployee_value;
+        const a = agg[id] || (agg[id] = { name: emp.hr_hremployee1 || 'Employee', present: 0, half: 0, incomplete: 0, late: 0, early: 0, eff: 0, brk: 0, ot: 0 });
+        if (c.status === 'present') a.present++; else if (c.status === 'half_day') a.half++; else if (c.status === 'incomplete') a.incomplete++;
+        if (c.lateArrivalMin > 0) a.late++;
+        if (c.earlyDepartureMin > 0) a.early++;
+        a.eff += c.effectiveHours; a.brk += c.breakHours; a.ot += c.overtimeHours;
+      }
+      const wd = countWorkingDaysRange(from, to);
+      const ws2 = wb.addWorksheet('Summary');
+      ws2.columns = [
+        { header: 'Employee', key: 'name', width: 22 }, { header: 'Working Days', key: 'wd', width: 12 },
+        { header: 'Present', key: 'present', width: 9 }, { header: 'Absent', key: 'absent', width: 9 },
+        { header: 'Half Days', key: 'half', width: 10 }, { header: 'Approved Leave', key: 'leave', width: 14 },
+        { header: 'Incomplete', key: 'incomplete', width: 11 }, { header: 'Late Count', key: 'late', width: 10 },
+        { header: 'Early Exit Count', key: 'early', width: 15 }, { header: 'Total Effective Hours', key: 'eff', width: 18 },
+        { header: 'Total Break Hours', key: 'brk', width: 16 }, { header: 'Total Overtime', key: 'ot', width: 14 },
+      ];
+      ws2.getRow(1).font = { bold: true };
+      for (const [id, a] of Object.entries(agg)) {
+        const leaveDays = leaveByEmp[id] || 0;
+        ws2.addRow({
+          name: a.name, wd, present: a.present, absent: Math.max(0, wd - a.present - a.half - leaveDays),
+          half: a.half, leave: leaveDays, incomplete: a.incomplete, late: a.late, early: a.early,
+          eff: fmtDur(a.eff), brk: fmtDur(a.brk), ot: fmtDur(a.ot),
+        });
+      }
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_${from || 'all'}_to_${to || 'now'}.xlsx`);
+    await wb.xlsx.write(res);
+    res.end();
   } catch (err) { next(err); }
 });
 

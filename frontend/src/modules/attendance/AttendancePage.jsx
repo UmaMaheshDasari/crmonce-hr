@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { attendanceApi, employeeApi } from '../../api/endpoints';
-import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCircleIcon, FunnelIcon, CalendarDaysIcon, ComputerDesktopIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCircleIcon, FunnelIcon, CalendarDaysIcon, ComputerDesktopIcon, PencilSquareIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { formatDuration } from '../../utils/formatDuration';
@@ -22,14 +22,37 @@ export default function AttendancePage() {
   const [to, setTo] = useState(format(endOfMonth(today), 'yyyy-MM-dd'));
   const [empId, setEmpId] = useState('');
   const [status, setStatus] = useState('');
+  const [source, setSource] = useState('');
+  const [view, setView] = useState('');       // computed filter for export (late/early/overtime/…)
+  const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 20;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['attendance', empId, from, to, status, page],
-    queryFn: () => attendanceApi.list({ employeeId: empId, from, to, status, page, limit }),
+    queryKey: ['attendance', empId, from, to, status, source, page],
+    queryFn: () => attendanceApi.list({ employeeId: empId, from, to, status, source, page, limit }),
     keepPreviousData: true,
   });
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const res = await attendanceApi.exportExcel({ from, to, employeeId: empId, status, source, view });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url; a.download = `Attendance_${from}_to_${to}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Exported current filtered data');
+    } catch { toast.error('Export failed'); }
+    finally { setExporting(false); }
+  };
+
+  const resetFilters = () => {
+    setFrom(format(startOfMonth(today), 'yyyy-MM-dd'));
+    setTo(format(endOfMonth(today), 'yyyy-MM-dd'));
+    setEmpId(''); setStatus(''); setSource(''); setView(''); setPage(1);
+  };
 
   const { data: empData } = useQuery({
     queryKey: ['employees-all'],
@@ -56,11 +79,13 @@ export default function AttendancePage() {
   const incompleteCount = records.filter(r => r.hr_status === 'incomplete').length;
 
   const statCards = [
-    { label: 'Present', count: presentCount, icon: UserGroupIcon, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', border: 'border-l-emerald-500' },
-    { label: 'Absent', count: absentCount, icon: XCircleIcon, iconBg: 'bg-red-100', iconColor: 'text-red-600', border: 'border-l-red-500' },
-    { label: 'Half Day', count: halfDayCount, icon: ClockIcon, iconBg: 'bg-amber-100', iconColor: 'text-amber-600', border: 'border-l-amber-500' },
-    { label: 'Incomplete', count: incompleteCount, icon: ExclamationTriangleIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-l-slate-400' },
+    { label: 'Present', value: 'present', count: presentCount, icon: UserGroupIcon, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', border: 'border-l-emerald-500' },
+    { label: 'Absent', value: 'absent', count: absentCount, icon: XCircleIcon, iconBg: 'bg-red-100', iconColor: 'text-red-600', border: 'border-l-red-500' },
+    { label: 'Half Day', value: 'half_day', count: halfDayCount, icon: ClockIcon, iconBg: 'bg-amber-100', iconColor: 'text-amber-600', border: 'border-l-amber-500' },
+    { label: 'Incomplete', value: 'incomplete', count: incompleteCount, icon: ExclamationTriangleIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-l-slate-400' },
   ];
+
+  const toggleCard = (val) => { setStatus(status === val ? '' : val); setPage(1); };
 
   return (
     <div className="space-y-6">
@@ -70,22 +95,42 @@ export default function AttendancePage() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Attendance</h1>
           <p className="text-sm text-gray-500 mt-1">{total} records found</p>
         </div>
-        {isHR() && (
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isLoading}
-            className="inline-flex items-center gap-2.5 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-200 disabled:opacity-60 transition-all duration-200"
+            onClick={resetFilters}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 border border-gray-200 text-sm font-semibold rounded-xl hover:bg-gray-50 transition-all duration-200"
           >
-            <ArrowPathIcon className={`w-4.5 h-4.5 ${syncMutation.isLoading ? 'animate-spin' : ''}`} />
-            {syncMutation.isLoading ? 'Syncing...' : 'Sync eTime'}
+            <XCircleIcon className="w-4.5 h-4.5" /> Reset Filters
           </button>
-        )}
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-emerald-200 hover:bg-emerald-700 disabled:opacity-60 transition-all duration-200"
+          >
+            <ArrowDownTrayIcon className="w-4.5 h-4.5" /> {exporting ? 'Exporting…' : 'Export Excel'}
+          </button>
+          {isHR() && (
+            <button
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isLoading}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-60 transition-all duration-200"
+            >
+              <ArrowPathIcon className={`w-4.5 h-4.5 ${syncMutation.isLoading ? 'animate-spin' : ''}`} />
+              {syncMutation.isLoading ? 'Syncing...' : 'Sync eTime'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Summary Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map(s => (
-          <div key={s.label} className={`bg-white rounded-xl border border-gray-100 border-l-4 ${s.border} p-5 shadow-sm hover:shadow-md transition-shadow duration-200`}>
+          <button
+            key={s.label}
+            type="button"
+            onClick={() => toggleCard(s.value)}
+            className={`text-left bg-white rounded-xl border border-l-4 ${s.border} p-5 shadow-sm hover:shadow-md transition-all duration-200 ${status === s.value ? 'ring-2 ring-indigo-400 border-gray-200' : 'border-gray-100'}`}
+          >
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-3xl font-bold text-gray-900 tracking-tight">{s.count}</p>
@@ -95,7 +140,7 @@ export default function AttendancePage() {
                 <s.icon className={`w-5 h-5 ${s.iconColor}`} />
               </div>
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -139,6 +184,31 @@ export default function AttendancePage() {
               <option value="absent">Absent</option>
               <option value="half_day">Half Day</option>
               <option value="incomplete">Incomplete</option>
+            </select>
+          </div>
+          <div className="min-w-[150px]">
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">Source</label>
+            <select className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none" value={source} onChange={e => { setSource(e.target.value); setPage(1); }}>
+              <option value="">All Sources</option>
+              <option value="etime_device">Device</option>
+              <option value="manual_correction">Manual</option>
+              <option value="web_checkin">Web</option>
+            </select>
+          </div>
+          <div className="min-w-[170px]">
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">Export filter</label>
+            <select className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none" value={view} onChange={e => setView(e.target.value)} title="Applies to the Excel export">
+              <option value="">All records</option>
+              <option value="working">Working Days only</option>
+              <option value="present">Present only</option>
+              <option value="absent">Absent only</option>
+              <option value="half">Half Day only</option>
+              <option value="incomplete">Incomplete only</option>
+              <option value="late">Late Arrivals</option>
+              <option value="early">Early Exits</option>
+              <option value="overtime">Overtime</option>
+              <option value="less">Less than Required Hours</option>
+              <option value="more">More than Required Hours</option>
             </select>
           </div>
         </div>
