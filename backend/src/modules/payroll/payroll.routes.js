@@ -95,10 +95,17 @@ payrollRouter.get('/:id/payslip', requirePermission('payroll:read'), async (req,
        .text('PAYSLIP', 50, 30);
     doc.fontSize(10).font('Helvetica').fillColor('#c7d2fe')
        .text(`${monthName} ${payroll.hr_year}`, 50, 58);
+    const company = {
+      name:    process.env.COMPANY_NAME    || 'CRMONCE (OPC) Private Limited',
+      address: process.env.COMPANY_ADDRESS || 'Hyderabad, Telangana, India',
+      email:   process.env.COMPANY_EMAIL   || process.env.GRAPH_SENDER || 'info@crmonce.com',
+      phone:   process.env.COMPANY_PHONE   || '',
+    };
     doc.fontSize(9).fillColor('#e0e7ff')
-       .text('Your Company Name', 350, 30, { align: 'right', width: 195 })
-       .text('123 Business Road, City', 350, 44, { align: 'right', width: 195 })
-       .text('contact@yourcompany.com', 350, 58, { align: 'right', width: 195 });
+       .text(company.name, 350, 26, { align: 'right', width: 195 })
+       .text(company.address, 350, 40, { align: 'right', width: 195 })
+       .text(company.email, 350, 54, { align: 'right', width: 195 });
+    if (company.phone) doc.text(company.phone, 350, 68, { align: 'right', width: 195 });
 
     // ── Employee Info ───────────────────────────────────────────
     let y = 120;
