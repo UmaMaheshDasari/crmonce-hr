@@ -4,6 +4,7 @@ import { attendanceApi, employeeApi } from '../../api/endpoints';
 import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCircleIcon, FunnelIcon, CalendarDaysIcon, ComputerDesktopIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { formatDuration } from '../../utils/formatDuration';
 import toast from 'react-hot-toast';
 
 const STATUS_CONFIG = {
@@ -227,7 +228,7 @@ export default function AttendancePage() {
                                 <div className={`h-full rounded-full ${eff >= 8 ? 'bg-emerald-500' : eff >= 4 ? 'bg-amber-500' : 'bg-red-400'}`} style={{ width: `${pct}%` }} />
                               </div>
                               <span className={`text-sm font-semibold tabular-nums ${eff >= 8 ? 'text-emerald-600' : eff >= 4 ? 'text-amber-600' : 'text-red-500'}`}>
-                                {eff.toFixed(1)}h
+                                {formatDuration(eff)}
                               </span>
                             </div>
                           );
@@ -236,7 +237,7 @@ export default function AttendancePage() {
                       <td className="px-5 py-4">
                         {r.hr_breakduration > 0 ? (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">
-                            {r.hr_breakduration.toFixed(1)}h
+                            {formatDuration(r.hr_breakduration)}
                           </span>
                         ) : (
                           <span className="text-sm text-gray-300">—</span>

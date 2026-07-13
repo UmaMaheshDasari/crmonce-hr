@@ -8,6 +8,7 @@ import {
   ClockIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { formatDuration, formatMinutes } from '../utils/formatDuration';
 
 function formatTime(date) {
   return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -148,15 +149,15 @@ export default function CheckInOut({ compact = false }) {
           <div className="grid grid-cols-3 gap-2 mb-4">
             <div className="bg-gray-50 rounded-xl p-2.5 text-center">
               <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Worked</p>
-              <p className="text-sm font-bold text-gray-800 tabular-nums">{worked}h</p>
+              <p className="text-sm font-bold text-gray-800 tabular-nums">{formatDuration(worked)}</p>
             </div>
             <div className="bg-amber-50/60 rounded-xl p-2.5 text-center">
               <p className="text-[10px] uppercase tracking-wider text-amber-500/80 font-semibold">Break</p>
-              <p className="text-sm font-bold text-amber-700 tabular-nums">{breakDur}h</p>
+              <p className="text-sm font-bold text-amber-700 tabular-nums">{formatDuration(breakDur)}</p>
             </div>
             <div className="bg-emerald-50/60 rounded-xl p-2.5 text-center">
               <p className="text-[10px] uppercase tracking-wider text-emerald-500/80 font-semibold">Effective</p>
-              <p className="text-sm font-bold text-emerald-700 tabular-nums">{effective}h</p>
+              <p className="text-sm font-bold text-emerald-700 tabular-nums">{formatDuration(effective)}</p>
             </div>
           </div>
         )}
@@ -165,9 +166,9 @@ export default function CheckInOut({ compact = false }) {
         {punchCount > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-4 text-[11px]">
             {shift && <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Shift {shift.start}–{shift.end}</span>}
-            {lateMin > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Late {lateMin}m</span>}
-            {earlyMin > 0 && <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">Early exit {earlyMin}m</span>}
-            {overtime > 0 && <span className="px-2 py-0.5 rounded-full bg-violet-50 text-violet-700">OT {overtime}h</span>}
+            {lateMin > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Late {formatMinutes(lateMin)}</span>}
+            {earlyMin > 0 && <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">Early exit {formatMinutes(earlyMin)}</span>}
+            {overtime > 0 && <span className="px-2 py-0.5 rounded-full bg-violet-50 text-violet-700">OT {formatDuration(overtime)}</span>}
             {compensation === 'compensated' && <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Compensated</span>}
             {compensation === 'on_time' && <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">On time</span>}
             {compensation === 'shortfall' && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Short of required</span>}

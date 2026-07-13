@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { employeeApi, attendanceApi, documentApi } from '../../api/endpoints';
 import { PencilIcon, ChevronRightIcon, EnvelopeIcon, PhoneIcon, MapPinIcon, CalendarIcon, BuildingOfficeIcon, BriefcaseIcon, IdentificationIcon, ClockIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
+import { formatDuration } from '../../utils/formatDuration';
 import { format } from 'date-fns';
 
 const STATUS_STYLES = {
@@ -228,7 +229,7 @@ export default function EmployeeDetail() {
                   <td className="px-6 py-4 text-sm text-gray-700 font-medium tabular-nums">{a.hr_date}</td>
                   <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{a.hr_intime || <span className="text-gray-300">&mdash;</span>}</td>
                   <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{a.hr_outtime || <span className="text-gray-300">&mdash;</span>}</td>
-                  <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{a.hr_workedhours?.toFixed(1) || <span className="text-gray-300">&mdash;</span>}h</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{a.hr_workedhours != null ? formatDuration(a.hr_workedhours) : <span className="text-gray-300">&mdash;</span>}</td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                       a.hr_status === 'present' ? 'bg-emerald-50 text-emerald-700' :
