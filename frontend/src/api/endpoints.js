@@ -29,6 +29,10 @@ export const attendanceApi = {
   checkin: () => api.post('/attendance/checkin'),
   checkout: () => api.post('/attendance/checkout'),
   myStatus: () => api.get('/attendance/my-status'),
+  correction: (attendanceId, actualCheckout, reason) =>
+    api.post('/attendance/correction', { attendanceId, actualCheckout, reason }),
+  summaryMonthly: (params) => api.get('/attendance/summary/monthly', { params }),
+  hrOverview: () => api.get('/attendance/hr/overview'),
 };
 
 // ── Leave ────────────────────────────────────────────────────────

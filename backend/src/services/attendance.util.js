@@ -110,14 +110,19 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   else status = 'present';
 
   // FACT only — did the employee complete the required hours? The Payroll Engine
-  // (not attendance) decides compensation / salary deduction from this fact.
+  // (not attendance) decides any salary deduction from this fact.
   const metRequiredHours = effectiveHours >= requiredHours;
+
+  // Compensation STATUS is a reporting label (no salary meaning): a late/early
+  // employee who still completed the required hours is "compensated".
+  const hadDeviation = lateArrivalMin > 0 || earlyDepartureMin > 0;
+  const compensationStatus = !hadDeviation ? 'on_time' : (metRequiredHours ? 'compensated' : 'shortfall');
 
   return {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
     halfDayThreshold, requiredHours, lateArrivalMin, earlyDepartureMin,
-    status, metRequiredHours,
+    status, metRequiredHours, compensationStatus,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };
 }

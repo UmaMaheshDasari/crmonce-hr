@@ -52,13 +52,26 @@ export default function CheckInOut({ compact = false }) {
   const state = s.state ?? (s.checkedIn ? 'in' : (s.checkedOut ? 'out' : 'none'));
   const canCheckOut = s.canCheckOut ?? (state === 'in');
   const punchCount = s.punchCount ?? (s.record?.hr_punchcount ?? 0);
-  const punches = s.punches ?? [];
-  const lastPunch = punches.length
-    ? punches[punches.length - 1]
-    : (state === 'in' ? s.record?.hr_intime : s.record?.hr_outtime);
+  const punchTime = (p) => (p && typeof p === 'object') ? p.t : p; // punches are now {t,d}
+  const lastPunch = s.lastPunch ?? punchTime((s.punches ?? [])[(s.punches ?? []).length - 1])
+    ?? (state === 'in' ? s.record?.hr_intime : s.record?.hr_outtime);
   const worked = s.workedHours ?? s.record?.hr_workedhours ?? 0;
   const effective = s.effectiveHours ?? s.record?.hr_effectivehours ?? worked;
-  const breakDur = s.breakDuration ?? s.record?.hr_breakduration ?? 0;
+  const breakDur = s.breakHours ?? s.breakDuration ?? s.record?.hr_breakduration ?? 0;
+  const overtime = s.overtimeHours ?? s.record?.hr_overtime ?? 0;
+  const lateMin = s.lateArrivalMin ?? 0;
+  const earlyMin = s.earlyDepartureMin ?? 0;
+  const compensation = s.compensationStatus ?? null;   // on_time | compensated | shortfall
+  const shift = s.shift ?? null;
+  const incompletePrevious = s.incompletePrevious ?? null;
+
+  const correctionMutation = useMutation({
+    mutationFn: ({ id, time, reason }) => attendanceApi.correction(id, time, reason),
+    onSuccess: () => { toast.success('Correction submitted'); queryClient.invalidateQueries({ queryKey: ['attendance-my-status'] }); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Correction failed'),
+  });
+  const [fixTime, setFixTime] = useState('18:00');
+  const [fixReason, setFixReason] = useState('');
 
   const checkinMutation = useMutation({
     mutationFn: () => attendanceApi.checkin(),
@@ -144,6 +157,41 @@ export default function CheckInOut({ compact = false }) {
             <div className="bg-emerald-50/60 rounded-xl p-2.5 text-center">
               <p className="text-[10px] uppercase tracking-wider text-emerald-500/80 font-semibold">Effective</p>
               <p className="text-sm font-bold text-emerald-700 tabular-nums">{effective}h</p>
+            </div>
+          </div>
+        )}
+
+        {/* Reporting facts: late / early / overtime / compensation (never affect status) */}
+        {punchCount > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-4 text-[11px]">
+            {shift && <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Shift {shift.start}–{shift.end}</span>}
+            {lateMin > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Late {lateMin}m</span>}
+            {earlyMin > 0 && <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">Early exit {earlyMin}m</span>}
+            {overtime > 0 && <span className="px-2 py-0.5 rounded-full bg-violet-50 text-violet-700">OT {overtime}h</span>}
+            {compensation === 'compensated' && <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Compensated</span>}
+            {compensation === 'on_time' && <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">On time</span>}
+            {compensation === 'shortfall' && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Short of required</span>}
+          </div>
+        )}
+
+        {/* Forgot-checkout correction (prior open day) */}
+        {incompletePrevious && (
+          <div className="mb-4 p-3 rounded-xl border border-amber-200 bg-amber-50">
+            <p className="text-xs font-semibold text-amber-800">Previous attendance is incomplete</p>
+            <p className="text-[11px] text-amber-700 mb-2">
+              {String(incompletePrevious.hr_date || '').slice(0, 10)} has no checkout. Submit the actual checkout time to continue.
+            </p>
+            <div className="flex gap-2 items-center">
+              <input type="time" value={fixTime} onChange={e => setFixTime(e.target.value)}
+                className="px-2 py-1 text-sm border border-amber-200 rounded-lg bg-white" />
+              <input type="text" value={fixReason} onChange={e => setFixReason(e.target.value)} placeholder="Reason"
+                className="flex-1 min-w-0 px-2 py-1 text-sm border border-amber-200 rounded-lg bg-white" />
+              <button
+                onClick={() => correctionMutation.mutate({ id: incompletePrevious.hr_hrattendanceid, time: fixTime, reason: fixReason })}
+                disabled={correctionMutation.isPending}
+                className="px-3 py-1 text-xs font-semibold text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50 flex-shrink-0">
+                {correctionMutation.isPending ? 'Saving…' : 'Submit'}
+              </button>
             </div>
           </div>
         )}
