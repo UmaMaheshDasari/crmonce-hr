@@ -30,19 +30,37 @@ function rangeCounts(from, to, opts = {}) {
  * @param sessions array of computeSession() results (or {count,status,effectiveHours,breakHours,overtimeHours})
  * Absent = Working Days - (days with a punch) - Approved Leave  (never counts a punch day or holiday/week-off as absent).
  */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtDate(dateStr) {
+  const d = String(dateStr || '').slice(0, 10).split('-');
+  if (d.length !== 3) return String(dateStr || '');
+  return `${d[2]} ${MONTHS[Number(d[1]) - 1] || d[1]} ${d[0]}`;
+}
+
+/**
+ * @param sessions array of computeSession() results, optionally carrying { date, attendanceIssue }
+ * Also returns missingPunchDetails: ["05 Jul 2026 – Missing Check Out", …] for incomplete days.
+ */
 function summarizeEmployee(sessions = [], { working = 0, leaveDays = 0 } = {}) {
   let present = 0, half = 0, incomplete = 0, attended = 0, eff = 0, brk = 0, ot = 0;
+  const missingPunchDetails = [];
   for (const c of sessions) {
     if ((c.count || 0) > 0) attended++;                 // any punch → not absent (rule 8)
     if (c.status === 'present') present++;
     else if (c.status === 'half_day') half++;
-    else if (c.status === 'incomplete') incomplete++;
+    else if (c.status === 'incomplete') {
+      incomplete++;
+      if (c.date) missingPunchDetails.push(`${fmtDate(c.date)} – ${c.attendanceIssue || 'Missing Check Out'}`);
+    }
     eff += c.effectiveHours || 0;
     brk += c.breakHours || 0;
     ot += c.overtimeHours || 0;
   }
   const absent = Math.max(0, working - attended - (leaveDays || 0));
-  return { present, half, incomplete, attended, absent, effectiveHours: round2(eff), breakHours: round2(brk), overtimeHours: round2(ot) };
+  return {
+    present, half, incomplete, attended, absent, missingPunchDetails,
+    effectiveHours: round2(eff), breakHours: round2(brk), overtimeHours: round2(ot),
+  };
 }
 
-module.exports = { rangeCounts, summarizeEmployee };
+module.exports = { rangeCounts, summarizeEmployee, fmtDate };

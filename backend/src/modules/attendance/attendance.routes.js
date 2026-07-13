@@ -424,7 +424,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     const byEmp = {};
     const computed = recs.map(r => {
       const c = computeSession(punchesFromRecord(r), shift);
-      (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push(c);
+      (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
       return { r, c, emp: empMap.get(r._hr_hremployee_value) || {} };
     });
 
@@ -444,11 +444,13 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       { header: 'Working Days', key: 'wd', width: 12 }, { header: 'Present', key: 'present', width: 9 },
       { header: 'Half Day', key: 'half', width: 9 }, { header: 'Absent', key: 'absent', width: 9 },
       { header: 'Approved Leave', key: 'leave', width: 14 }, { header: 'Office Holidays', key: 'hol', width: 14 },
-      { header: 'Weekly Off', key: 'woff', width: 11 }, { header: 'Incomplete', key: 'incomplete', width: 11 },
+      { header: 'Weekly Off', key: 'woff', width: 11 }, { header: 'Incomplete Days', key: 'incomplete', width: 13 },
+      { header: 'Missing Punch Details', key: 'missing', width: 34 },
       { header: 'Total Effective Hours', key: 'eff', width: 18 }, { header: 'Total Break Hours', key: 'brk', width: 16 },
       { header: 'Total Overtime', key: 'ot', width: 14 },
     ];
     sum.getRow(1).font = { bold: true };
+    sum.getColumn('missing').alignment = { wrapText: true, vertical: 'top' };
     for (const e of scope) {
       const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
       const s = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working: rc.working, leaveDays });
@@ -456,6 +458,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
         emp: e.hr_hremployee1 || 'Employee', dept: e.hr_department || '', desig: e.hr_designation || '',
         cal: rc.calendar, wd: rc.working, present: s.present, half: s.half, absent: s.absent,
         leave: leaveDays, hol: rc.holidays, woff: rc.weeklyOff, incomplete: s.incomplete,
+        missing: s.missingPunchDetails.length ? s.missingPunchDetails.join('\n') : 'None',
         eff: fmtDur(s.effectiveHours), brk: fmtDur(s.breakHours), ot: fmtDur(s.overtimeHours),
       });
     }
@@ -484,8 +487,8 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       { header: 'Punch Count', key: 'pc', width: 11 }, { header: 'Effective Hours', key: 'eff', width: 14 },
       { header: 'Break', key: 'brk', width: 10 }, { header: 'Late', key: 'late', width: 10 },
       { header: 'Early Exit', key: 'early', width: 11 }, { header: 'Overtime', key: 'ot', width: 11 },
-      { header: 'Status', key: 'status', width: 12 }, { header: 'Source', key: 'source', width: 12 },
-      { header: 'Remarks', key: 'remarks', width: 20 },
+      { header: 'Status', key: 'status', width: 12 }, { header: 'Attendance Issue', key: 'issue', width: 16 },
+      { header: 'Source', key: 'source', width: 12 }, { header: 'Remarks', key: 'remarks', width: 20 },
     ];
     detail.getRow(1).font = { bold: true };
     for (const { r, c, emp } of computed) {
@@ -501,7 +504,9 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
         first: c.firstPunch || '', last: c.lastPunch || '', pc: c.count,
         eff: fmtDur(c.effectiveHours), brk: fmtDur(c.breakHours),
         late: fmtMin(c.lateArrivalMin), early: fmtMin(c.earlyDepartureMin), ot: fmtDur(c.overtimeHours),
-        status: c.status, source: toLabel('hr_attendance_source', r.hr_source), remarks: '',
+        status: c.status,
+        issue: r.hr_source === toValue('hr_attendance_source', 'manual_correction') ? 'Manual Correction' : (c.attendanceIssue || 'Normal'),
+        source: toLabel('hr_attendance_source', r.hr_source), remarks: '',
       });
     }
 

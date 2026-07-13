@@ -102,12 +102,21 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   }
 
   // Status — EFFECTIVE HOURS ONLY (late never reduces attendance; policy #1–3).
+  // A day with ANY punch is NEVER Absent — only a punch-free day can be Absent.
+  // An odd (unmatched) punch count means a punch is missing → Incomplete.
+  const isOdd = count % 2 === 1;
   let status;
   if (count === 0) status = 'absent';
-  else if (state === 'in') status = 'incomplete';       // open session / forgot final checkout
-  else if (effectiveHours <= 0) status = 'absent';
+  else if (isOdd) status = 'incomplete';
   else if (effectiveHours < halfDayThreshold) status = 'half_day';
   else status = 'present';
+
+  // Attendance issue / type (reporting only): which punch is missing, or Normal.
+  let attendanceIssue = '';
+  if (count > 0) {
+    if (isOdd) attendanceIssue = punches[0].d === 'out' ? 'Missing Check In' : 'Missing Check Out';
+    else attendanceIssue = 'Normal';
+  }
 
   // FACT only — did the employee complete the required hours? The Payroll Engine
   // (not attendance) decides any salary deduction from this fact.
@@ -122,7 +131,7 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
     halfDayThreshold, requiredHours, lateArrivalMin, earlyDepartureMin,
-    status, metRequiredHours, compensationStatus,
+    status, metRequiredHours, compensationStatus, attendanceIssue,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };
 }

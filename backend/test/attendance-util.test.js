@@ -144,3 +144,35 @@ test('policy: approved leave offsets late calculation', () => {
   const c = computeSession(['11:05', '18:00'], undefined, { leaveUntil: '11:00' });
   assert.strictEqual(c.lateArrivalMin, 5);               // measured from 11:00, not 09:00
 });
+
+// ── Rule: any punch → never Absent; attendance issue ───────────────────────
+test('single IN → Incomplete, never Absent, Missing Check Out', () => {
+  const c = computeSession(['09:00']);
+  assert.strictEqual(c.status, 'incomplete');
+  assert.notStrictEqual(c.status, 'absent');
+  assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
+});
+
+test('IN + OUT → Normal issue, never Absent', () => {
+  const c = computeSession(['09:00', '18:00']);
+  assert.strictEqual(c.attendanceIssue, 'Normal');
+  assert.notStrictEqual(c.status, 'absent');
+});
+
+test('device OUT-first single punch → Missing Check In (incomplete)', () => {
+  const c = computeSession([{ t: '18:00', d: 'out' }]);
+  assert.strictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.attendanceIssue, 'Missing Check In');
+});
+
+test('punch in+out same minute (0 effective) is NOT Absent', () => {
+  const c = computeSession(['09:00', '09:00']);
+  assert.notStrictEqual(c.status, 'absent');
+  assert.strictEqual(c.attendanceIssue, 'Normal');
+});
+
+test('no punches → Absent, empty issue', () => {
+  const c = computeSession([]);
+  assert.strictEqual(c.status, 'absent');
+  assert.strictEqual(c.attendanceIssue, '');
+});
