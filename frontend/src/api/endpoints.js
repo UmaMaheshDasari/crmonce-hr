@@ -90,6 +90,11 @@ export const goalsApi = {
   delete: (id) => api.delete(`/performance/goals/${id}`),
 };
 
+// ── Activity Feed ────────────────────────────────────────────────
+export const activityApi = {
+  list: (limit = 20) => api.get('/activity', { params: { limit } }),
+};
+
 // ── Documents ────────────────────────────────────────────────────
 export const documentApi = {
   list: (params) => api.get('/documents', { params }),

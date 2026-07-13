@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { employeeApi, attendanceApi, leaveApi, payrollApi, recruitmentApi } from '../../api/endpoints';
+import { Link } from 'react-router-dom';
+import { employeeApi, attendanceApi, leaveApi, payrollApi, recruitmentApi, activityApi } from '../../api/endpoints';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { UsersIcon, ClockIcon, CurrencyDollarIcon, BriefcaseIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import CheckInOut from '../../components/CheckInOut';
+import ActivityFeed from '../../components/ActivityFeed';
 
 const BORDER_COLORS = {
   'text-indigo-600': 'border-l-indigo-500',
@@ -173,26 +175,13 @@ export default function Dashboard() {
     }));
   })();
 
-  const activityItems = [
-    { text: 'eTime Office sync completed', time: '2 min ago', type: 'green' },
-    { text: 'Leave request submitted by Priya S.', time: '15 min ago', type: 'blue' },
-    { text: 'New application for Sr. Developer', time: '1 hr ago', type: 'purple' },
-    { text: 'Payroll processed for March 2026', time: '2 hrs ago', type: 'amber' },
-  ];
-
-  const dotColor = {
-    green: 'bg-emerald-500',
-    blue: 'bg-blue-500',
-    purple: 'bg-violet-500',
-    amber: 'bg-amber-500',
-  };
-
-  const ringColor = {
-    green: 'ring-emerald-500/20',
-    blue: 'ring-blue-500/20',
-    purple: 'ring-violet-500/20',
-    amber: 'ring-amber-500/20',
-  };
+  // ── Recent activity (real system events, auto-refresh every 30s) ─────────
+  const { data: activityData, isLoading: activityLoading } = useQuery({
+    queryKey: ['recent-activity'],
+    queryFn: () => activityApi.list(20),
+    refetchInterval: 30000,
+  });
+  const activityItems = activityData?.data?.data ?? [];
 
   return (
     <div className="space-y-8">
@@ -304,25 +293,16 @@ export default function Dashboard() {
 
       {/* Activity Feed */}
       <div className="bg-white rounded-xl border border-gray-100 p-6 hover:shadow-md transition-shadow duration-300">
-        <div className="mb-6">
-          <h2 className="text-base font-bold text-gray-900">Recent Activity</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Latest updates across the system</p>
-        </div>
-        <div className="relative">
-          {/* Connecting line */}
-          <div className="absolute left-[7px] top-2 bottom-2 w-px bg-gray-100" />
-          <div className="space-y-5">
-            {activityItems.map((item, i) => (
-              <div key={i} className="flex items-start gap-4 relative group">
-                <div className={`relative z-10 w-[15px] h-[15px] rounded-full ${dotColor[item.type]} ring-4 ${ringColor[item.type]} flex-shrink-0 mt-0.5 group-hover:scale-125 transition-transform duration-200`} />
-                <div className="flex-1 flex items-start justify-between min-w-0">
-                  <p className="text-sm text-gray-700 font-medium leading-snug">{item.text}</p>
-                  <span className="text-xs text-gray-400 flex-shrink-0 ml-4 mt-0.5 tabular-nums">{item.time}</span>
-                </div>
-              </div>
-            ))}
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h2 className="text-base font-bold text-gray-900">Recent Activity</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Important system events · updates every 30s</p>
           </div>
+          <Link to="/activities" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex-shrink-0">
+            View all →
+          </Link>
         </div>
+        <ActivityFeed items={activityItems} loading={activityLoading} />
       </div>
     </div>
   );

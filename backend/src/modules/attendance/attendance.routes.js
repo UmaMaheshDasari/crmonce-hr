@@ -8,6 +8,7 @@ const ExcelJS = require('exceljs');
 const { computeFromPunches, computeSession, punchesFromRecord } = require('../../services/attendance.util');
 const attnCfg = require('../../services/attendance.config');
 const leaveRoutes = require('./leave.routes');
+const activity = require('../../services/activity.service');
 
 router.use('/leave', leaveRoutes);
 
@@ -67,8 +68,15 @@ router.post('/sync', requireRole('super_admin', 'hr_manager'), async (req, res, 
     const fromDate = from || new Date(Date.now() - 86400000).toISOString().split('T')[0];
     const toDate = to || new Date().toISOString().split('T')[0];
     const result = await etimeService.syncAttendance(fromDate, toDate);
+    activity.record({
+      category: 'Biometric', type: 'sync_completed', title: 'eTime Synchronization Completed',
+      name: '', meta: `${result.synced} punch(es) imported${result.errors?.length ? `, ${result.errors.length} error(s)` : ''}`,
+    });
     res.json({ message: 'Sync complete', ...result });
-  } catch (err) { next(err); }
+  } catch (err) {
+    activity.record({ category: 'Biometric', type: 'sync_failed', title: 'eTime Synchronization Failed', name: '', meta: err.message });
+    next(err);
+  }
 });
 
 // POST /api/attendance/device/request-logs — request device to push new logs

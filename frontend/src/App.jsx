@@ -18,6 +18,7 @@ import DocumentsPage from './modules/documents/DocumentsPage';
 import TaxDeclarationPage from './modules/payroll/TaxDeclarationPage';
 import GoalsPage from './modules/performance/GoalsPage';
 import ApprovalAction from './modules/attendance/ApprovalAction';
+import ActivitiesPage from './modules/activity/ActivitiesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 300000, refetchOnWindowFocus: false } },
@@ -56,6 +57,7 @@ function AppRoutes() {
         <Route path="goals" element={<GoalsPage />} />
         <Route path="tax-declarations" element={<TaxDeclarationPage />} />
         <Route path="documents" element={<DocumentsPage />} />
+        <Route path="activities" element={<ActivitiesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
