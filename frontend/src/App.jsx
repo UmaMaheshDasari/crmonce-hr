@@ -6,7 +6,7 @@ import AppShell from './layouts/AppShell';
 import LoginPage from './modules/auth/LoginPage';
 import AzureCallback from './modules/auth/AzureCallback';
 import Dashboard from './modules/dashboard/Dashboard';
-import EmployeeList from './modules/employees/EmployeeList';
+import EmployeesHome from './modules/employees/EmployeesHome';
 import EmployeeDetail from './modules/employees/EmployeeDetail';
 import EmployeeForm from './modules/employees/EmployeeForm';
 import AttendancePage from './modules/attendance/AttendancePage';
@@ -45,7 +45,7 @@ function AppRoutes() {
       <Route path="/approve" element={<ApprovalAction />} />
       <Route path="/" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
-        <Route path="employees" element={<EmployeeList />} />
+        <Route path="employees" element={<EmployeesHome />} />
         <Route path="employees/new" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
         <Route path="employees/:id" element={<EmployeeDetail />} />
         <Route path="employees/:id/edit" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />

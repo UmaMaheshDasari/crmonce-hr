@@ -12,6 +12,8 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
   try {
     const { search, department, status, page = 1, limit = 20 } = req.query;
     const filters = [];
+    // A plain employee may only ever see their own record (employee:read:self).
+    if (req.user.role === 'employee') filters.push(`hr_hremployeeid eq ${req.user.id}`);
     if (search) filters.push(`contains(hr_hremployee1,'${search}') or contains(hr_email,'${search}')`);
     if (department) filters.push(`hr_department eq '${department}'`);
     if (status) filters.push(`hr_status eq ${toValue('hr_employee_status', status)}`);
