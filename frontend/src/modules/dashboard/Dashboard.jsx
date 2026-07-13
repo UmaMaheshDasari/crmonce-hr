@@ -136,9 +136,11 @@ export default function Dashboard() {
   });
 
   // ── Employee queries ────────────────────────────────────────────
-  const { data: attendanceSummary, isLoading: summaryLoading } = useQuery({
-    queryKey: ['attendance-summary-today', user?.id],
-    queryFn: () => attendanceApi.summary({ employeeId: user?.id }),
+  // Dynamic monthly summary computed by the attendance engine (present/half/
+  // leave/absent) — the authoritative source, not a raw status aggregate.
+  const { data: monthlySummary, isLoading: summaryLoading } = useQuery({
+    queryKey: ['attendance-summary-monthly', user?.id, currentMonth, currentYear],
+    queryFn: () => attendanceApi.summaryMonthly({ month: currentMonth, year: currentYear }),
     enabled: !isHR() && !!user?.id,
   });
 
@@ -158,11 +160,15 @@ export default function Dashboard() {
     return records.reduce((sum, r) => sum + (r.hr_netpay || 0), 0);
   })();
 
-  const leavesApproved = (() => {
-    const records = myLeaves?.data?.data;
-    if (!Array.isArray(records)) return 0;
-    return records.filter(l => l.hr_status === 'approved' || l.hr_status === 1).length;
+  // Days Present counts completed present days plus half days (0.5 each),
+  // straight from the attendance engine's monthly summary.
+  const presentDays = (() => {
+    const s = monthlySummary?.data;
+    if (!s) return 0;
+    const total = (s.presentDays || 0) + (s.halfDays || 0) * 0.5;
+    return Number.isInteger(total) ? total : total.toFixed(1);
   })();
+  const leaveDaysThisMonth = monthlySummary?.data?.leaveDays ?? 0;
 
   // Build weekly attendance data from today's attendance list for chart
   const weeklyAttendanceData = (() => {
@@ -215,8 +221,8 @@ export default function Dashboard() {
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="xl:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <KPICard label="Days Present" value={attendanceSummary?.data?.[0]?.count || 0} icon={ClockIcon} color="text-green-600" sub="This month" loading={summaryLoading} trend="up" />
-            <KPICard label="Leaves Taken" value={leavesApproved} icon={ClockIcon} color="text-amber-600" sub="This month" loading={myLeavesLoading} />
+            <KPICard label="Days Present" value={presentDays} icon={ClockIcon} color="text-green-600" sub="This month" loading={summaryLoading} trend="up" />
+            <KPICard label="Leaves Taken" value={leaveDaysThisMonth} icon={ClockIcon} color="text-amber-600" sub="This month" loading={summaryLoading} />
             <KPICard label="Pending Requests" value={(() => { const records = myLeaves?.data?.data; if (!Array.isArray(records)) return 0; return records.filter(l => l.hr_status === 'pending' || l.hr_status === 0).length; })()} icon={ClockIcon} color="text-indigo-600" sub="Leave requests" loading={myLeavesLoading} />
             <KPICard label="Next Payday" value={(() => { const now = new Date(); const next = new Date(now.getFullYear(), now.getMonth() + 1, 1); return next.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); })()} icon={CurrencyDollarIcon} color="text-purple-600" sub="Salary date" />
           </div>
