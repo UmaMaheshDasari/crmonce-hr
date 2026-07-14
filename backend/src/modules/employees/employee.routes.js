@@ -4,6 +4,7 @@ const d365 = require('../../services/d365.service');
 const authService = require('../../services/auth.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
+const { validateCompanyEmail } = require('../../services/email/sender');
 
 const ENTITY = d365.constructor.entities.employee;
 
@@ -64,6 +65,10 @@ function sanitizeEmployee(input) {
 router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
     const { password, ...raw } = req.body;
+    // Employee email must be a valid company mailbox — it is the sender of their
+    // own leave requests (external providers like gmail are rejected).
+    const ev = validateCompanyEmail(raw.hr_email, 'Employee');
+    if (!ev.ok) return res.status(400).json({ error: ev.reason });
     const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
@@ -76,6 +81,11 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
 router.patch('/:id', requirePermission('employee:write'), async (req, res, next) => {
   try {
     const { password, ...raw } = req.body;
+    // If the email is being changed, it must remain a valid company mailbox.
+    if (raw.hr_email !== undefined) {
+      const ev = validateCompanyEmail(raw.hr_email, 'Employee');
+      if (!ev.ok) return res.status(400).json({ error: ev.reason });
+    }
     const updateData = sanitizeEmployee(raw);
     if (password) updateData.hr_password = await authService.hashPassword(password);
     const emp = await d365.update(ENTITY, req.params.id, updateData);

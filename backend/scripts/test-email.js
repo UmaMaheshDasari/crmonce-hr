@@ -1,15 +1,22 @@
 /**
  * Email (Microsoft Graph) + Super-Admin-lookup diagnostic.
  * Run ON THE SERVER where backend/.env lives:
- *   node scripts/test-email.js                 # sends to the first Super Admin found
- *   node scripts/test-email.js you@domain.com  # sends to an explicit address
+ *   node scripts/test-email.js                        # DRY-RUN (default): sends NOTHING
+ *   node scripts/test-email.js you@domain.com         # DRY-RUN to an explicit address
+ *   node scripts/test-email.js you@domain.com --send  # actually send a real email
  *
- * Prints: Azure/Graph env presence (names only), Graph app-only token
- * acquisition, the D365 Super Admin lookup, and a real test send via the same
- * sendEmail() the app uses. Does NOT print secret values.
+ * SAFE BY DEFAULT: without --send it runs in dry-run and no email is delivered,
+ * so repeatedly running it never spams a mailbox. Prints: Azure/Graph env
+ * presence (names only), token acquisition, the D365 Super Admin lookup, and the
+ * would-be send. Does NOT print secret values.
  */
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const { ConfidentialClientApplication } = require('@azure/msal-node');
+
+// Dry-run unless the operator explicitly opts in with --send. Setting this before
+// requiring notification.service makes sendEmail() short-circuit (no Graph call).
+const FORCE_SEND = process.argv.includes('--send');
+if (!FORCE_SEND) process.env.EMAIL_DRY_RUN = 'true';
 
 (async () => {
   // ── env presence (names only; no secret values) ──
@@ -56,9 +63,9 @@ const { ConfidentialClientApplication } = require('@azure/msal-node');
     console.log(`  FAIL  D365 lookup: ${e.message}`);
   }
 
-  // ── real test send via the app's sendEmail() (Graph) ──
-  const to = process.argv[2] || recipients[0];
-  console.log('\n=== Test send (via Graph) ===');
+  // ── test send via the app's sendEmail() (Graph) — DRY-RUN unless --send ──
+  const to = process.argv.slice(2).find(a => !a.startsWith('--')) || recipients[0];
+  console.log(`\n=== Test send (${FORCE_SEND ? 'LIVE — will deliver' : 'DRY-RUN — nothing sent'}) ===`);
   if (!to) {
     console.log('  No recipient. Pass one:  node scripts/test-email.js you@domain.com');
     process.exit(1);
@@ -70,9 +77,11 @@ const { ConfidentialClientApplication } = require('@azure/msal-node');
       'HRMS Graph email test',
       '<p>HRMS Microsoft Graph diagnostic — if you received this, Graph email works.</p>'
     );
-    console.log(result.success
-      ? `  OK  sent to ${to} (sender ${sender})`
-      : `  FAIL  ${result.error}`);
+    if (result.dryRun) {
+      console.log(`  DRY-RUN  would send to ${to} (sender ${sender}). Re-run with --send to deliver.`);
+    } else {
+      console.log(result.success ? `  OK  sent to ${to} (sender ${sender})` : `  FAIL  ${result.error}`);
+    }
   } catch (e) {
     console.log(`  FAIL  ${e.message}`);
   }

@@ -6,6 +6,7 @@ const { notifyLeaveApproval, broadcast } = require('../../services/notification.
 const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
 const requestNotify = require('../../services/request-notify.service');
 const { verifyApprovalToken } = require('../../services/approval-token');
+const { resolveSender } = require('../../services/email/sender');
 
 const ENTITY = d365.constructor.entities.leave;
 const EMP_ENTITY = d365.constructor.entities.employee;
@@ -175,10 +176,11 @@ router.post('/', async (req, res, next) => {
     const { approverId, cc, ...rest } = req.body;
     const body = { ...rest };
 
-    // Dynamic sender = the applicant's own mailbox. If it's missing, the leave
-    // request cannot be sent FROM the employee — surface a clear validation.
-    if (!req.user.email) {
-      return res.status(400).json({ error: 'Employee email not configured' });
+    // Dynamic sender = the applicant's own company mailbox. Validate it up front
+    // (empty / format / must be @crmonce.com) — no silent fallback later.
+    const employeeSender = resolveSender({ email: req.user.email, label: 'Employee' });
+    if (!employeeSender.ok) {
+      return res.status(400).json({ error: employeeSender.reason });
     }
 
     if (body.hr_leavetype) body.hr_leavetype = toValue('hr_leave_type', body.hr_leavetype);
@@ -209,8 +211,11 @@ router.post('/', async (req, res, next) => {
     if (!['super_admin', 'hr_manager'].includes(approverRole) || !approverActive) {
       return res.status(400).json({ error: 'Selected approver must be an active HR Manager or Super Admin' });
     }
-    if (!approver.hr_email || requestNotify.isPlaceholderEmail(approver.hr_email)) {
-      return res.status(400).json({ error: 'Selected approver has no valid email address' });
+    // Approver must have a company mailbox — they will be the SENDER of the
+    // approval/rejection email, so the same @crmonce.com rule applies.
+    const approverSender = resolveSender({ email: approver.hr_email, label: 'Approver' });
+    if (!approverSender.ok) {
+      return res.status(400).json({ error: approverSender.reason });
     }
 
     // ── CC recipients (optional) — resolve server-side; skip inactive/placeholder ──

@@ -21,6 +21,9 @@ function tenantDomains() {
     .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 }
 
+// Basic RFC-ish email shape (one @, a dot in the domain, no whitespace).
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const isPlaceholder = (email) =>
   !email || PLACEHOLDER_DOMAINS.some(d => String(email).toLowerCase().endsWith('@' + d));
 
@@ -30,24 +33,36 @@ const inTenant = (email) => {
 };
 
 /**
- * Resolve the mailbox `user` is allowed to send FROM.
+ * Validate that an address is a usable COMPANY mailbox:
+ *   - not empty
+ *   - valid email format
+ *   - not a placeholder domain
+ *   - belongs to a tenant domain (@crmonce.com) — external providers rejected
+ * @returns {{ ok: true, email: string } | { ok: false, reason: string }}
+ */
+function validateCompanyEmail(email, label = 'Employee') {
+  const e = String(email || '').trim();
+  if (!e) return { ok: false, reason: `${label} email not configured` };
+  if (!EMAIL_RE.test(e)) return { ok: false, reason: `${label} email format is invalid (${email})` };
+  if (isPlaceholder(e)) return { ok: false, reason: `${label} email is a placeholder address (${e}); configure a real company mailbox` };
+  if (!inTenant(e)) {
+    return {
+      ok: false,
+      reason: `${label} email must be a company mailbox (${tenantDomains().join(', ')}). ` +
+              `External providers (gmail, yahoo, outlook, etc.) are not allowed.`,
+    };
+  }
+  return { ok: true, email: e };
+}
+
+/**
+ * Resolve the mailbox a user is allowed to send FROM (always their OWN mailbox).
+ * No fallback — an unusable mailbox returns the exact reason.
  * @returns {{ ok: true, sender: string } | { ok: false, reason: string }}
  */
 function resolveSender({ email, label = 'Employee' } = {}) {
-  if (!email) {
-    return { ok: false, reason: `${label} email not configured` };
-  }
-  if (isPlaceholder(email)) {
-    return { ok: false, reason: `${label} email is a placeholder address (${email}); configure a real company mailbox` };
-  }
-  if (!inTenant(email)) {
-    return {
-      ok: false,
-      reason: `Cannot send as ${email}: Microsoft Graph can only send from a mailbox in the M365 tenant (${tenantDomains().join(', ')}). ` +
-              `External addresses are not supported — configure a company mailbox for this user.`,
-    };
-  }
-  return { ok: true, sender: email };
+  const v = validateCompanyEmail(email, label);
+  return v.ok ? { ok: true, sender: v.email } : { ok: false, reason: v.reason };
 }
 
-module.exports = { resolveSender, isPlaceholder, inTenant, tenantDomains, PLACEHOLDER_DOMAINS };
+module.exports = { resolveSender, validateCompanyEmail, isPlaceholder, inTenant, tenantDomains, PLACEHOLDER_DOMAINS };

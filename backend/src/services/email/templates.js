@@ -173,17 +173,6 @@ function newRequestApprover(d) {
   return { subject, html: layout({ title: subject, preheader: `Approve or reject ${d.employee.name}'s ${d.moduleTitle.toLowerCase()} request`, content }) };
 }
 
-function newRequestCc(d) {
-  const subject = `${d.moduleTitle} Request - ${d.employee.name}`;
-  const content =
-    greet(d.recipientName) +
-    `<p style="margin:0 0 4px;color:#374151;">A new ${d.moduleTitle.toLowerCase()} request has been submitted.</p>` +
-    profileCard(d.employee) +
-    summaryCard('Request details', requestRows(d)) +
-    banner(`This email is for your information only. No action is required from your side.<br>Awaiting approval from <strong>${esc(d.approverName || 'the approver')}</strong>.`);
-  return { subject, html: layout({ title: subject, preheader: 'For your information only', content }) };
-}
-
 function acknowledgement(d) {
   const subject = `${d.moduleTitle} Request Submitted`;
   const content =
@@ -217,16 +206,6 @@ function decision(d) {
   return { subject, html: layout({ title: subject, preheader: `Your request was ${label.toLowerCase()}`, content }) };
 }
 
-function decisionCcFyi(d) {
-  const label = d.decision === 'approved' ? 'Approved' : 'Rejected';
-  const subject = `${d.moduleTitle} ${label} - ${d.employeeName}`;
-  const content =
-    greet(d.recipientName) +
-    `<p style="margin:0 0 4px;color:#374151;">The ${d.moduleTitle.toLowerCase()} request from <strong>${esc(d.employeeName)}</strong> has been <strong>${label.toLowerCase()}</strong> by ${esc(d.approverName)}.</p>` +
-    banner('This email is for your information only. No action is required from your side.');
-  return { subject, html: layout({ title: subject, preheader: 'For your information only', content }) };
-}
-
 function reminder(d) {
   const subject = `Reminder: ${d.moduleTitle} Request awaiting your approval - ${d.employee.name}`;
   const content =
@@ -245,6 +224,6 @@ module.exports = {
   // components (exported for tests/reuse)
   statusBadge, button, profileCard, summaryCard, banner, layout,
   // builders
-  newRequestApprover, newRequestCc, acknowledgement, decision, decisionCcFyi, reminder,
+  newRequestApprover, acknowledgement, decision, reminder,
   _esc: esc,
 };

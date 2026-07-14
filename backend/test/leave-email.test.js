@@ -6,6 +6,7 @@
  * the payload builder is pure. No real leave requests, no production data.
  */
 process.env.NODE_ENV = 'test';
+process.env.EMAIL_DRY_RUN = 'true';          // never send; mock only
 process.env.TENANT_MAIL_DOMAINS = 'crmonce.com';
 // Non-empty dummy creds so the MSAL client constructs; the startup token probe is
 // skipped in NODE_ENV=test, so nothing hits the network.
@@ -16,7 +17,7 @@ process.env.AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || 'test-tenant';
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert');
 
-const { resolveSender } = require('../src/services/email/sender');
+const { resolveSender, validateCompanyEmail } = require('../src/services/email/sender');
 const notif = require('../src/services/notification.service');
 const T = require('../src/services/email/templates');
 
@@ -36,7 +37,7 @@ test('sender: missing email → "Employee email not configured"', () => {
 test('sender: external (gmail) mailbox rejected with exact reason (no fallback)', () => {
   const r = resolveSender({ email: 'teja99835@gmail.com' });
   assert.strictEqual(r.ok, false);
-  assert.match(r.reason, /Microsoft Graph can only send from a mailbox in the M365 tenant/);
+  assert.match(r.reason, /company mailbox/);
   assert.match(r.reason, /crmonce\.com/);
 });
 
@@ -47,6 +48,31 @@ test('sender: placeholder domain rejected', () => {
 test('security: HR and Super Admin resolve to their own tenant mailboxes', () => {
   assert.strictEqual(resolveSender({ email: 'hr@crmonce.com' }).sender, 'hr@crmonce.com');
   assert.strictEqual(resolveSender({ email: 'umamahesh@crmonce.com' }).sender, 'umamahesh@crmonce.com');
+});
+
+test('security: sender is ALWAYS the input mailbox — no impersonation path', () => {
+  for (const e of ['vishwesh@crmonce.com', 'hr@crmonce.com', 'umamahesh@crmonce.com']) {
+    const r = resolveSender({ email: e });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.sender, e);   // never resolves to a different mailbox
+  }
+});
+
+// ── Company-email validation (HR create/edit + apply) ───────────────────────
+test('validateCompanyEmail: accepts @crmonce.com, rejects external/empty/malformed', () => {
+  assert.strictEqual(validateCompanyEmail('vishwesh@crmonce.com').ok, true);
+  assert.strictEqual(validateCompanyEmail('').ok, false);
+  assert.match(validateCompanyEmail('').reason, /not configured/);
+  assert.match(validateCompanyEmail('vishwesh@gmail.com').reason, /company mailbox/);
+  assert.match(validateCompanyEmail('foo@yahoo.com').reason, /company mailbox/);
+  assert.match(validateCompanyEmail('foo@outlook.com').reason, /company mailbox/);
+  assert.match(validateCompanyEmail('not-an-email').reason, /format is invalid/);
+});
+
+// ── Mailbox verification is skipped offline (no Graph in dev/test) ──────────
+test('verifyMailbox: skipped (ok) under dry-run/test — never hits Graph', async () => {
+  const r = await notif.verifyMailbox('vishwesh@crmonce.com');
+  assert.deepStrictEqual(r, { ok: true, skipped: true });
 });
 
 // ── Payload builder (pure — no network) ─────────────────────────────────────

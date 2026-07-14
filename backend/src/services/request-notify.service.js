@@ -13,7 +13,7 @@
  */
 const d365 = require('./d365.service');
 const { toValue } = require('./picklist');
-const { sendEmail, notifyUser } = require('./notification.service');
+const { sendEmail, notifyUser, verifyMailbox } = require('./notification.service');
 const { signApprovalToken } = require('./approval-token');
 const { resolveSender } = require('./email/sender');
 const T = require('./email/templates');
@@ -32,6 +32,14 @@ const TYPE_CFG = {
 const PLACEHOLDER_DOMAINS = ['yourcompany.com', 'yourdomain.com', 'example.com'];
 const isPlaceholderEmail = (email) =>
   !email || PLACEHOLDER_DOMAINS.some(d => String(email).toLowerCase().endsWith('@' + d));
+
+/** Log + audit that an email was intentionally NOT sent — the workflow NEVER
+ *  falls back to another mailbox. Returns undefined so callers can `return` it. */
+function auditSkip(type, metaType, from, to, reason) {
+  const title = (TYPE_CFG[type] || { title: type }).title;
+  global.logger?.error(`${title} email NOT sent — ${reason}`);
+  global.logger?.info(`EMAIL_AUDIT ${JSON.stringify({ from: from || null, to: to || null, type: metaType, status: 'skipped', reason, at: new Date().toISOString() })}`);
+}
 
 /** Active HR Managers + Super Admins — the only valid approvers. */
 async function getApprovers() {
@@ -97,11 +105,9 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     // Dynamic sender = the applicant's OWN mailbox. Never fall back to info@ — if
     // the mailbox can't be used, log the exact reason and skip (audited).
     const s = resolveSender({ email: actor?.email, label: 'Employee' });
-    if (!s.ok) {
-      global.logger?.error(`${cfg.title} request email NOT sent — ${s.reason}`);
-      global.logger?.info(`EMAIL_AUDIT ${JSON.stringify({ from: actor?.email || null, to: approver.email, type: `${type}_new_approver`, status: 'skipped', reason: s.reason, at: new Date().toISOString() })}`);
-      return;
-    }
+    if (!s.ok) return auditSkip(type, `${type}_new_approver`, actor?.email, approver.email, s.reason);
+    const v = await verifyMailbox(s.sender);
+    if (!v.ok) return auditSkip(type, `${type}_new_approver`, s.sender, approver.email, v.reason);
 
     const employee = { name: actor?.name, id: actor?.id, department: await departmentOf(actor.id), email: actor?.email };
     const { approveUrl, rejectUrl } = approvalUrls(type, recordId);
@@ -122,14 +128,19 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
   }
 }
 
-/** Acknowledgement → email the employee immediately after submission. */
+/** Acknowledgement → email the employee immediately after submission, FROM their
+ *  own company mailbox (never info@). Skipped with a reason if unusable. */
 async function emailApplyAcknowledgement({ type, toEmail, employeeName, approverName }) {
   try {
-    if (!toEmail) { global.logger?.warn(`${type} acknowledgement skipped: no employee email`); return; }
     const cfg = TYPE_CFG[type] || { title: type };
+    const s = resolveSender({ email: toEmail, label: 'Employee' });
+    if (!s.ok) return auditSkip(type, `${type}_ack`, toEmail, toEmail, s.reason);
+    const v = await verifyMailbox(s.sender);
+    if (!v.ok) return auditSkip(type, `${type}_ack`, s.sender, toEmail, v.reason);
+
     const { subject, html } = T.acknowledgement({ moduleTitle: cfg.title, employeeName, approverName });
-    const r = await sendEmail(toEmail, subject, html, { meta: { type: `${type}_ack` } });
-    global.logger?.[r?.success ? 'info' : 'error'](`${cfg.title} acknowledgement → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+    const r = await sendEmail(toEmail, subject, html, { from: s.sender, meta: { type: `${type}_ack` } });
+    global.logger?.[r?.success ? 'info' : 'error'](`${cfg.title} acknowledgement FROM ${s.sender} → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailApplyAcknowledgement(${type}) failed: ${err.message}`);
   }
@@ -148,14 +159,13 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
     if (!emp?.hr_email) { global.logger?.warn(`${cfg.title} decision email skipped: employee ${employeeId} has no email`); return; }
 
     const aName = approver?.name || approverName;
-    // Sender = approver's own mailbox. If it can't be used, log the exact reason
-    // (the employee is still informed via the system mailbox — never silent).
-    const fromOpt = {};
-    if (approver?.email) {
-      const s = resolveSender({ email: approver.email, label: 'Approver' });
-      if (s.ok) fromOpt.from = s.sender;
-      else global.logger?.error(`${cfg.title} decision — approver mailbox unusable (${s.reason}); sending from system mailbox`);
-    }
+    // Sender = the approver's OWN mailbox. No fallback: if it can't be used, the
+    // decision email is NOT sent (skipped + audited). The employee is still
+    // notified in-app by the caller (notifyLeaveApproval).
+    const s = resolveSender({ email: approver?.email, label: 'Approver' });
+    if (!s.ok) return auditSkip(type, `${type}_decision`, approver?.email, emp.hr_email, s.reason);
+    const mb = await verifyMailbox(s.sender);
+    if (!mb.ok) return auditSkip(type, `${type}_decision`, s.sender, emp.hr_email, mb.reason);
 
     const balance = type === 'leave' ? await getLeaveBalance(employeeId) : null;
     const { subject, html } = T.decision({
@@ -178,31 +188,15 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
     }
 
     const ccEmails = (cc || []).filter(c => c?.email && !isPlaceholderEmail(c.email)).map(c => c.email);
-    const r = await sendEmail(emp.hr_email, subject, html, { ...fromOpt, cc: ccEmails, attachments, meta: { type: `${type}_decision` } });
+    const r = await sendEmail(emp.hr_email, subject, html, { from: s.sender, cc: ccEmails, attachments, meta: { type: `${type}_decision` } });
     global.logger?.[r?.success ? 'info' : 'error'](
-      `${cfg.title} decision email FROM ${fromOpt.from || '(system)'} → ${emp.hr_email} (cc: ${ccEmails.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+      `${cfg.title} decision email FROM ${s.sender} → ${emp.hr_email} (cc: ${ccEmails.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailDecisionToEmployee(${type}) failed: ${err.message}`);
   }
 }
 
-/** Optional FYI to CC recipients after a decision (only when configured). */
-async function emailDecisionFyiToCc({ type, ccRecipients, decision, employeeName, approverName }) {
-  try {
-    if (!Array.isArray(ccRecipients) || ccRecipients.length === 0) return;
-    const cfg = TYPE_CFG[type] || { title: type };
-    for (const c of ccRecipients) {
-      if (!c?.email || isPlaceholderEmail(c.email)) continue;
-      const { subject, html } = T.decisionCcFyi({ moduleTitle: cfg.title, recipientName: c.name, employeeName, approverName, decision });
-      const r = await sendEmail(c.email, subject, html, { meta: { type: `${type}_decision_cc` } });
-      global.logger?.[r?.success ? 'info' : 'error'](`${cfg.title} CC FYI (decision) → ${c.email}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
-    }
-  } catch (err) {
-    global.logger?.error(`emailDecisionFyiToCc(${type}) failed: ${err.message}`);
-  }
-}
-
 module.exports = {
   notifyNewRequest, emailApplyAcknowledgement, emailDecisionToEmployee,
-  emailDecisionFyiToCc, getApprovers, isPlaceholderEmail, getLeaveBalance, approvalUrls,
+  getApprovers, isPlaceholderEmail, getLeaveBalance, approvalUrls,
 };

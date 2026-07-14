@@ -155,6 +155,28 @@ async function sendEmail(to, subject, html, opts = {}) {
   }
 }
 
+/**
+ * Verify a mailbox actually EXISTS in Microsoft 365 before we try to send AS it.
+ * Uses Graph GET /users/{upn} (requires the User.Read.All APPLICATION permission).
+ * Skipped under test transport / EMAIL_DRY_RUN (no network, no send there).
+ *   { ok:true } | { ok:true, skipped:true } | { ok:false, reason }
+ */
+async function verifyMailbox(email) {
+  if (transport || isDryRun()) return { ok: true, skipped: true };
+  try {
+    const token = await getGraphToken();
+    await axios.get(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(email)}?$select=id`, {
+      headers: { Authorization: `Bearer ${token}` }, timeout: 15000,
+    });
+    return { ok: true };
+  } catch (err) {
+    const code = err.response?.status;
+    if (code === 404) return { ok: false, reason: `Mailbox ${email} does not exist in Microsoft 365` };
+    if (code === 403) return { ok: false, reason: `Cannot verify ${email}: app lacks the User.Read.All permission` };
+    return { ok: false, reason: `Mailbox verification failed for ${email}: ${err.response?.data?.error?.message || err.message}` };
+  }
+}
+
 // Startup diagnostic — confirm app-only Graph auth is obtainable (sends no mail).
 // A successful token does NOT prove Mail.Send is granted; a missing permission
 // surfaces as a 403 on the first real send (logged by sendEmail).
@@ -196,6 +218,6 @@ module.exports = {
   notifyLeaveApproval, notifyPayrollProcessed,
   notifyNewApplicant, notifyAttendanceAnomaly,
   // Email internals (dynamic sender + test/dry-run tooling)
-  buildSendMailRequest, toRecipientList, GRAPH_SENDER,
+  buildSendMailRequest, toRecipientList, GRAPH_SENDER, verifyMailbox,
   setTransport, resetTransport, getOutbox, clearOutbox,
 };

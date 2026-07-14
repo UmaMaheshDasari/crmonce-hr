@@ -24,16 +24,6 @@ test('approver email: correct subject + both action buttons + no "Hello Super Ad
   assert.ok(!/Hello Super Admin/.test(html));
 });
 
-test('CC email: informational, NO action buttons', () => {
-  const { html } = T.newRequestCc({
-    moduleTitle: 'Leave', employee: { name: 'V', id: 'E1' }, rows: [], applyTime: 'x',
-    recipientName: 'Priya', approverName: 'Uma',
-  });
-  assert.ok(/for your information only/i.test(html));
-  assert.ok(!/action=approved/.test(html));
-  assert.ok(!/action=rejected/.test(html));
-});
-
 test('acknowledgement: subject + greeting', () => {
   const { subject, html } = T.acknowledgement({ moduleTitle: 'Leave', employeeName: 'V', approverName: 'Uma' });
   assert.strictEqual(subject, 'Leave Request Submitted');
