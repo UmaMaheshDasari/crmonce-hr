@@ -195,12 +195,24 @@ export default function EmployeeDetail() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-violet-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                <ClockIcon className="w-4 h-4 text-violet-500" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 font-medium">Shift</p>
+                <p className="text-sm text-gray-900 font-medium">
+                  {emp.hr_shift || 'General Shift'}
+                  <span className="text-gray-400 font-normal"> · {emp.hr_shiftstart || '09:00'}</span>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-teal-50 rounded-lg flex items-center justify-center flex-shrink-0">
                 <ClockIcon className="w-4 h-4 text-teal-500" />
               </div>
               <div>
                 <p className="text-xs text-gray-400 font-medium">eTime Code</p>
-                <p className="text-sm text-gray-900 font-medium">{emp.hr_etime_code || <span className="text-gray-300">&mdash;</span>}</p>
+                <p className="text-sm text-gray-900 font-medium">{emp.hr_etimecode || <span className="text-gray-300">&mdash;</span>}</p>
               </div>
             </div>
           </div>

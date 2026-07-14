@@ -7,6 +7,7 @@ import { ChevronRightIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 
 const ROLES = ['employee', 'hr_manager', 'recruiter', 'super_admin'];
+const SHIFTS = ['Morning Shift', 'General Shift', 'Noon Shift', 'Evening Shift'];
 
 // NOTE: These field components are declared at module scope on purpose.
 // Defining them inside the parent recreated their identity on every render,
@@ -51,7 +52,9 @@ export default function EmployeeForm() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm();
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm({
+    defaultValues: { hr_shift: 'General Shift', hr_shiftstart: '09:00' },
+  });
 
   const { data: empData } = useQuery({
     queryKey: ['employee', id],
@@ -70,7 +73,8 @@ export default function EmployeeForm() {
       reset({ hr_hremployee1: e.hr_hremployee1, hr_email: e.hr_email, hr_phone: e.hr_phone,
         hr_department: e.hr_department, hr_designation: e.hr_designation,
         hr_role: e.hr_role, hr_salary: e.hr_salary, hr_joiningdate: e.hr_joiningdate?.split('T')[0],
-        hr_status: e.hr_status, hr_address: e.hr_address, hr_etimecode: e.hr_etimecode });
+        hr_status: e.hr_status, hr_address: e.hr_address, hr_etimecode: e.hr_etimecode,
+        hr_shift: e.hr_shift || 'General Shift', hr_shiftstart: e.hr_shiftstart || '09:00' });
     }
   }, [empData, reset]);
 
@@ -136,7 +140,12 @@ export default function EmployeeForm() {
                 <option value="inactive">Inactive</option>
                 <option value="on_leave">On Leave</option>
               </SelectField>
+              <SelectField label="Shift Name" name="hr_shift" register={register}>
+                {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+              </SelectField>
+              <Field label="Shift Start Time" name="hr_shiftstart" type="time" register={register} errors={errors} />
             </div>
+            <p className="text-xs text-gray-400 mt-2">Late, Early Exit and Overtime are calculated from this Shift Start Time (+5&nbsp;min grace).</p>
           </div>
         </div>
 

@@ -115,6 +115,7 @@ export default function EmployeeList() {
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Employee</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Department</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Designation</th>
+                <th className="hidden lg:table-cell px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Shift</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Joining Date</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Actions</th>
@@ -124,14 +125,14 @@ export default function EmployeeList() {
               {isLoading ? (
                 Array(8).fill(0).map((_, i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    {Array(6).fill(0).map((_, j) => (
+                    {Array(7).fill(0).map((_, j) => (
                       <td key={j} className="px-6 py-5"><div className="h-4 bg-gray-50 rounded-lg animate-pulse" /></td>
                     ))}
                   </tr>
                 ))
               ) : employees.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-20 text-center">
+                  <td colSpan={7} className="px-6 py-20 text-center">
                     <div className="flex flex-col items-center">
                       <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-4">
                         <UserGroupIcon className="w-8 h-8 text-gray-300" />
@@ -167,6 +168,10 @@ export default function EmployeeList() {
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-600">{emp.hr_designation || <span className="text-gray-300">&mdash;</span>}</span>
+                    </td>
+                    <td className="hidden lg:table-cell px-6 py-4">
+                      <span className="text-sm text-gray-600">{emp.hr_shift || 'General Shift'}</span>
+                      <span className="block text-xs text-gray-400 tabular-nums">{emp.hr_shiftstart || '09:00'}</span>
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-500 tabular-nums">

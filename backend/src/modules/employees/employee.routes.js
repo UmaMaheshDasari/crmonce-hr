@@ -20,7 +20,7 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     if (status) filters.push(`hr_status eq ${toValue('hr_employee_status', status)}`);
 
     const result = await d365.getList(ENTITY, {
-      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,_hr_manager_value',
+      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,hr_shift,hr_shiftstart,_hr_manager_value',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_hremployee1 asc',
       top: limit,
@@ -38,7 +38,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
       return res.status(403).json({ error: 'Access denied' });
     }
     const emp = await d365.getById(ENTITY, req.params.id, {
-      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,_hr_manager_value',
+      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,hr_shift,hr_shiftstart,_hr_manager_value',
     });
     res.json(labelsForEntity(ENTITY, emp));
   } catch (err) { next(err); }
@@ -72,6 +72,9 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
+    // Default shift so attendance math always has a start time (same as migration).
+    if (!employeeData.hr_shift) employeeData.hr_shift = 'General Shift';
+    if (!employeeData.hr_shiftstart) employeeData.hr_shiftstart = '09:00';
     const emp = await d365.create(ENTITY, employeeData);
     res.status(201).json(emp);
   } catch (err) { next(err); }

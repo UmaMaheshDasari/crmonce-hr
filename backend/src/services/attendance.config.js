@@ -42,11 +42,57 @@ function resolveShift(code) {
   };
 }
 
+const DEFAULT_SHIFT_HOURS = num(process.env.DEFAULT_SHIFT_HOURS, 9);
+
+/** Normalize a shift-start value → "HH:MM" (24h). Accepts "07:00", "7:00 AM", "01:30 PM". */
+function normalizeTime(v) {
+  if (v === 0) return '00:00';
+  if (!v) return null;
+  const m = String(v).trim().match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const ap = (m[3] || '').toUpperCase();
+  if (ap === 'PM' && h < 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/**
+ * Build the shift for an EMPLOYEE from their assigned Shift Name + Start Time.
+ * The employee's START TIME drives Late / Early Exit / Overtime — never a fixed
+ * office timing. Duration is inherited from a named shift starting at the same
+ * time (e.g. 07:00 → Morning's 10h), otherwise DEFAULT_SHIFT_HOURS.
+ * Falls back to the default shift ONLY when no start time is stored (legacy).
+ */
+function resolveEmployeeShift(shiftName, shiftStart) {
+  const start = normalizeTime(shiftStart);
+  if (!start) return resolveShift();
+  let durationHours = DEFAULT_SHIFT_HOURS;
+  for (const s of Object.values(shifts)) {
+    if (s.start === start) { durationHours = shiftDurationHours(s); break; }
+  }
+  const startMin = toMin(start);
+  const endAbs = startMin + Math.round(durationHours * 60);
+  const endMin = endAbs % 1440;
+  const end = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+  return {
+    code: 'EMP',
+    name: shiftName || 'Shift',
+    start, end, durationHours,
+    isNight: endAbs > 1440 || endMin <= startMin,
+  };
+}
+
 module.exports = {
   shifts,
   defaultShiftCode,
   resolveShift,
+  resolveEmployeeShift,
+  normalizeTime,
   shiftDurationHours,
+  DEFAULT_SHIFT_HOURS,
   // Week-off days 0=Sun … 6=Sat (configurable, never hardcoded).
   weekOffDays: parseList(process.env.WEEK_OFF_DAYS || '0,6').map(Number).filter(n => n >= 0 && n <= 6),
   holidays: parseList(process.env.HOLIDAYS),                 // YYYY-MM-DD (optionally from hr_holiday later)

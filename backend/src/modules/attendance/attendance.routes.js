@@ -153,8 +153,26 @@ function punchPayload(c) {
   };
 }
 
-// Per-employee shift (optional hr_shift; default until that column exists).
+// Per-employee shift: the employee's assigned Shift Name + Start Time drive all
+// Late / Early Exit / Overtime math. resolveShift() is the legacy fallback only.
+const EMP_ENTITY = d365.constructor.entities.employee;
 const resolveShift = () => attnCfg.resolveShift();
+const shiftOf = (emp) => attnCfg.resolveEmployeeShift(emp?.hr_shift, emp?.hr_shiftstart);
+async function getEmployeeShift(employeeId) {
+  try {
+    const e = await d365.getById(EMP_ENTITY, employeeId, { select: 'hr_shift,hr_shiftstart' });
+    return shiftOf(e);
+  } catch (_) { return resolveShift(); }
+}
+/** employeeId → resolved shift, for multi-employee reports (overview/export). */
+async function buildShiftMap() {
+  const map = new Map();
+  try {
+    const { data } = await d365.getList(EMP_ENTITY, { select: 'hr_hremployeeid,hr_shift,hr_shiftstart', top: 5000 });
+    (data || []).forEach(e => map.set(e.hr_hremployeeid, shiftOf(e)));
+  } catch (_) { /* fall back to default per record */ }
+  return map;
+}
 
 // Find the most recent prior-day record that is still OPEN (forgot checkout).
 async function findOpenPriorRecord(employeeId, today) {
@@ -173,6 +191,7 @@ async function findOpenPriorRecord(employeeId, today) {
 router.post('/checkin', requirePermission('attendance:read'), async (req, res, next) => {
   try {
     const employeeId = req.user.id;
+    const shift = await getEmployeeShift(employeeId);
     const { today, record } = await findTodayRecord(employeeId);
 
     // Forgot-checkout: never silently start a new session over an open prior day.
@@ -186,7 +205,7 @@ router.post('/checkin', requirePermission('attendance:read'), async (req, res, n
     }
 
     if (!record) {
-      const c = computeSession([{ t: nowHHMM(), d: 'in' }], resolveShift());
+      const c = computeSession([{ t: nowHHMM(), d: 'in' }], shift);
       const created = await d365.create(ENTITY, {
         'hr_hremployee@odata.bind': `/hr_hremployees(${employeeId})`,
         hr_date: today,
@@ -200,7 +219,7 @@ router.post('/checkin', requirePermission('attendance:read'), async (req, res, n
     if (punches.length % 2 === 1) {
       return res.status(400).json({ error: 'You are already checked in — check out first' });
     }
-    const c = computeSession([...punches, { t: nowHHMM(), d: 'in' }], resolveShift());
+    const c = computeSession([...punches, { t: nowHHMM(), d: 'in' }], shift);
     const updated = await d365.update(ENTITY, record.hr_hrattendanceid, punchPayload(c));
     res.json(labelsForEntity('hr_hrattendances', updated));
   } catch (err) { next(err); }
@@ -210,6 +229,7 @@ router.post('/checkin', requirePermission('attendance:read'), async (req, res, n
 router.post('/checkout', requirePermission('attendance:read'), async (req, res, next) => {
   try {
     const employeeId = req.user.id;
+    const shift = await getEmployeeShift(employeeId);
     const { record } = await findTodayRecord(employeeId);
     if (!record) return res.status(400).json({ error: "You haven't checked in today" });
 
@@ -217,7 +237,7 @@ router.post('/checkout', requirePermission('attendance:read'), async (req, res, 
     if (punches.length % 2 === 0) {
       return res.status(400).json({ error: 'You are not currently checked in' });
     }
-    const c = computeSession([...punches, { t: nowHHMM(), d: 'out' }], resolveShift());
+    const c = computeSession([...punches, { t: nowHHMM(), d: 'out' }], shift);
     const updated = await d365.update(ENTITY, record.hr_hrattendanceid, punchPayload(c));
     res.json(labelsForEntity('hr_hrattendances', updated));
   } catch (err) { next(err); }
@@ -239,7 +259,8 @@ router.post('/correction', requirePermission('attendance:read'), async (req, res
     if (punches.length % 2 === 0) {
       return res.status(400).json({ error: 'This attendance is already complete' });
     }
-    const c = computeSession([...punches, { t: actualCheckout, d: 'out' }], resolveShift());
+    const shift = await getEmployeeShift(rec._hr_hremployee_value);
+    const c = computeSession([...punches, { t: actualCheckout, d: 'out' }], shift);
     const updated = await d365.update(ENTITY, attendanceId, {
       ...punchPayload(c),
       hr_source: toValue('hr_attendance_source', 'manual_correction'),
@@ -250,8 +271,8 @@ router.post('/correction', requirePermission('attendance:read'), async (req, res
 });
 
 // Build the full session view returned to clients (facts computed on read).
-function sessionView(record) {
-  const c = computeSession(record ? punchesFromRecord(record) : [], resolveShift());
+function sessionView(record, shift) {
+  const c = computeSession(record ? punchesFromRecord(record) : [], shift || resolveShift());
   return {
     state: c.state,                 // 'none' | 'in' | 'out'
     canCheckIn: c.state !== 'in',   // after any OUT you can check in again
@@ -279,10 +300,11 @@ function sessionView(record) {
 // GET /api/attendance/my-status — full session so the UI always offers the right next action
 router.get('/my-status', requirePermission('attendance:read'), async (req, res, next) => {
   try {
+    const shift = await getEmployeeShift(req.user.id);
     const { today, record } = await findTodayRecord(req.user.id);
     const openPrior = record ? null : await findOpenPriorRecord(req.user.id, today);
     res.json({
-      ...sessionView(record),
+      ...sessionView(record, shift),
       incompletePrevious: openPrior ? labelsForEntity('hr_hrattendances', openPrior) : null,
       record: record ? labelsForEntity('hr_hrattendances', record) : null,
     });
@@ -318,9 +340,10 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
       filter: `_hr_hremployee_value eq '${targetId}' and hr_date ge ${from} and hr_date le ${to}`,
       orderby: 'hr_date asc',
     });
+    const shift = await getEmployeeShift(targetId);
     let present = 0, halfDay = 0, lateCount = 0, earlyCount = 0, overtimeHours = 0;
     for (const r of (recs || [])) {
-      const c = computeSession(punchesFromRecord(r), resolveShift());
+      const c = computeSession(punchesFromRecord(r), shift);
       if (c.status === 'present') present++;
       else if (c.status === 'half_day') halfDay++;
       if (c.lateArrivalMin > 0) lateCount++;
@@ -355,9 +378,10 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
     const { data: recs } = await d365.getList(ENTITY, {
       select: PUNCH_SELECT, filter: `hr_date eq ${today}`,
     });
+    const shiftMap = await buildShiftMap();
     let inside = 0, outside = 0, incomplete = 0, late = 0, early = 0, overtime = 0;
     for (const r of (recs || [])) {
-      const c = computeSession(punchesFromRecord(r), resolveShift());
+      const c = computeSession(punchesFromRecord(r), shiftMap.get(r._hr_hremployee_value) || resolveShift());
       if (c.state === 'in') inside++;
       else if (c.state === 'out') outside++;
       if (c.status === 'incomplete') incomplete++;
@@ -413,7 +437,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
 
     // Active employees + approved leaves (for the summary).
     const { data: emps } = await d365.getList(d365.constructor.entities.employee, {
-      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation,hr_shift,hr_shiftstart',
       filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
     });
     const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
@@ -428,15 +452,15 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
     });
 
-    const shift = resolveShift();
     const rc = rangeCounts(from, to);
 
-    // Compute each session once; group by employee.
+    // Compute each session once with THAT employee's shift; group by employee.
     const byEmp = {};
     const computed = recs.map(r => {
-      const c = computeSession(punchesFromRecord(r), shift);
+      const emp = empMap.get(r._hr_hremployee_value) || {};
+      const c = computeSession(punchesFromRecord(r), shiftOf(emp));
       (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
-      return { r, c, emp: empMap.get(r._hr_hremployee_value) || {} };
+      return { r, c, emp };
     });
 
     // Employees in scope for the summary.
