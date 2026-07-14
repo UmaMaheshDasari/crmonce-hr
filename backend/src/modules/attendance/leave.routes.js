@@ -148,21 +148,19 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
 
   const employeeId = leave._hr_hremployee_value || current._hr_hremployee_value;
   if (employeeId) {
-    // In-app notification (existing) + employee decision email (shared service).
+    let ccList = [];
+    try { ccList = JSON.parse(current.hr_ccrecipients || '[]'); } catch (_) {}
+    // In-app notification (existing) + employee decision email (shared service):
+    // FROM the approver's own mailbox, CC = the original CC recipients.
     await notifyLeaveApproval(employeeId, status, { from: current.hr_fromdate, to: current.hr_todate });
     requestNotify.emailDecisionToEmployee({
-      type: 'leave', employeeId, decision: status, approverName: user.name,
+      type: 'leave', employeeId, decision: status,
+      approver: { name: user.name, email: user.email, role: user.role },
       remarks: remarks || '', status,
+      fromDate: current.hr_fromdate, toDate: current.hr_todate,
+      leaveType: toLabel('hr_leave_type', current.hr_leavetype),
+      cc: ccList,
     });
-
-    // Optional FYI to CC recipients (only when NOTIFY_CC_ON_DECISION=true).
-    if (process.env.NOTIFY_CC_ON_DECISION === 'true' && current.hr_ccrecipients) {
-      let ccList = [];
-      try { ccList = JSON.parse(current.hr_ccrecipients || '[]'); } catch (_) {}
-      requestNotify.emailDecisionFyiToCc({
-        type: 'leave', ccRecipients: ccList, decision: status, approverName: user.name,
-      });
-    }
   }
 
   broadcast('leave:updated', { leaveId: id, action: status, level: 'HR' });
@@ -176,6 +174,13 @@ router.post('/', async (req, res, next) => {
     // that should be blindly written — pull them out and resolve them server-side.
     const { approverId, cc, ...rest } = req.body;
     const body = { ...rest };
+
+    // Dynamic sender = the applicant's own mailbox. If it's missing, the leave
+    // request cannot be sent FROM the employee — surface a clear validation.
+    if (!req.user.email) {
+      return res.status(400).json({ error: 'Employee email not configured' });
+    }
+
     if (body.hr_leavetype) body.hr_leavetype = toValue('hr_leave_type', body.hr_leavetype);
 
     // Set initial approval status
@@ -281,7 +286,7 @@ router.patch('/:id/l1', async (req, res, next) => {
   try {
     const { action, remarks } = req.body; // action: 'approved' or 'rejected'
     const leaveRecord = await d365.getById(ENTITY, req.params.id, {
-      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate',
+      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_ccrecipients,hr_leavetype',
     });
 
     // Verify this user is the L1 manager of the leave employee
@@ -334,10 +339,16 @@ router.patch('/:id/l1', async (req, res, next) => {
         from: leaveRecord.hr_fromdate,
         to: leaveRecord.hr_todate,
       });
+      let ccList = [];
+      try { ccList = JSON.parse(leaveRecord.hr_ccrecipients || '[]'); } catch (_) {}
       requestNotify.emailDecisionToEmployee({
         type: 'leave', employeeId: leaveRecord._hr_hremployee_value,
-        decision: finalStatus, approverName: req.user.name,
+        decision: finalStatus,
+        approver: { name: req.user.name, email: req.user.email, role: req.user.role },
         remarks: updatePayload.hr_remarks, status: finalStatus,
+        fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
+        leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
+        cc: ccList,
       });
     }
 
@@ -351,7 +362,7 @@ router.patch('/:id/l2', async (req, res, next) => {
   try {
     const { action, remarks } = req.body;
     const leaveRecord = await d365.getById(ENTITY, req.params.id, {
-      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate',
+      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_ccrecipients,hr_leavetype',
     });
 
     if (leaveRecord.hr_l1status !== 'approved') {
@@ -392,10 +403,16 @@ router.patch('/:id/l2', async (req, res, next) => {
       from: leaveRecord.hr_fromdate,
       to: leaveRecord.hr_todate,
     });
+    let ccListL2 = [];
+    try { ccListL2 = JSON.parse(leaveRecord.hr_ccrecipients || '[]'); } catch (_) {}
     requestNotify.emailDecisionToEmployee({
       type: 'leave', employeeId: leaveRecord._hr_hremployee_value,
-      decision: l2Final, approverName: req.user.name,
+      decision: l2Final,
+      approver: { name: req.user.name, email: req.user.email, role: req.user.role },
       remarks: updatePayload.hr_remarks, status: l2Final,
+      fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
+      leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
+      cc: ccListL2,
     });
 
     broadcast('leave:updated', { leaveId: req.params.id, action, level: 'L2' });

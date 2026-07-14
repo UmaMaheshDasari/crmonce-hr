@@ -15,6 +15,7 @@ const d365 = require('./d365.service');
 const { toValue } = require('./picklist');
 const { sendEmail, notifyUser } = require('./notification.service');
 const { signApprovalToken } = require('./approval-token');
+const { resolveSender } = require('./email/sender');
 const T = require('./email/templates');
 const ecfg = require('./email/config');
 const { buildLeaveICS, icsAttachment } = require('./email/ics');
@@ -93,26 +94,29 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
       return;
     }
 
+    // Dynamic sender = the applicant's OWN mailbox. Never fall back to info@ — if
+    // the mailbox can't be used, log the exact reason and skip (audited).
+    const s = resolveSender({ email: actor?.email, label: 'Employee' });
+    if (!s.ok) {
+      global.logger?.error(`${cfg.title} request email NOT sent — ${s.reason}`);
+      global.logger?.info(`EMAIL_AUDIT ${JSON.stringify({ from: actor?.email || null, to: approver.email, type: `${type}_new_approver`, status: 'skipped', reason: s.reason, at: new Date().toISOString() })}`);
+      return;
+    }
+
     const employee = { name: actor?.name, id: actor?.id, department: await departmentOf(actor.id), email: actor?.email };
     const { approveUrl, rejectUrl } = approvalUrls(type, recordId);
-    const replyTo = actor?.email ? { name: actor.name, email: actor.email } : undefined;
 
-    // Approver email (TO, with buttons)
+    // ONE email — FROM employee, TO approver, CC = ONLY the explicitly selected
+    // users (real CC line). No automatic CC of info@/HR@/umamahesh@.
+    const ccEmails = (cc || []).filter(c => c?.email && !isPlaceholderEmail(c.email)).map(c => c.email);
     const a = T.newRequestApprover({
       moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: approver.name, approveUrl, rejectUrl,
     });
-    const ra = await sendEmail(approver.email, a.subject, a.html, { replyTo, meta: { type: `${type}_new_approver` } });
-    global.logger?.[ra?.success ? 'info' : 'error'](`${cfg.title} approver email → ${approver.email}: ${ra?.success ? 'sent' : (ra?.error || 'failed')}`);
-
-    // CC recipients (informational, no buttons)
-    for (const c of (cc || [])) {
-      if (!c?.email || isPlaceholderEmail(c.email)) continue;
-      const cm = T.newRequestCc({
-        moduleTitle: cfg.title, employee, rows: details, applyTime, recipientName: c.name, approverName: approver.name,
-      });
-      const rc = await sendEmail(c.email, cm.subject, cm.html, { replyTo, meta: { type: `${type}_new_cc` } });
-      global.logger?.[rc?.success ? 'info' : 'error'](`${cfg.title} CC email → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
-    }
+    const ra = await sendEmail(approver.email, a.subject, a.html, {
+      from: s.sender, cc: ccEmails, meta: { type: `${type}_new_approver` },
+    });
+    global.logger?.[ra?.success ? 'info' : 'error'](
+      `${cfg.title} request email FROM ${s.sender} → ${approver.email} (cc: ${ccEmails.join(', ') || 'none'}): ${ra?.success ? 'sent' : (ra?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`notifyNewRequest(${type}) failed: ${err.message}`);
   }
@@ -131,19 +135,33 @@ async function emailApplyAcknowledgement({ type, toEmail, employeeName, approver
   }
 }
 
-/** Decision → email the employee (Approved/Rejected) with balance + .ics for approved leave. */
-async function emailDecisionToEmployee({ type, employeeId, decision, approverName, remarks, status, fromDate, toDate, leaveType }) {
+/**
+ * Decision → email the employee (Approved/Rejected) with balance + .ics for
+ * approved leave. FROM = the approver's OWN mailbox (HR@ / umamahesh@). CC =
+ * original CC recipients (real CC line). `approver` = { name, email }.
+ */
+async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, cc = [] }) {
   try {
     const cfg = TYPE_CFG[type] || { title: type };
     let emp;
     try { emp = await d365.getById(EMP, employeeId, { select: 'hr_hremployee1,hr_email' }); } catch (_) {}
     if (!emp?.hr_email) { global.logger?.warn(`${cfg.title} decision email skipped: employee ${employeeId} has no email`); return; }
 
+    const aName = approver?.name || approverName;
+    // Sender = approver's own mailbox. If it can't be used, log the exact reason
+    // (the employee is still informed via the system mailbox — never silent).
+    const fromOpt = {};
+    if (approver?.email) {
+      const s = resolveSender({ email: approver.email, label: 'Approver' });
+      if (s.ok) fromOpt.from = s.sender;
+      else global.logger?.error(`${cfg.title} decision — approver mailbox unusable (${s.reason}); sending from system mailbox`);
+    }
+
     const balance = type === 'leave' ? await getLeaveBalance(employeeId) : null;
     const { subject, html } = T.decision({
       moduleTitle: cfg.title,
       employeeName: emp.hr_hremployee1,
-      approverName,
+      approverName: aName,
       date: new Date().toISOString().split('T')[0],
       remarks: remarks || '—',
       decision,
@@ -159,8 +177,10 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approverNam
       attachments.push(icsAttachment(ics, 'leave.ics'));
     }
 
-    const r = await sendEmail(emp.hr_email, subject, html, { attachments, meta: { type: `${type}_decision` } });
-    global.logger?.[r?.success ? 'info' : 'error'](`${cfg.title} decision email → ${emp.hr_email}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+    const ccEmails = (cc || []).filter(c => c?.email && !isPlaceholderEmail(c.email)).map(c => c.email);
+    const r = await sendEmail(emp.hr_email, subject, html, { ...fromOpt, cc: ccEmails, attachments, meta: { type: `${type}_decision` } });
+    global.logger?.[r?.success ? 'info' : 'error'](
+      `${cfg.title} decision email FROM ${fromOpt.from || '(system)'} → ${emp.hr_email} (cc: ${ccEmails.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailDecisionToEmployee(${type}) failed: ${err.message}`);
   }
