@@ -25,6 +25,21 @@ test('resolveEmployeeShift derives start/end/duration from the assigned start', 
   }
 });
 
+test('explicit Shift End Time drives duration / early-exit / overtime', () => {
+  const s = cfg.resolveEmployeeShift('Custom Shift', '10:00', '16:00');   // 6h
+  assert.strictEqual(s.start, '10:00');
+  assert.strictEqual(s.end, '16:00');
+  assert.strictEqual(s.durationHours, 6);
+  assert.strictEqual(computeSession(['10:00', '15:30'], s).earlyDepartureMin, 30);  // vs 16:00 end
+  assert.strictEqual(computeSession(['10:00', '17:00'], s).overtimeHours, 1);        // 7h - 6h
+});
+
+test('overnight shift via explicit end (22:00 → 06:00 = 8h, isNight)', () => {
+  const s = cfg.resolveEmployeeShift('Night Shift', '22:00', '06:00');
+  assert.strictEqual(s.durationHours, 8);
+  assert.strictEqual(s.isNight, true);
+});
+
 test('missing shift falls back to General 09:00 (legacy safety, no crash)', () => {
   assert.strictEqual(S(undefined, undefined).start, '09:00');
 });

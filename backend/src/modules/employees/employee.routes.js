@@ -12,8 +12,9 @@ const ENTITY = d365.constructor.entities.employee;
 // Employee module works before the Dataverse columns exist / migration runs.
 function withShiftDefaults(e) {
   if (e && typeof e === 'object') {
-    if (!e.hr_shift) e.hr_shift = 'General Shift';
-    if (!e.hr_shiftstart) e.hr_shiftstart = '09:00';
+    if (!e.hr_shiftname) e.hr_shiftname = 'General Shift';
+    if (!e.hr_shiftstarttime) e.hr_shiftstarttime = '09:00';
+    if (!e.hr_shiftendtime) e.hr_shiftendtime = '18:00';
   }
   return e;
 }
@@ -24,7 +25,7 @@ async function createStrippingOptionalShift(entity, data) {
   try { return await d365.create(entity, data); }
   catch (err) {
     if (!d365._isMissingProperty(err)) throw err;
-    const { hr_shift, hr_shiftstart, ...rest } = data;
+    const { hr_shiftname, hr_shiftstarttime, hr_shiftendtime, ...rest } = data;
     return d365.create(entity, rest);
   }
 }
@@ -32,7 +33,7 @@ async function updateStrippingOptionalShift(entity, id, data) {
   try { return await d365.update(entity, id, data); }
   catch (err) {
     if (!d365._isMissingProperty(err)) throw err;
-    const { hr_shift, hr_shiftstart, ...rest } = data;
+    const { hr_shiftname, hr_shiftstarttime, hr_shiftendtime, ...rest } = data;
     return d365.update(entity, id, rest);
   }
 }
@@ -54,12 +55,12 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const lim = Math.max(1, parseInt(limit, 10) || 20);
 
-    // hr_shift/hr_shiftstart are OPTIONAL: if the Dataverse columns don't exist
+    // Shift columns are OPTIONAL: if the Dataverse columns don't exist
     // yet, the query degrades to the base columns instead of failing (which would
     // empty the whole list). Defaults are then applied below.
     const result = await d365.getListOptional(ENTITY, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,_hr_manager_value',
-      optionalSelect: 'hr_shift,hr_shiftstart',
+      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_hremployee1 asc',
       top: pageNum * lim,
@@ -79,7 +80,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     }
     const emp = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,_hr_manager_value',
-      optionalSelect: 'hr_shift,hr_shiftstart',
+      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime',
     });
     res.json(labelsForEntity(ENTITY, withShiftDefaults(emp)));
   } catch (err) { next(err); }
@@ -114,8 +115,9 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
     // Default shift so attendance math always has a start time (same as migration).
-    if (!employeeData.hr_shift) employeeData.hr_shift = 'General Shift';
-    if (!employeeData.hr_shiftstart) employeeData.hr_shiftstart = '09:00';
+    if (!employeeData.hr_shiftname) employeeData.hr_shiftname = 'General Shift';
+    if (!employeeData.hr_shiftstarttime) employeeData.hr_shiftstarttime = '09:00';
+    if (!employeeData.hr_shiftendtime) employeeData.hr_shiftendtime = '18:00';
     const emp = await createStrippingOptionalShift(ENTITY, employeeData);
     res.status(201).json(emp);
   } catch (err) { next(err); }

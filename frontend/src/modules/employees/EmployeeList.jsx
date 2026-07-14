@@ -170,8 +170,8 @@ export default function EmployeeList() {
                       <span className="text-sm text-gray-600">{emp.hr_designation || <span className="text-gray-300">&mdash;</span>}</span>
                     </td>
                     <td className="hidden lg:table-cell px-6 py-4">
-                      <span className="text-sm text-gray-600">{emp.hr_shift || 'General Shift'}</span>
-                      <span className="block text-xs text-gray-400 tabular-nums">{emp.hr_shiftstart || '09:00'}</span>
+                      <span className="text-sm text-gray-600">{emp.hr_shiftname || 'General Shift'}</span>
+                      <span className="block text-xs text-gray-400 tabular-nums">{emp.hr_shiftstarttime || '09:00'}–{emp.hr_shiftendtime || '18:00'}</span>
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-500 tabular-nums">

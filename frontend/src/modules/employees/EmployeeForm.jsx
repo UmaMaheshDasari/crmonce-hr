@@ -53,7 +53,7 @@ export default function EmployeeForm() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm({
-    defaultValues: { hr_shift: 'General Shift', hr_shiftstart: '09:00' },
+    defaultValues: { hr_shiftname: 'General Shift', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00' },
   });
 
   const { data: empData } = useQuery({
@@ -74,7 +74,8 @@ export default function EmployeeForm() {
         hr_department: e.hr_department, hr_designation: e.hr_designation,
         hr_role: e.hr_role, hr_salary: e.hr_salary, hr_joiningdate: e.hr_joiningdate?.split('T')[0],
         hr_status: e.hr_status, hr_address: e.hr_address, hr_etimecode: e.hr_etimecode,
-        hr_shift: e.hr_shift || 'General Shift', hr_shiftstart: e.hr_shiftstart || '09:00' });
+        hr_shiftname: e.hr_shiftname || 'General Shift', hr_shiftstarttime: e.hr_shiftstarttime || '09:00',
+        hr_shiftendtime: e.hr_shiftendtime || '18:00' });
     }
   }, [empData, reset]);
 
@@ -140,12 +141,13 @@ export default function EmployeeForm() {
                 <option value="inactive">Inactive</option>
                 <option value="on_leave">On Leave</option>
               </SelectField>
-              <SelectField label="Shift Name" name="hr_shift" register={register}>
+              <SelectField label="Shift Name" name="hr_shiftname" register={register}>
                 {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
               </SelectField>
-              <Field label="Shift Start Time" name="hr_shiftstart" type="time" register={register} errors={errors} />
+              <Field label="Shift Start Time" name="hr_shiftstarttime" type="time" register={register} errors={errors} />
+              <Field label="Shift End Time" name="hr_shiftendtime" type="time" register={register} errors={errors} />
             </div>
-            <p className="text-xs text-gray-400 mt-2">Late, Early Exit and Overtime are calculated from this Shift Start Time (+5&nbsp;min grace).</p>
+            <p className="text-xs text-gray-400 mt-2">Late is measured from Shift Start (+5&nbsp;min grace); Early Exit from Shift End; Overtime beyond (End&nbsp;−&nbsp;Start).</p>
           </div>
         </div>
 

@@ -160,11 +160,12 @@ function punchPayload(c) {
 // Late / Early Exit / Overtime math. resolveShift() is the legacy fallback only.
 const EMP_ENTITY = d365.constructor.entities.employee;
 const resolveShift = () => attnCfg.resolveShift();
-const shiftOf = (emp) => attnCfg.resolveEmployeeShift(emp?.hr_shift, emp?.hr_shiftstart);
+const SHIFT_COLS = 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime';
+const shiftOf = (emp) => attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime);
 async function getEmployeeShift(employeeId) {
   try {
-    // Optional columns: degrade to defaults if hr_shift/hr_shiftstart don't exist.
-    const e = await d365.getByIdOptional(EMP_ENTITY, employeeId, { select: 'hr_hremployeeid', optionalSelect: 'hr_shift,hr_shiftstart' });
+    // Optional columns: degrade to defaults if the shift columns don't exist.
+    const e = await d365.getByIdOptional(EMP_ENTITY, employeeId, { select: 'hr_hremployeeid', optionalSelect: SHIFT_COLS });
     return shiftOf(e);
   } catch (_) { return resolveShift(); }
 }
@@ -172,7 +173,7 @@ async function getEmployeeShift(employeeId) {
 async function buildShiftMap() {
   const map = new Map();
   try {
-    const { data } = await d365.getListOptional(EMP_ENTITY, { select: 'hr_hremployeeid', optionalSelect: 'hr_shift,hr_shiftstart', top: 5000 });
+    const { data } = await d365.getListOptional(EMP_ENTITY, { select: 'hr_hremployeeid', optionalSelect: SHIFT_COLS, top: 5000 });
     (data || []).forEach(e => map.set(e.hr_hremployeeid, shiftOf(e)));
   } catch (_) { /* fall back to default per record */ }
   return map;
@@ -438,7 +439,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     // Active employees + approved leaves (for the summary).
     const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
-      optionalSelect: 'hr_shift,hr_shiftstart',
+      optionalSelect: SHIFT_COLS,
       filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
     });
     const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));

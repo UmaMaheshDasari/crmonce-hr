@@ -16,15 +16,16 @@ const DRY = !process.argv.includes('--apply');
   const EMP = d365.constructor.entities.employee;
 
   const { data } = await d365.getList(EMP, {
-    select: 'hr_hremployeeid,hr_hremployee1,hr_shift,hr_shiftstart', top: 5000,
+    select: 'hr_hremployeeid,hr_hremployee1,hr_shiftname,hr_shiftstarttime,hr_shiftendtime', top: 5000,
   });
-  const need = (data || []).filter(e => !e.hr_shift || !e.hr_shiftstart);
+  const need = (data || []).filter(e => !e.hr_shiftname || !e.hr_shiftstarttime || !e.hr_shiftendtime);
   console.log(`\n${data?.length || 0} employees; ${need.length} missing shift.\n`);
 
   for (const e of need) {
     const patch = {};
-    if (!e.hr_shift) patch.hr_shift = 'General Shift';
-    if (!e.hr_shiftstart) patch.hr_shiftstart = '09:00';
+    if (!e.hr_shiftname) patch.hr_shiftname = 'General Shift';
+    if (!e.hr_shiftstarttime) patch.hr_shiftstarttime = '09:00';
+    if (!e.hr_shiftendtime) patch.hr_shiftendtime = '18:00';
     if (DRY) { console.log(`  [dry-run] ${e.hr_hremployee1}: ${JSON.stringify(patch)}`); continue; }
     await d365.update(EMP, e.hr_hremployeeid, patch);
     console.log(`  updated ${e.hr_hremployee1}`);

@@ -201,8 +201,8 @@ export default function EmployeeDetail() {
               <div>
                 <p className="text-xs text-gray-400 font-medium">Shift</p>
                 <p className="text-sm text-gray-900 font-medium">
-                  {emp.hr_shift || 'General Shift'}
-                  <span className="text-gray-400 font-normal"> · {emp.hr_shiftstart || '09:00'}</span>
+                  {emp.hr_shiftname || 'General Shift'}
+                  <span className="text-gray-400 font-normal"> · {emp.hr_shiftstarttime || '09:00'}–{emp.hr_shiftendtime || '18:00'}</span>
                 </p>
               </div>
             </div>

@@ -60,28 +60,42 @@ function normalizeTime(v) {
 }
 
 /**
- * Build the shift for an EMPLOYEE from their assigned Shift Name + Start Time.
- * The employee's START TIME drives Late / Early Exit / Overtime — never a fixed
- * office timing. Duration is inherited from a named shift starting at the same
- * time (e.g. 07:00 → Morning's 10h), otherwise DEFAULT_SHIFT_HOURS.
- * Falls back to the default shift ONLY when no start time is stored (legacy).
+ * Build the shift for an EMPLOYEE from their assigned Shift Name + Start Time +
+ * End Time (hr_shiftname / hr_shiftstarttime / hr_shiftendtime). The employee's
+ * START drives Late, the END drives Early Exit, and (End−Start) is the duration
+ * that drives Overtime — never a fixed office timing.
+ *  - If End is provided, duration = End − Start (overnight aware).
+ *  - If End is missing (legacy), duration is inherited from a named shift with
+ *    the same start, else DEFAULT_SHIFT_HOURS, and End is derived.
+ *  - If Start is missing entirely, fall back to the default shift.
  */
-function resolveEmployeeShift(shiftName, shiftStart) {
+function resolveEmployeeShift(shiftName, shiftStart, shiftEnd) {
   const start = normalizeTime(shiftStart);
   if (!start) return resolveShift();
-  let durationHours = DEFAULT_SHIFT_HOURS;
-  for (const s of Object.values(shifts)) {
-    if (s.start === start) { durationHours = shiftDurationHours(s); break; }
-  }
   const startMin = toMin(start);
-  const endAbs = startMin + Math.round(durationHours * 60);
-  const endMin = endAbs % 1440;
-  const end = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+  const end = normalizeTime(shiftEnd);
+
+  let durationHours, endStr, endAbs;
+  if (end) {
+    const em = toMin(end);
+    endAbs = em + (em <= startMin ? 1440 : 0);          // overnight → +24h
+    durationHours = Math.round((endAbs - startMin) / 60 * 100) / 100;
+    endStr = end;
+  } else {
+    durationHours = DEFAULT_SHIFT_HOURS;
+    for (const s of Object.values(shifts)) {
+      if (s.start === start) { durationHours = shiftDurationHours(s); break; }
+    }
+    endAbs = startMin + Math.round(durationHours * 60);
+    const em = endAbs % 1440;
+    endStr = `${String(Math.floor(em / 60)).padStart(2, '0')}:${String(em % 60).padStart(2, '0')}`;
+  }
+
   return {
     code: 'EMP',
     name: shiftName || 'Shift',
-    start, end, durationHours,
-    isNight: endAbs > 1440 || endMin <= startMin,
+    start, end: endStr, durationHours,
+    isNight: endAbs > 1440,
   };
 }
 
