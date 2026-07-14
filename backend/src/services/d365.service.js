@@ -86,6 +86,40 @@ class D365Service {
     return res.data;
   }
 
+  // True when Dataverse rejected the query because a $select column doesn't exist
+  // yet (optional/newly-added field). Lets callers degrade gracefully.
+  _isMissingProperty(err) {
+    const m = err?.response?.data?.error?.message || '';
+    return err?.response?.status === 400 &&
+      /Could not find a property named|does not exist|property named '/i.test(m);
+  }
+
+  // getList that RETRIES without the optional columns if Dataverse doesn't have
+  // them yet — so a not-yet-created field never breaks the whole query.
+  async getListOptional(entity, { select, optionalSelect, ...rest }) {
+    const full = optionalSelect ? [select, optionalSelect].filter(Boolean).join(',') : select;
+    try {
+      return await this.getList(entity, { ...rest, select: full });
+    } catch (err) {
+      if (optionalSelect && this._isMissingProperty(err)) {
+        return await this.getList(entity, { ...rest, select });
+      }
+      throw err;
+    }
+  }
+
+  async getByIdOptional(entity, id, { select, optionalSelect, ...rest }) {
+    const full = optionalSelect ? [select, optionalSelect].filter(Boolean).join(',') : select;
+    try {
+      return await this.getById(entity, id, { ...rest, select: full });
+    } catch (err) {
+      if (optionalSelect && this._isMissingProperty(err)) {
+        return await this.getById(entity, id, { ...rest, select });
+      }
+      throw err;
+    }
+  }
+
   async create(entity, data) {
     const headers = await this.getHeaders({ Prefer: 'return=representation' });
     const res = await axios.post(`${this.baseUrl}/${entity}`, data, { headers });
