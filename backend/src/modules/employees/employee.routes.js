@@ -48,6 +48,12 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     if (department) filters.push(`hr_department eq '${department}'`);
     if (status) filters.push(`hr_status eq ${toValue('hr_employee_status', status)}`);
 
+    // Pagination: Dataverse ignores $skip, so fetch the first (page*limit) rows
+    // with $top and slice the requested page server-side. @odata.count still
+    // returns the TOTAL matched count for the page controls.
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.max(1, parseInt(limit, 10) || 20);
+
     // hr_shift/hr_shiftstart are OPTIONAL: if the Dataverse columns don't exist
     // yet, the query degrades to the base columns instead of failing (which would
     // empty the whole list). Defaults are then applied below.
@@ -56,11 +62,11 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
       optionalSelect: 'hr_shift,hr_shiftstart',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_hremployee1 asc',
-      top: limit,
-      skip: (page - 1) * limit,
+      top: pageNum * lim,
     });
-    (result.data || []).forEach(withShiftDefaults);
-    res.json(labelsForList(ENTITY, result));
+    const pageData = (result.data || []).slice((pageNum - 1) * lim);
+    pageData.forEach(withShiftDefaults);
+    res.json(labelsForList(ENTITY, { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
 

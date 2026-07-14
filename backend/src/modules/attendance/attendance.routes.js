@@ -29,14 +29,17 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
     if (status) filters.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
     if (source) filters.push(`hr_source eq ${toValue('hr_attendance_source', source)}`);
 
+    // Dataverse ignores $skip → fetch first (page*limit) rows and slice server-side.
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.max(1, parseInt(limit, 10) || 30);
     const result = await d365.getList(ENTITY, {
       select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_date desc',
-      top: limit,
-      skip: (page - 1) * limit,
+      top: pageNum * lim,
     });
-    res.json(labelsForList('hr_hrattendances', result));
+    const pageData = (result.data || []).slice((pageNum - 1) * lim);
+    res.json(labelsForList('hr_hrattendances', { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
 
@@ -423,18 +426,14 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
 
-    // Attendance in range (date + employee scope) — feeds BOTH sheets. Paginated (10k+).
+    // Attendance in range (date + employee scope) — feeds BOTH sheets.
+    // Cursor paging via @odata.nextLink (NOT $skip, which Dataverse ignores and
+    // which would return page 1 repeatedly → duplicate rows).
     const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
     if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
-    const CAP = 10000, PAGE = 1000;
-    let recs = [], skip = 0;
-    while (recs.length < CAP) {
-      const { data } = await d365.getList(ENTITY, { select: PUNCH_SELECT, filter: f.join(' and '), orderby: 'hr_date desc', top: PAGE, skip });
-      if (!data || !data.length) break;
-      recs.push(...data);
-      if (data.length < PAGE) break;
-      skip += PAGE;
-    }
+    const { data: recs } = await d365.getAll(ENTITY, {
+      select: PUNCH_SELECT, filter: f.join(' and '), orderby: 'hr_date desc',
+    }, 10000);
 
     // Active employees + approved leaves (for the summary).
     const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {

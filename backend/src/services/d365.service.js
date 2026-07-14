@@ -72,7 +72,25 @@ class D365Service {
 
     const url = `${this.baseUrl}/${entity}?${query.toString()}`;
     const res = await axios.get(url, { headers });
-    return { data: res.data.value, count: res.data['@odata.count'] };
+    // Dataverse pages via @odata.nextLink (a skiptoken cursor) — it does NOT
+    // support $skip. Expose nextLink so callers can page correctly.
+    return { data: res.data.value, count: res.data['@odata.count'], nextLink: res.data['@odata.nextLink'] };
+  }
+
+  // Follow @odata.nextLink cursors to retrieve ALL matching rows (up to cap).
+  // Use this instead of $skip loops, which silently return page 1 forever.
+  async getAll(entity, params = {}, cap = 10000) {
+    const first = await this.getList(entity, params);
+    const all = [...(first.data || [])];
+    let nextLink = first.nextLink;
+    let headers;   // fetched lazily — only when there is a cursor to follow
+    while (nextLink && all.length < cap) {
+      if (!headers) headers = await this.getHeaders();
+      const res = await axios.get(nextLink, { headers });
+      all.push(...(res.data.value || []));
+      nextLink = res.data['@odata.nextLink'];
+    }
+    return { data: all.slice(0, cap), count: first.count };
   }
 
   async getById(entity, id, params = {}) {

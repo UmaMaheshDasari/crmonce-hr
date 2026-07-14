@@ -33,15 +33,18 @@ router.get('/', async (req, res, next) => {
     if (year) filters.push(`hr_financialyear eq '${year}'`);
     if (status) filters.push(`hr_status eq ${toValue('hr_declaration_status', status)}`);
 
+    // Dataverse ignores $skip → fetch first (page*limit) rows and slice server-side.
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.max(1, parseInt(limit, 10) || 20);
     const result = await d365.getList(ENTITY, {
       select: SELECT_FIELDS,
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
-      top: limit,
-      skip: (page - 1) * limit,
+      top: pageNum * lim,
     });
+    const pageData = (result.data || []).slice((pageNum - 1) * lim);
 
-    res.json(labelsForList(ENTITY, result));
+    res.json(labelsForList(ENTITY, { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
 

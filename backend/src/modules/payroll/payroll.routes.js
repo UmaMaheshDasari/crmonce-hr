@@ -15,13 +15,17 @@ payrollRouter.get('/', requirePermission('payroll:read'), async (req, res, next)
     if (month) filters.push(`hr_month eq ${month}`);
     if (year) filters.push(`hr_year eq ${year}`);
 
+    // Dataverse ignores $skip → fetch first (page*limit) rows and slice server-side.
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.max(1, parseInt(limit, 10) || 20);
     const result = await d365.getList(d365.constructor.entities.payroll, {
       select: 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,hr_processeddate,_hr_hremployee_value',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_year desc,hr_month desc',
-      top: limit, skip: (page - 1) * limit,
+      top: pageNum * lim,
     });
-    res.json(labelsForList('hr_hrpayrolls', result));
+    const pageData = (result.data || []).slice((pageNum - 1) * lim);
+    res.json(labelsForList('hr_hrpayrolls', { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
 
