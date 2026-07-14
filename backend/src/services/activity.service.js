@@ -26,6 +26,27 @@ function runtime() { return buf.slice(); }
 const nameOf = (r) => r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** "HH:MM" or ISO datetime → "3:44 PM" (unambiguous 12-hour). */
+function fmtTime(v) {
+  if (!v) return '';
+  const s = String(v);
+  let hh, mm;
+  if (s.includes('T')) { const d = new Date(s); if (!isNaN(d)) { hh = d.getHours(); mm = d.getMinutes(); } }
+  if (hh === undefined) { const m = s.match(/(\d{1,2}):(\d{2})/); if (m) { hh = +m[1]; mm = +m[2]; } }
+  if (hh === undefined) return s;
+  const ap = hh >= 12 ? 'PM' : 'AM';
+  const h12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${h12}:${String(mm).padStart(2, '0')} ${ap}`;
+}
+
+/** "2026-07-08" → "08 Jul 2026". */
+function fmtDate(v) {
+  const s = String(v || '').slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s;
+  return `${m[3]} ${MONTHS[(+m[2]) - 1] || ''} ${m[1]}`;
+}
+
 async function fromAttendance() {
   try {
     const web = toValue('hr_attendance_source', 'web_checkin');
@@ -37,9 +58,9 @@ async function fromAttendance() {
     });
     return (data || []).map(r => {
       let type, title, meta;
-      if (r.hr_source === man) { type = 'attendance_correction'; title = 'Manual Attendance Correction'; meta = String(r.hr_date || '').slice(0, 10); }
-      else if (r.hr_outtime) { type = 'web_checkout'; title = 'Web Check Out'; meta = r.hr_outtime; }
-      else { type = 'web_checkin'; title = 'Web Check In'; meta = r.hr_intime; }
+      if (r.hr_source === man) { type = 'attendance_correction'; title = 'Manual Attendance Correction'; meta = `edited ${fmtDate(r.hr_date)}`; }
+      else if (r.hr_outtime) { type = 'web_checkout'; title = 'Web Check Out'; meta = `checked out ${fmtTime(r.hr_outtime)}`; }
+      else { type = 'web_checkin'; title = 'Web Check In'; meta = `checked in ${fmtTime(r.hr_intime)}`; }
       return { id: 'att-' + r.hr_hrattendanceid, category: 'Attendance', type, title, name: nameOf(r), meta, time: r.modifiedon || r.createdon };
     });
   } catch (_) { return []; }
