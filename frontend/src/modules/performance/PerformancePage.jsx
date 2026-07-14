@@ -49,7 +49,7 @@ function NewReviewModal({ onClose }) {
       hr_goals: form.goals, hr_kpis: form.kpis, hr_reviewernotes: form.notes,
       hr_status: 'draft',
     }),
-    onSuccess: () => { toast.success('Review created!'); qc.invalidateQueries(['performance']); onClose(); },
+    onSuccess: () => { toast.success('Review created!'); qc.invalidateQueries({ queryKey: ['performance'] }); onClose(); },
     onError: () => toast.error('Failed to create review'),
   });
 
@@ -133,9 +133,9 @@ function NewReviewModal({ onClose }) {
         {/* Footer */}
         <div className="flex gap-3 px-6 py-4 bg-gray-50/80 border-t border-gray-100">
           <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-          <button onClick={() => mutation.mutate()} disabled={!form.employeeId || mutation.isLoading}
+          <button onClick={() => mutation.mutate()} disabled={!form.employeeId || mutation.isPending}
             className="btn-primary flex-1 flex items-center justify-center gap-2">
-            {mutation.isLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             Create Review
           </button>
         </div>

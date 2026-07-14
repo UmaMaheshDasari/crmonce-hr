@@ -166,13 +166,13 @@ function DeclarationFormModal({ declaration, onClose, onSaved }) {
 
   const createMut = useMutation({
     mutationFn: (data) => taxDeclarationApi.create(data),
-    onSuccess: () => { toast.success('Declaration saved as draft'); qc.invalidateQueries(['tax-declarations']); onClose(); },
+    onSuccess: () => { toast.success('Declaration saved as draft'); qc.invalidateQueries({ queryKey: ['tax-declarations'] }); onClose(); },
     onError: () => toast.error('Failed to save declaration'),
   });
 
   const updateMut = useMutation({
     mutationFn: (data) => taxDeclarationApi.update(declaration.hr_hrtaxdeclarationid, data),
-    onSuccess: () => { toast.success('Declaration updated'); qc.invalidateQueries(['tax-declarations']); onClose(); },
+    onSuccess: () => { toast.success('Declaration updated'); qc.invalidateQueries({ queryKey: ['tax-declarations'] }); onClose(); },
     onError: () => toast.error('Failed to update declaration'),
   });
 
@@ -196,7 +196,7 @@ function DeclarationFormModal({ declaration, onClose, onSaved }) {
   };
 
   const setField = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
-  const isLoading = createMut.isLoading || updateMut.isLoading;
+  const isLoading = createMut.isPending || updateMut.isPending;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
@@ -364,13 +364,13 @@ function ViewDetailsModal({ declaration, onClose, isHR }) {
 
   const verifyMut = useMutation({
     mutationFn: () => taxDeclarationApi.update(declaration.hr_hrtaxdeclarationid, { hr_status: 'verified' }),
-    onSuccess: () => { toast.success('Declaration verified'); qc.invalidateQueries(['tax-declarations']); onClose(); },
+    onSuccess: () => { toast.success('Declaration verified'); qc.invalidateQueries({ queryKey: ['tax-declarations'] }); onClose(); },
     onError: () => toast.error('Failed to verify'),
   });
 
   const rejectMut = useMutation({
     mutationFn: () => taxDeclarationApi.update(declaration.hr_hrtaxdeclarationid, { hr_status: 'rejected' }),
-    onSuccess: () => { toast.success('Declaration rejected'); qc.invalidateQueries(['tax-declarations']); onClose(); },
+    onSuccess: () => { toast.success('Declaration rejected'); qc.invalidateQueries({ queryKey: ['tax-declarations'] }); onClose(); },
     onError: () => toast.error('Failed to reject'),
   });
 
@@ -462,14 +462,14 @@ function ViewDetailsModal({ declaration, onClose, isHR }) {
             <>
               <button
                 onClick={() => rejectMut.mutate()}
-                disabled={rejectMut.isLoading || verifyMut.isLoading}
+                disabled={rejectMut.isPending || verifyMut.isPending}
                 className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-xl hover:bg-red-100 transition-colors disabled:opacity-50"
               >
                 <XCircleIcon className="w-4 h-4" /> Reject
               </button>
               <button
                 onClick={() => verifyMut.mutate()}
-                disabled={verifyMut.isLoading || rejectMut.isLoading}
+                disabled={verifyMut.isPending || rejectMut.isPending}
                 className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-xl hover:from-emerald-600 hover:to-emerald-700 shadow-sm transition-all disabled:opacity-50"
               >
                 <CheckCircleIcon className="w-4 h-4" /> Verify
@@ -511,13 +511,13 @@ export default function TaxDeclarationPage() {
 
   const deleteMut = useMutation({
     mutationFn: (id) => taxDeclarationApi.delete(id),
-    onSuccess: () => { toast.success('Declaration deleted'); qc.invalidateQueries(['tax-declarations']); },
+    onSuccess: () => { toast.success('Declaration deleted'); qc.invalidateQueries({ queryKey: ['tax-declarations'] }); },
     onError: () => toast.error('Failed to delete'),
   });
 
   const submitMut = useMutation({
     mutationFn: (dec) => taxDeclarationApi.update(dec.hr_hrtaxdeclarationid, { hr_status: 'submitted' }),
-    onSuccess: () => { toast.success('Declaration submitted for verification'); qc.invalidateQueries(['tax-declarations']); },
+    onSuccess: () => { toast.success('Declaration submitted for verification'); qc.invalidateQueries({ queryKey: ['tax-declarations'] }); },
     onError: () => toast.error('Failed to submit'),
   });
 

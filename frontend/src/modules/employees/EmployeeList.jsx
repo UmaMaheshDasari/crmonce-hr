@@ -46,7 +46,7 @@ export default function EmployeeList() {
   const { data, isLoading } = useQuery({
     queryKey: ['employees', search, dept, status, page],
     queryFn: () => employeeApi.list({ search, department: dept, status, page, limit }),
-    keepPreviousData: true,
+    placeholderData: (prev) => prev,
   });
 
   const { data: deptData } = useQuery({

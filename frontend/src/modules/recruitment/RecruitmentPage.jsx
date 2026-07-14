@@ -30,7 +30,7 @@ function NewJobModal({ onClose }) {
   const [form, setForm] = useState({ hr_hrjob1: '', hr_department: '', hr_openings: 1, hr_closingdate: '', hr_description: '' });
   const mutation = useMutation({
     mutationFn: () => recruitmentApi.createJob(form),
-    onSuccess: () => { toast.success('Job posted!'); qc.invalidateQueries(['jobs']); onClose(); },
+    onSuccess: () => { toast.success('Job posted!'); qc.invalidateQueries({ queryKey: ['jobs'] }); onClose(); },
     onError: () => toast.error('Failed to create job'),
   });
   return (
@@ -81,9 +81,9 @@ function NewJobModal({ onClose }) {
         {/* Footer */}
         <div className="flex gap-3 px-6 py-4 bg-gray-50/80 border-t border-gray-100">
           <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-          <button onClick={() => mutation.mutate()} disabled={!form.hr_hrjob1 || mutation.isLoading}
+          <button onClick={() => mutation.mutate()} disabled={!form.hr_hrjob1 || mutation.isPending}
             className="btn-primary flex-1 flex items-center justify-center gap-2">
-            {mutation.isLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             Post Job
           </button>
         </div>
@@ -112,7 +112,7 @@ export default function RecruitmentPage() {
 
   const stageMutation = useMutation({
     mutationFn: ({ id, stage }) => recruitmentApi.updateStage(id, stage),
-    onSuccess: () => { toast.success('Stage updated'); qc.invalidateQueries(['applications']); },
+    onSuccess: () => { toast.success('Stage updated'); qc.invalidateQueries({ queryKey: ['applications'] }); },
     onError: () => toast.error('Update failed'),
   });
 

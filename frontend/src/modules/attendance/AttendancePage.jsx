@@ -31,7 +31,7 @@ export default function AttendancePage() {
   const { data, isLoading } = useQuery({
     queryKey: ['attendance', empId, from, to, status, source, page],
     queryFn: () => attendanceApi.list({ employeeId: empId, from, to, status, source, page, limit }),
-    keepPreviousData: true,
+    placeholderData: (prev) => prev,
   });
 
   const handleExport = async () => {
@@ -64,7 +64,7 @@ export default function AttendancePage() {
     mutationFn: () => attendanceApi.sync(from, to),
     onSuccess: (res) => {
       toast.success(`Sync complete: ${res.data.synced} records synced`);
-      qc.invalidateQueries(['attendance']);
+      qc.invalidateQueries({ queryKey: ['attendance'] });
     },
     onError: () => toast.error('Sync failed. Check eTime connection.'),
   });
@@ -112,11 +112,11 @@ export default function AttendancePage() {
           {isHR() && (
             <button
               onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isLoading}
+              disabled={syncMutation.isPending}
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-60 transition-all duration-200"
             >
-              <ArrowPathIcon className={`w-4.5 h-4.5 ${syncMutation.isLoading ? 'animate-spin' : ''}`} />
-              {syncMutation.isLoading ? 'Syncing...' : 'Sync eTime'}
+              <ArrowPathIcon className={`w-4.5 h-4.5 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+              {syncMutation.isPending ? 'Syncing...' : 'Sync eTime'}
             </button>
           )}
         </div>

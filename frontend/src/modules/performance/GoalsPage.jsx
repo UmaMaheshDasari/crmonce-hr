@@ -127,7 +127,7 @@ function AssignGoalModal({ onClose }) {
 
   const mutation = useMutation({
     mutationFn: () => goalsApi.create(form),
-    onSuccess: () => { toast.success('Goal assigned successfully!'); qc.invalidateQueries(['goals']); onClose(); },
+    onSuccess: () => { toast.success('Goal assigned successfully!'); qc.invalidateQueries({ queryKey: ['goals'] }); onClose(); },
     onError: () => toast.error('Failed to assign goal'),
   });
 
@@ -271,7 +271,7 @@ function UpdateProgressModal({ goal, onClose }) {
 
   const mutation = useMutation({
     mutationFn: () => goalsApi.update(goal.hr_hrgoalid, form),
-    onSuccess: () => { toast.success('Progress updated!'); qc.invalidateQueries(['goals']); onClose(); },
+    onSuccess: () => { toast.success('Progress updated!'); qc.invalidateQueries({ queryKey: ['goals'] }); onClose(); },
     onError: () => toast.error('Failed to update progress'),
   });
 
@@ -349,7 +349,7 @@ function ManagerReviewModal({ goal, onClose }) {
 
   const mutation = useMutation({
     mutationFn: () => goalsApi.update(goal.hr_hrgoalid, form),
-    onSuccess: () => { toast.success('Review submitted!'); qc.invalidateQueries(['goals']); onClose(); },
+    onSuccess: () => { toast.success('Review submitted!'); qc.invalidateQueries({ queryKey: ['goals'] }); onClose(); },
     onError: () => toast.error('Failed to submit review'),
   });
 
@@ -540,7 +540,7 @@ export default function GoalsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id) => goalsApi.delete(id),
-    onSuccess: () => { toast.success('Goal deleted'); qc.invalidateQueries(['goals']); },
+    onSuccess: () => { toast.success('Goal deleted'); qc.invalidateQueries({ queryKey: ['goals'] }); },
     onError: () => toast.error('Failed to delete goal'),
   });
 

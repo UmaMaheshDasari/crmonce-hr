@@ -19,7 +19,7 @@ function ProcessPayrollModal({ onClose }) {
     mutationFn: () => payrollApi.process({ month, year }),
     onSuccess: (res) => {
       toast.success(`Payroll processed for ${res.data.count} employees`);
-      qc.invalidateQueries(['payroll']);
+      qc.invalidateQueries({ queryKey: ['payroll'] });
       onClose();
     },
     onError: () => toast.error('Payroll processing failed'),
@@ -98,10 +98,10 @@ function ProcessPayrollModal({ onClose }) {
           </button>
           <button
             onClick={() => mutation.mutate()}
-            disabled={!confirmed || mutation.isLoading}
+            disabled={!confirmed || mutation.isPending}
             className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
           >
-            {mutation.isLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             <PlayIcon className="w-4 h-4" />
             Process
           </button>
@@ -122,7 +122,7 @@ export default function PayrollPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['payroll', filterYear, page],
     queryFn: () => payrollApi.list({ year: filterYear, page, limit }),
-    keepPreviousData: true,
+    placeholderData: (prev) => prev,
   });
 
   const records = data?.data?.data || [];

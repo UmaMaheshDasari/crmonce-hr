@@ -179,8 +179,8 @@ function LeaveActions({ leave, user, isHR }) {
     mutationFn: ({ id, action, remarks }) => leaveApi.approveL1(id, action, remarks),
     onSuccess: (_, vars) => {
       toast.success(`L1 ${vars.action === 'approved' ? 'Approved' : 'Rejected'}`);
-      qc.invalidateQueries(['leaves']);
-      qc.invalidateQueries(['pendingApprovals']);
+      qc.invalidateQueries({ queryKey: ['leaves'] });
+      qc.invalidateQueries({ queryKey: ['pendingApprovals'] });
     },
     onError: () => toast.error('L1 action failed'),
   });
@@ -189,8 +189,8 @@ function LeaveActions({ leave, user, isHR }) {
     mutationFn: ({ id, action, remarks }) => leaveApi.approveL2(id, action, remarks),
     onSuccess: (_, vars) => {
       toast.success(`L2 ${vars.action === 'approved' ? 'Approved' : 'Rejected'}`);
-      qc.invalidateQueries(['leaves']);
-      qc.invalidateQueries(['pendingApprovals']);
+      qc.invalidateQueries({ queryKey: ['leaves'] });
+      qc.invalidateQueries({ queryKey: ['pendingApprovals'] });
     },
     onError: () => toast.error('L2 action failed'),
   });
@@ -199,8 +199,8 @@ function LeaveActions({ leave, user, isHR }) {
     mutationFn: ({ id, status, remarks }) => leaveApi.approve(id, status, remarks),
     onSuccess: (_, vars) => {
       toast.success(`Leave ${vars.status}`);
-      qc.invalidateQueries(['leaves']);
-      qc.invalidateQueries(['pendingApprovals']);
+      qc.invalidateQueries({ queryKey: ['leaves'] });
+      qc.invalidateQueries({ queryKey: ['pendingApprovals'] });
     },
     onError: () => toast.error('Action failed'),
   });
@@ -232,7 +232,7 @@ function LeaveActions({ leave, user, isHR }) {
     setRemarksAction(null);
   };
 
-  const isAnyLoading = l1Mutation.isLoading || l2Mutation.isLoading || hrMutation.isLoading;
+  const isAnyLoading = l1Mutation.isPending || l2Mutation.isPending || hrMutation.isPending;
   const l1 = leave.hr_l1status;
   const l2 = leave.hr_l2status;
   const isSuperAdmin = user?.role === 'super_admin';
@@ -394,7 +394,7 @@ function ApplyLeaveModal({ onClose }) {
       approverId,
       cc,
     }),
-    onSuccess: () => { toast.success('Leave applied!'); qc.invalidateQueries(['leaves']); onClose(); },
+    onSuccess: () => { toast.success('Leave applied!'); qc.invalidateQueries({ queryKey: ['leaves'] }); onClose(); },
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to apply leave'),
   });
 
@@ -565,10 +565,10 @@ function ApplyLeaveModal({ onClose }) {
           </button>
           <button
             onClick={() => mutation.mutate()}
-            disabled={!form.from || !form.to || !approverId || mutation.isLoading}
+            disabled={!form.from || !form.to || !approverId || mutation.isPending}
             className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
           >
-            {mutation.isLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             Submit Application
           </button>
         </div>

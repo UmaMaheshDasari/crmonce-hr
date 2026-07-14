@@ -103,7 +103,7 @@ function UploadModal({ onClose }) {
         await documentApi.upload(fd);
       }
     },
-    onSuccess: () => { toast.success(`${files.length} document(s) uploaded!`); qc.invalidateQueries(['documents']); onClose(); },
+    onSuccess: () => { toast.success(`${files.length} document(s) uploaded!`); qc.invalidateQueries({ queryKey: ['documents'] }); onClose(); },
     onError: () => toast.error('Upload failed'),
   });
 
@@ -188,9 +188,9 @@ function UploadModal({ onClose }) {
         <div className="flex gap-3 px-6 py-4 bg-gray-50/80 border-t border-gray-100">
           <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
           <button onClick={() => mutation.mutate()}
-            disabled={files.length === 0 || !empId || mutation.isLoading}
+            disabled={files.length === 0 || !empId || mutation.isPending}
             className="btn-primary flex-1 flex items-center justify-center gap-2">
-            {mutation.isLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             Upload {files.length > 0 ? `(${files.length})` : ''}
           </button>
         </div>
@@ -222,7 +222,7 @@ export default function DocumentsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id) => documentApi.delete(id),
-    onSuccess: () => { toast.success('Document deleted'); qc.invalidateQueries(['documents']); },
+    onSuccess: () => { toast.success('Document deleted'); qc.invalidateQueries({ queryKey: ['documents'] }); },
     onError: () => toast.error('Delete failed'),
   });
 

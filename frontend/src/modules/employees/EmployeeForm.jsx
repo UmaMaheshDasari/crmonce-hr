@@ -78,7 +78,7 @@ export default function EmployeeForm() {
     mutationFn: (data) => isEdit ? employeeApi.update(id, data) : employeeApi.create(data),
     onSuccess: () => {
       toast.success(isEdit ? 'Employee updated!' : 'Employee created!');
-      qc.invalidateQueries(['employees']);
+      qc.invalidateQueries({ queryKey: ['employees'] });
       navigate('/employees');
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Something went wrong'),
@@ -178,10 +178,10 @@ export default function EmployeeForm() {
           </button>
           <button
             type="submit"
-            disabled={isSubmitting || mutation.isLoading}
+            disabled={isSubmitting || mutation.isPending}
             className="inline-flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
           >
-            {(isSubmitting || mutation.isLoading) && (
+            {(isSubmitting || mutation.isPending) && (
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             )}
             {isEdit ? 'Save Changes' : 'Create Employee'}
