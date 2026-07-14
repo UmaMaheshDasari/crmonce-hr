@@ -71,7 +71,9 @@ class D365Service {
     query.set('$count', 'true');
 
     const url = `${this.baseUrl}/${entity}?${query.toString()}`;
-    const res = await axios.get(url, { headers });
+    let res;
+    try { res = await axios.get(url, { headers }); }
+    catch (err) { throw this._enrich(err, `getList ${entity}`); }
     // Dataverse pages via @odata.nextLink (a skiptoken cursor) — it does NOT
     // support $skip. Expose nextLink so callers can page correctly.
     return { data: res.data.value, count: res.data['@odata.count'], nextLink: res.data['@odata.nextLink'] };
@@ -100,8 +102,10 @@ class D365Service {
     if (select) query.set('$select', select);
     if (expand) query.set('$expand', expand);
     const url = `${this.baseUrl}/${entity}(${id})?${query.toString()}`;
-    const res = await axios.get(url, { headers });
-    return res.data;
+    try {
+      const res = await axios.get(url, { headers });
+      return res.data;
+    } catch (err) { throw this._enrich(err, `getById ${entity}`); }
   }
 
   // True when Dataverse rejected the query because a $select column doesn't exist
@@ -138,15 +142,30 @@ class D365Service {
     }
   }
 
+  // Surface the FULL Dataverse OData error instead of a bare "status code 400".
+  // Keeps err.response intact (so _isMissingProperty etc. still work).
+  _enrich(err, op) {
+    const e = err?.response?.data?.error;
+    if (e?.message) {
+      err.message = `Dataverse ${err.response.status} on ${op}: ${e.code || ''} ${e.message}`.replace(/\s+/g, ' ').trim();
+      global.logger?.error(`D365 ${op} FAILED — ${JSON.stringify(err.response.data.error)}`);
+    }
+    return err;
+  }
+
   async create(entity, data) {
     const headers = await this.getHeaders({ Prefer: 'return=representation' });
-    const res = await axios.post(`${this.baseUrl}/${entity}`, data, { headers });
-    return res.data;
+    try {
+      const res = await axios.post(`${this.baseUrl}/${entity}`, data, { headers });
+      return res.data;
+    } catch (err) { throw this._enrich(err, `create ${entity}`); }
   }
 
   async update(entity, id, data) {
     const headers = await this.getHeaders();
-    await axios.patch(`${this.baseUrl}/${entity}(${id})`, data, { headers });
+    try {
+      await axios.patch(`${this.baseUrl}/${entity}(${id})`, data, { headers });
+    } catch (err) { throw this._enrich(err, `update ${entity}`); }
     return this.getById(entity, id);
   }
 

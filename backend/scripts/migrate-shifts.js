@@ -21,16 +21,32 @@ const DRY = !process.argv.includes('--apply');
   const need = (data || []).filter(e => !e.hr_shiftname || !e.hr_shiftstarttime || !e.hr_shiftendtime);
   console.log(`\n${data?.length || 0} employees; ${need.length} missing shift.\n`);
 
+  let ok = 0, failed = 0;
   for (const e of need) {
     const patch = {};
     if (!e.hr_shiftname) patch.hr_shiftname = 'General Shift';
     if (!e.hr_shiftstarttime) patch.hr_shiftstarttime = '09:00';
     if (!e.hr_shiftendtime) patch.hr_shiftendtime = '18:00';
     if (DRY) { console.log(`  [dry-run] ${e.hr_hremployee1}: ${JSON.stringify(patch)}`); continue; }
-    await d365.update(EMP, e.hr_hremployeeid, patch);
-    console.log(`  updated ${e.hr_hremployee1}`);
+    try {
+      await d365.update(EMP, e.hr_hremployeeid, patch);
+      console.log(`  updated ${e.hr_hremployee1}`);
+      ok++;
+    } catch (err) {
+      failed++;
+      // Print the EXACT Dataverse response body — not just "400".
+      console.error(`  FAILED  ${e.hr_hremployee1} — patch ${JSON.stringify(patch)}`);
+      console.error(`          ${JSON.stringify(err.response?.data || err.message, null, 2)}`);
+    }
   }
 
-  console.log(DRY ? '\nDRY-RUN — nothing written. Re-run with --apply to update.\n' : '\nDone.\n');
-  process.exit(0);
-})().catch(e => { console.error('FAIL:', e.message); process.exit(1); });
+  console.log(DRY
+    ? '\nDRY-RUN — nothing written. Re-run with --apply to update.\n'
+    : `\nDone. ${ok} updated, ${failed} failed.\n`);
+  process.exit(failed ? 1 : 0);
+})().catch(e => {
+  // Full Dataverse error body (e.g. the getList $select failure), not just the status.
+  console.error('FAIL:', e.message);
+  if (e.response?.data) console.error(JSON.stringify(e.response.data, null, 2));
+  process.exit(1);
+});
