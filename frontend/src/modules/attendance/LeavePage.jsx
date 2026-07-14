@@ -401,10 +401,10 @@ function ApplyLeaveModal({ onClose }) {
   const days = form.from && form.to ? differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1 : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[calc(100dvh-2rem)] overflow-hidden my-auto">
         {/* Modal Header */}
-        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div className="flex-shrink-0 px-6 py-5 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
               <DocumentTextIcon className="w-5 h-5 text-indigo-600" />
@@ -419,7 +419,7 @@ function ApplyLeaveModal({ onClose }) {
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="flex-1 overflow-y-auto overscroll-contain p-6 space-y-5">
           {/* Leave Type Visual Selector */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2.5">Leave Type</label>
@@ -559,7 +559,7 @@ function ApplyLeaveModal({ onClose }) {
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex gap-3">
+        <div className="flex-shrink-0 px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex gap-3">
           <button onClick={onClose} className="flex-1 px-4 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">
             Cancel
           </button>

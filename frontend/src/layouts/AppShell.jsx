@@ -137,7 +137,7 @@ export default function AppShell() {
   );
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex h-[100dvh] bg-gray-50 overflow-hidden">
       {/* Desktop sidebar */}
       <div className="hidden lg:flex flex-shrink-0">
         <Sidebar />
@@ -181,7 +181,7 @@ export default function AppShell() {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-6 bg-gray-50/80">
+        <main className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 bg-gray-50/80">
           <div className="animate-fade-in">
             <Outlet />
           </div>

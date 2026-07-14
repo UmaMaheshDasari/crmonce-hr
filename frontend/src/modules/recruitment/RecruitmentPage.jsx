@@ -35,7 +35,7 @@ function NewJobModal({ onClose }) {
   });
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-0 overflow-hidden animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-0 max-h-[calc(100dvh-2rem)] overflow-x-hidden overflow-y-auto animate-in fade-in duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div>
