@@ -112,17 +112,34 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     const employee = { name: actor?.name, id: actor?.id, department: await departmentOf(actor.id), email: actor?.email };
     const { approveUrl, rejectUrl } = approvalUrls(type, recordId);
 
-    // ONE email — FROM employee, TO approver, CC = ONLY the explicitly selected
-    // users (real CC line). No automatic CC of info@/HR@/umamahesh@.
-    const ccEmails = (cc || []).filter(c => c?.email && !isPlaceholderEmail(c.email)).map(c => c.email);
+    // 1) Approver email — TO the approver ONLY (with Approve/Reject buttons).
+    //    The applicant is the SENDER, never a recipient, and saveToSentItems is
+    //    false so NO copy of this buttoned email reaches the applicant's mailbox.
     const a = T.newRequestApprover({
       moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: approver.name, approveUrl, rejectUrl,
     });
     const ra = await sendEmail(approver.email, a.subject, a.html, {
-      from: s.sender, cc: ccEmails, meta: { type: `${type}_new_approver` },
+      from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_approver` },
     });
     global.logger?.[ra?.success ? 'info' : 'error'](
-      `${cfg.title} request email FROM ${s.sender} → ${approver.email} (cc: ${ccEmails.join(', ') || 'none'}): ${ra?.success ? 'sent' : (ra?.error || 'failed')}`);
+      `${cfg.title} approver email FROM ${s.sender} → ${approver.email}: ${ra?.success ? 'sent' : (ra?.error || 'failed')}`);
+
+    // 2) CC recipients — a SEPARATE informational email with NO action buttons.
+    //    Each selected user (never the applicant/approver) gets an FYI copy.
+    const ccList = (cc || []).filter(c =>
+      c?.email && !isPlaceholderEmail(c.email) &&
+      c.email.toLowerCase() !== actor?.email?.toLowerCase() &&
+      c.email.toLowerCase() !== approver.email.toLowerCase());
+    for (const c of ccList) {
+      const cm = T.newRequestCc({
+        moduleTitle: cfg.title, employee, rows: details, applyTime, recipientName: c.name, approverName: approver.name,
+      });
+      const rc = await sendEmail(c.email, cm.subject, cm.html, {
+        from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc` },
+      });
+      global.logger?.[rc?.success ? 'info' : 'error'](
+        `${cfg.title} CC (info) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
+    }
   } catch (err) {
     global.logger?.error(`notifyNewRequest(${type}) failed: ${err.message}`);
   }
@@ -139,7 +156,9 @@ async function emailApplyAcknowledgement({ type, toEmail, employeeName, approver
     if (!v.ok) return auditSkip(type, `${type}_ack`, s.sender, toEmail, v.reason);
 
     const { subject, html } = T.acknowledgement({ moduleTitle: cfg.title, employeeName, approverName });
-    const r = await sendEmail(toEmail, subject, html, { from: s.sender, meta: { type: `${type}_ack` } });
+    // saveToSentItems=false → the applicant gets exactly ONE copy (inbox), not a
+    // second copy in Sent. This is the ONLY email the employee should receive.
+    const r = await sendEmail(toEmail, subject, html, { from: s.sender, saveToSentItems: false, meta: { type: `${type}_ack` } });
     global.logger?.[r?.success ? 'info' : 'error'](`${cfg.title} acknowledgement FROM ${s.sender} → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailApplyAcknowledgement(${type}) failed: ${err.message}`);

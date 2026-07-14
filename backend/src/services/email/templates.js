@@ -173,6 +173,18 @@ function newRequestApprover(d) {
   return { subject, html: layout({ title: subject, preheader: `Approve or reject ${d.employee.name}'s ${d.moduleTitle.toLowerCase()} request`, content }) };
 }
 
+// Informational copy for CC recipients — NO approve/reject buttons or links.
+function newRequestCc(d) {
+  const subject = `${d.moduleTitle} Request - ${d.employee.name}`;
+  const content =
+    greet(d.recipientName) +
+    `<p style="margin:0 0 4px;color:#374151;">A new ${d.moduleTitle.toLowerCase()} request has been submitted by <strong>${esc(d.employee.name)}</strong>.</p>` +
+    profileCard(d.employee) +
+    summaryCard('Request details', requestRows(d)) +
+    banner(`This email is for your information only. No action is required from you.<br>Awaiting approval from <strong>${esc(d.approverName || 'the approver')}</strong>.`);
+  return { subject, html: layout({ title: subject, preheader: 'For your information only', content }) };
+}
+
 function acknowledgement(d) {
   const subject = `${d.moduleTitle} Request Submitted`;
   const content =
@@ -224,6 +236,6 @@ module.exports = {
   // components (exported for tests/reuse)
   statusBadge, button, profileCard, summaryCard, banner, layout,
   // builders
-  newRequestApprover, acknowledgement, decision, reminder,
+  newRequestApprover, newRequestCc, acknowledgement, decision, reminder,
   _esc: esc,
 };

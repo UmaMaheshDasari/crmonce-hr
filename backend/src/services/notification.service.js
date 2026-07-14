@@ -75,7 +75,7 @@ function toRecipientList(v) {
  * Attachments without touching Graph.
  *   from: sender mailbox (defaults to GRAPH_SENDER for backward compatibility)
  */
-function buildSendMailRequest({ from, to, cc, subject, html, replyTo, attachments }) {
+function buildSendMailRequest({ from, to, cc, subject, html, replyTo, attachments, saveToSentItems = true }) {
   const sender = from || GRAPH_SENDER;
   const message = {
     subject,
@@ -96,7 +96,9 @@ function buildSendMailRequest({ from, to, cc, subject, html, replyTo, attachment
   return {
     sender,
     url: `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`,
-    body: { message, saveToSentItems: true },
+    // saveToSentItems=false for workflow mail sent AS the employee, so a copy of
+    // the approver email never lands in the applicant's own mailbox.
+    body: { message, saveToSentItems: saveToSentItems !== false },
   };
 }
 
@@ -122,7 +124,7 @@ const isDryRun = () => process.env.EMAIL_DRY_RUN === 'true';
  * Best-effort: never throws; returns { success } (+ error/dryRun/request).
  */
 async function sendEmail(to, subject, html, opts = {}) {
-  const req = buildSendMailRequest({ from: opts.from, to, cc: opts.cc, subject, html, replyTo: opts.replyTo, attachments: opts.attachments });
+  const req = buildSendMailRequest({ from: opts.from, to, cc: opts.cc, subject, html, replyTo: opts.replyTo, attachments: opts.attachments, saveToSentItems: opts.saveToSentItems });
   try {
     if (req.body.message.toRecipients.length === 0) {
       global.logger?.warn('Graph sendMail skipped: no recipients');
