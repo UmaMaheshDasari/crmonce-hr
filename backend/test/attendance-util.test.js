@@ -85,8 +85,8 @@ test('device direction honored ({t,d} objects)', () => {
 });
 
 test('late arrival & early departure vs shift', () => {
-  const late = computeSession(['09:30', '18:00']);       // shift start 09:00
-  assert.strictEqual(late.lateArrivalMin, 30);
+  const late = computeSession(['09:30', '18:00']);       // shift start 09:00; grace 5 → 30-5
+  assert.strictEqual(late.lateArrivalMin, 25);
   const early = computeSession(['09:00', '17:00']);      // shift end 18:00
   assert.strictEqual(early.earlyDepartureMin, 60);
 });
@@ -121,7 +121,7 @@ test('normalizePunches infers direction by pairing', () => {
 test('policy: late but completes required hours → Present + compensated', () => {
   const c = computeSession(['07:30', '17:30'], S('07:00', '17:00', 10)); // 10h shift
   assert.strictEqual(c.effectiveHours, 10);
-  assert.strictEqual(c.lateArrivalMin, 30);
+  assert.strictEqual(c.lateArrivalMin, 25);              // 30 late - 5 grace
   assert.strictEqual(c.status, 'present');               // status by effective hours only
   assert.strictEqual(c.metRequiredHours, true);
   assert.strictEqual(c.compensationStatus, 'compensated');
@@ -129,7 +129,7 @@ test('policy: late but completes required hours → Present + compensated', () =
 
 test('policy: late AND short of required → present-by-hours, shortfall', () => {
   const c = computeSession(['10:00', '17:00']);          // GENERAL 9h; effective 7
-  assert.strictEqual(c.lateArrivalMin, 60);
+  assert.strictEqual(c.lateArrivalMin, 55);              // 60 late - 5 grace
   assert.strictEqual(c.effectiveHours, 7);
   assert.strictEqual(c.status, 'present');               // late does NOT reduce status
   assert.strictEqual(c.metRequiredHours, false);
@@ -141,8 +141,8 @@ test('policy: on time → compensationStatus on_time', () => {
 });
 
 test('policy: approved leave offsets late calculation', () => {
-  const c = computeSession(['11:05', '18:00'], undefined, { leaveUntil: '11:00' });
-  assert.strictEqual(c.lateArrivalMin, 5);               // measured from 11:00, not 09:00
+  const c = computeSession(['11:10', '18:00'], undefined, { leaveUntil: '11:00' });
+  assert.strictEqual(c.lateArrivalMin, 5);               // from 11:00 (not 09:00): 10 late - 5 grace
 });
 
 // ── Rule: any punch → never Absent; attendance issue ───────────────────────
@@ -175,4 +175,47 @@ test('no punches → Absent, empty issue', () => {
   const c = computeSession([]);
   assert.strictEqual(c.status, 'absent');
   assert.strictEqual(c.attendanceIssue, '');
+});
+
+// ── Shift grace period (default 5 min) — Late Minutes only, never status ─────
+// Verify On Time / grace boundary / first late minute across every shift.
+const GRACE_CASES = [
+  { shift: S('07:00', '17:00', 10), start: '07:00' },
+  { shift: S('08:00', '18:00', 10), start: '08:00' },
+  { shift: S('09:00', '18:00', 9),  start: '09:00' },
+  { shift: S('11:30', '21:30', 10), start: '11:30' },
+  { shift: S('13:30', '23:30', 10), start: '13:30' },
+];
+const addMin = (hhmm, n) => { const [h, m] = hhmm.split(':').map(Number); const t = h * 60 + m + n; return `${String(Math.floor(t / 60) % 24).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+
+for (const { shift, start } of GRACE_CASES) {
+  test(`grace: ${start} punch exactly on time → 0 late`, () => {
+    assert.strictEqual(computeSession([start, addMin(start, 600)], shift).lateArrivalMin, 0);
+  });
+  test(`grace: ${start} within 5-min grace (+3) → On Time (0 late)`, () => {
+    assert.strictEqual(computeSession([addMin(start, 3), addMin(start, 600)], shift).lateArrivalMin, 0);
+  });
+  test(`grace: ${start} at grace boundary (+5) → On Time (0 late)`, () => {
+    assert.strictEqual(computeSession([addMin(start, 5), addMin(start, 600)], shift).lateArrivalMin, 0);
+  });
+  test(`grace: ${start} first late minute (+6) → Late 1`, () => {
+    assert.strictEqual(computeSession([addMin(start, 6), addMin(start, 600)], shift).lateArrivalMin, 1);
+  });
+}
+
+test('grace: late is counted AFTER grace (09:08 → 3 min, not 8)', () => {
+  const c = computeSession(['09:08', '18:00'], S('09:00', '18:00', 9));
+  assert.strictEqual(c.lateArrivalMin, 3);
+  assert.strictEqual(c.graceMinutes, 5);
+});
+
+test('grace does NOT change attendance status (late but full hours = present)', () => {
+  const c = computeSession(['09:08', '18:08'], S('09:00', '18:00', 9)); // 9h effective, late 3
+  assert.strictEqual(c.status, 'present');
+  assert.strictEqual(c.lateArrivalMin, 3);
+});
+
+test('grace is configurable per call (graceMinutes=0 → full lateness)', () => {
+  const c = computeSession(['09:08', '18:00'], S('09:00', '18:00', 9), { graceMinutes: 0 });
+  assert.strictEqual(c.lateArrivalMin, 8);
 });

@@ -6,9 +6,9 @@
 
 // type → { emoji, dot ring/bg colour } ; fall back by category
 const STYLE = {
-  web_checkin:           { icon: '🟢', dot: 'bg-emerald-500', ring: 'ring-emerald-500/20' },
-  web_checkout:          { icon: '🔵', dot: 'bg-blue-500',    ring: 'ring-blue-500/20' },
-  attendance_correction: { icon: '✏️', dot: 'bg-amber-500',   ring: 'ring-amber-500/20' },
+  web_checkin:           { icon: '🌐', dot: 'bg-emerald-500', ring: 'ring-emerald-500/20' },
+  web_checkout:          { icon: '🌐', dot: 'bg-blue-500',    ring: 'ring-blue-500/20' },
+  attendance_correction: { icon: '📝', dot: 'bg-amber-500',   ring: 'ring-amber-500/20' },
   sync_completed:        { icon: '🔄', dot: 'bg-indigo-500',  ring: 'ring-indigo-500/20' },
   sync_failed:           { icon: '⚠️', dot: 'bg-red-500',     ring: 'ring-red-500/20' },
   leave_pending:         { icon: '📝', dot: 'bg-amber-500',   ring: 'ring-amber-500/20' },
@@ -85,7 +85,7 @@ export default function ActivityFeed({ items, loading, emptyText = 'No recent ac
                   </p>
                   {sub && <p className="text-xs text-gray-500 mt-0.5 truncate">{sub}</p>}
                 </div>
-                <span className="text-xs text-gray-400 flex-shrink-0 mt-0.5 tabular-nums whitespace-nowrap">{timeAgo(item.time)}</span>
+                <span className="text-xs text-gray-400 flex-shrink-0 mt-0.5 tabular-nums whitespace-nowrap">{item.when || timeAgo(item.time)}</span>
               </div>
             </div>
           );

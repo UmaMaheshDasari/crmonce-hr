@@ -9,6 +9,7 @@ const { computeFromPunches, computeSession, punchesFromRecord } = require('../..
 const attnCfg = require('../../services/attendance.config');
 const leaveRoutes = require('./leave.routes');
 const activity = require('../../services/activity.service');
+const time = require('../../services/time.util');
 
 router.use('/leave', leaveRoutes);
 
@@ -69,8 +70,8 @@ router.post('/sync', requireRole('super_admin', 'hr_manager'), async (req, res, 
     const toDate = to || new Date().toISOString().split('T')[0];
     const result = await etimeService.syncAttendance(fromDate, toDate);
     activity.record({
-      category: 'Biometric', type: 'sync_completed', title: 'eTime Synchronization Completed',
-      name: '', meta: `${result.synced} punch(es) imported${result.errors?.length ? `, ${result.errors.length} error(s)` : ''}`,
+      category: 'Biometric', type: 'sync_completed', title: 'eTime Synchronization',
+      name: '', meta: `${result.synced} punches imported successfully${result.errors?.length ? ` (${result.errors.length} error(s))` : ''}`,
     });
     res.json({ message: 'Sync complete', ...result });
   } catch (err) {
@@ -120,10 +121,12 @@ router.get('/device/logs', requireRole('super_admin', 'hr_manager'), async (req,
 
 // ── Web punch session (multi-punch: IN/OUT/IN/OUT…, never locks) ──────────────
 const PUNCH_SELECT = 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours';
-const nowHHMM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; };
+// Punch time + "today" are computed in the app timezone (Asia/Kolkata), NOT the
+// server timezone — otherwise a 9:14 AM IST punch is stored as "03:44" (UTC).
+const nowHHMM = () => time.istHHMM();
 
 async function findTodayRecord(employeeId) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = time.istDateStr();
   const existing = await d365.getList(ENTITY, {
     select: PUNCH_SELECT,
     filter: `_hr_hremployee_value eq '${employeeId}' and hr_date eq ${today}`,
@@ -348,7 +351,7 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
 // GET /api/attendance/hr/overview — HR dashboard (today), computed on read
 router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = time.istDateStr();
     const { data: recs } = await d365.getList(ENTITY, {
       select: PUNCH_SELECT, filter: `hr_date eq ${today}`,
     });

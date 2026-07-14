@@ -88,12 +88,16 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   const requiredHours = Number.isFinite(opts.requiredHours) ? opts.requiredHours : policy.attendance.requiredShiftHours(shift.durationHours);
 
   // Late baseline = max(shift start, approved-leave end) — leave offsets late (#4).
+  // Grace period (company policy, default 5 min) is subtracted: a punch within
+  // the grace window is On Time (lateArrivalMin = 0); late is counted only AFTER
+  // grace. Grace affects Late Minutes ONLY — never the Present/Half/Absent status.
+  const graceMin = Number.isFinite(opts.graceMinutes) ? opts.graceMinutes : policy.attendance.graceMinutes();
   let lateArrivalMin = 0, earlyDepartureMin = 0;
   if (firstPunch) {
     const baseline = opts.leaveUntil ? Math.max(toMin(shift.start), toMin(opts.leaveUntil)) : toMin(shift.start);
     let d = toMin(firstPunch) - baseline;
     if (shift.isNight && d < -720) d += 1440;
-    lateArrivalMin = Math.max(0, d - cfg.lateGraceMinutes);
+    lateArrivalMin = Math.max(0, d - graceMin);
   }
   if (lastPunch && state === 'out') {
     const endMin = toMin(shift.end) + (shift.isNight ? 1440 : 0);
@@ -130,7 +134,7 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   return {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
-    halfDayThreshold, requiredHours, lateArrivalMin, earlyDepartureMin,
+    halfDayThreshold, requiredHours, graceMinutes: graceMin, lateArrivalMin, earlyDepartureMin,
     status, metRequiredHours, compensationStatus, attendanceIssue,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };

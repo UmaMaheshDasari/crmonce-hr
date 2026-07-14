@@ -16,6 +16,7 @@ const DEFAULTS = {
   monthlyPaidLeave:      1,      // paid leave RECORDS per calendar month (rest = LOP)
   requiredShiftHours:    null,   // null → use the shift's own duration
   halfDayThreshold:      null,   // null → shift duration / 2
+  graceMinutes:          5,      // late is counted only AFTER this many minutes past shift start
   compensationEnabled:   true,
   lateDeductionEnabled:  false,
   lunchDeductionEnabled: false,
@@ -33,6 +34,7 @@ const envProvider = {
       monthlyPaidLeave:      num(process.env.POLICY_MONTHLY_PAID_LEAVE, DEFAULTS.monthlyPaidLeave),
       requiredShiftHours:    numOrNull(process.env.POLICY_REQUIRED_HOURS),
       halfDayThreshold:      numOrNull(process.env.POLICY_HALFDAY_HOURS),
+      graceMinutes:          num(process.env.POLICY_GRACE_MINUTES, DEFAULTS.graceMinutes),
       compensationEnabled:   bool(process.env.POLICY_COMPENSATION_ENABLED, DEFAULTS.compensationEnabled),
       lateDeductionEnabled:  bool(process.env.POLICY_LATE_DEDUCTION, DEFAULTS.lateDeductionEnabled),
       lunchDeductionEnabled: bool(process.env.POLICY_LUNCH_DEDUCTION, DEFAULTS.lunchDeductionEnabled),
@@ -55,6 +57,8 @@ module.exports = {
   attendance: {
     requiredShiftHours: (shiftDuration) => settings().requiredShiftHours ?? shiftDuration,
     halfDayThreshold:   (shiftDuration) => settings().halfDayThreshold ?? round2(shiftDuration / 2),
+    // Grace window (minutes) after shift start within which a check-in is On Time.
+    graceMinutes:       () => settings().graceMinutes,
   },
   // Payroll Engine reads ONLY these (money rules).
   payroll: {
