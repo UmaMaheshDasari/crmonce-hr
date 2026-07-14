@@ -34,6 +34,14 @@ const zkPushService         = require('./services/zk-push.service');
 const app    = express();
 const server = http.createServer(app);
 
+// ── Trust proxy ───────────────────────────────────────────────────
+// Production runs behind Nginx (one reverse proxy hop). Trust exactly ONE hop so
+// req.ip / express-rate-limit read the real client IP from X-Forwarded-For.
+// We use the hop COUNT (1), not `true` — `true` trusts every hop and lets a
+// client spoof X-Forwarded-For, which express-rate-limit rejects as permissive.
+// Override with TRUST_PROXY_HOPS if more proxies are chained (e.g. Cloudflare→Nginx = 2).
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+
 // ── Logger ────────────────────────────────────────────────────────
 const logger = winston.createLogger({
   level: 'info',
