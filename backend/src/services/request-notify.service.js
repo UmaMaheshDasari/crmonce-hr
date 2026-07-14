@@ -47,7 +47,7 @@ async function getApprovers() {
     const { data } = await d365.getList(EMP, {
       filter: `(hr_role eq ${toValue('hr_role', 'super_admin')} or hr_role eq ${toValue('hr_role', 'hr_manager')}) ` +
               `and hr_status eq ${toValue('hr_employee_status', 'active')}`,
-      select: 'hr_hremployeeid,hr_hremployee1,hr_email',
+      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department',
       orderby: 'hr_hremployee1 asc',
     });
     return (data || []).filter(a => a.hr_email && !isPlaceholderEmail(a.hr_email));

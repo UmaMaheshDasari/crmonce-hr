@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leaveApi, employeeApi } from '../../api/endpoints';
+import { leaveApi } from '../../api/endpoints';
 import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { format, differenceInCalendarDays } from 'date-fns';
@@ -363,16 +363,20 @@ function ApplyLeaveModal({ onClose }) {
   });
   const approvers = approversData?.data || [];
 
-  // CC candidates — employees
-  const { data: empData } = useQuery({
-    queryKey: ['employees-cc'],
-    queryFn: () => employeeApi.list({ limit: 200 }).then(r => r.data),
+  // CC candidates — all ACTIVE employees except the logged-in user (backend
+  // resolves this dynamically from D365; not the restricted /employees list).
+  const { data: ccData } = useQuery({
+    queryKey: ['leave-cc-candidates'],
+    queryFn: () => leaveApi.ccCandidates().then(r => r.data),
   });
-  const employees = empData?.data || [];
-  const ccCandidates = (ccSearch
-    ? employees.filter(e => e.hr_hremployee1?.toLowerCase().includes(ccSearch.toLowerCase()))
-    : employees
-  ).filter(e => e.hr_hremployeeid !== approverId);
+  const ccPool = ccData?.data || [];
+  const q = ccSearch.trim().toLowerCase();
+  const ccCandidates = ccPool
+    .filter(e => e.id !== approverId)   // don't CC the chosen approver
+    .filter(e => !q ||
+      e.name?.toLowerCase().includes(q) ||
+      e.email?.toLowerCase().includes(q) ||
+      e.department?.toLowerCase().includes(q));
 
   const toggleCc = (id) =>
     setCc(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -514,10 +518,10 @@ function ApplyLeaveModal({ onClose }) {
             {cc.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {cc.map(id => {
-                  const e = employees.find(x => x.hr_hremployeeid === id);
+                  const e = ccPool.find(x => x.id === id);
                   return (
                     <span key={id} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-medium px-2 py-1 rounded-lg">
-                      {e?.hr_hremployee1 || 'Employee'}
+                      {e?.name || 'Employee'}
                       <button type="button" onClick={() => toggleCc(id)} className="hover:text-indigo-900">
                         <XMarkIcon className="w-3 h-3" />
                       </button>
@@ -530,21 +534,27 @@ function ApplyLeaveModal({ onClose }) {
               type="text"
               value={ccSearch}
               onChange={e => setCcSearch(e.target.value)}
-              placeholder="Search employees to CC…"
+              placeholder="Search employees by name, email or department…"
               className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
             />
-            {ccSearch && (
-              <div className="mt-1.5 max-h-36 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-50">
-                {ccCandidates.slice(0, 20).map(e => (
-                  <label key={e.hr_hremployeeid} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
-                    <input type="checkbox" checked={cc.includes(e.hr_hremployeeid)} onChange={() => toggleCc(e.hr_hremployeeid)} />
-                    <span>{e.hr_hremployee1}</span>
-                    {e.hr_email && <span className="text-xs text-gray-400 ml-auto truncate">{e.hr_email}</span>}
-                  </label>
-                ))}
-                {ccCandidates.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No matches</p>}
-              </div>
-            )}
+            <div className="mt-1.5 max-h-44 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-50">
+              {ccCandidates.slice(0, 50).map(e => (
+                <label key={e.id} className="flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                  <input type="checkbox" checked={cc.includes(e.id)} onChange={() => toggleCc(e.id)} />
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-800 truncate">{e.name}</p>
+                    <p className="text-xs text-gray-400 truncate">
+                      {e.email}{e.department ? ` · ${e.department}` : ''}
+                    </p>
+                  </div>
+                </label>
+              ))}
+              {ccCandidates.length === 0 && (
+                <p className="px-3 py-2 text-xs text-gray-400">
+                  {ccPool.length === 0 ? 'No active employees available.' : 'No matches.'}
+                </p>
+              )}
+            </div>
           </div>
         </div>
 

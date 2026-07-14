@@ -104,7 +104,8 @@ router.get('/', async (req, res, next) => {
 });
 
 // GET /api/attendance/leave/approvers — active HR Managers + Super Admins.
-// Powers the required "Approver" dropdown on the Apply Leave form.
+// Powers the required "Approver" (TO) dropdown on the Apply Leave form. Read
+// dynamically from D365 — never hardcoded; inactive users drop off automatically.
 router.get('/approvers', async (req, res, next) => {
   try {
     const approvers = await requestNotify.getApprovers();
@@ -113,8 +114,28 @@ router.get('/approvers', async (req, res, next) => {
         id: a.hr_hremployeeid,
         name: a.hr_hremployee1,
         email: a.hr_email,
+        department: a.hr_department || '',
       })),
     });
+  } catch (err) { next(err); }
+});
+
+// GET /api/attendance/leave/cc-candidates — active employees for the CC field.
+// All active employees EXCEPT the caller, straight from D365 (not the restricted
+// /employees directory). Inactive/placeholder/no-email are excluded automatically.
+router.get('/cc-candidates', async (req, res, next) => {
+  try {
+    const { data } = await d365.getList(EMP_ENTITY, {
+      filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`,
+      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department',
+      orderby: 'hr_hremployee1 asc',
+      top: 1000,
+    });
+    const list = (data || [])
+      .filter(e => e.hr_hremployeeid !== req.user.id)                              // exclude self
+      .filter(e => e.hr_email && !requestNotify.isPlaceholderEmail(e.hr_email))    // need a real mailbox to CC
+      .map(e => ({ id: e.hr_hremployeeid, name: e.hr_hremployee1, email: e.hr_email, department: e.hr_department || '' }));
+    res.json({ data: list });
   } catch (err) { next(err); }
 });
 
