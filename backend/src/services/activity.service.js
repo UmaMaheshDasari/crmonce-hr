@@ -27,24 +27,29 @@ function runtime() { return buf.slice(); }
 const nameOf = (r) => r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+const ATT_SELECT = 'hr_hrattendanceid,hr_source,hr_intime,hr_outtime,hr_date,_hr_hremployee_value,createdon,modifiedon';
+
+function mapAttendance(r, man) {
+  let type, title, meta;
+  // Punch times (hr_intime/hr_outtime) are stored "HH:MM" in the app zone;
+  // to12h only reformats — no timezone shift.
+  if (r.hr_source === man) { type = 'attendance_correction'; title = 'Attendance Correction'; meta = `Attendance corrected for ${time.fmtDate(r.hr_date)}`; }
+  else if (r.hr_outtime) { type = 'web_checkout'; title = 'Web Check Out'; meta = `Checked out at ${time.to12h(r.hr_outtime)}`; }
+  else { type = 'web_checkin'; title = 'Web Check In'; meta = `Checked in at ${time.to12h(r.hr_intime)}`; }
+  return { id: 'att-' + r.hr_hrattendanceid, category: 'Attendance', type, title, name: nameOf(r), meta, time: r.modifiedon || r.createdon };
+}
+
 async function fromAttendance() {
   try {
     const web = toValue('hr_attendance_source', 'web_checkin');
     const man = toValue('hr_attendance_source', 'manual_correction');
-    const { data } = await d365.getList(E.attendance, {
-      select: 'hr_hrattendanceid,hr_source,hr_intime,hr_outtime,hr_date,_hr_hremployee_value,createdon,modifiedon',
-      filter: `hr_source eq ${web} or hr_source eq ${man}`,
-      orderby: 'modifiedon desc', top: 12,
-    });
-    return (data || []).map(r => {
-      let type, title, meta;
-      // Punch times (hr_intime/hr_outtime) are stored "HH:MM" in the app zone;
-      // to12h only reformats — no timezone shift.
-      if (r.hr_source === man) { type = 'attendance_correction'; title = 'Attendance Correction'; meta = `Attendance corrected for ${time.fmtDate(r.hr_date)}`; }
-      else if (r.hr_outtime) { type = 'web_checkout'; title = 'Web Check Out'; meta = `Checked out at ${time.to12h(r.hr_outtime)}`; }
-      else { type = 'web_checkin'; title = 'Web Check In'; meta = `Checked in at ${time.to12h(r.hr_intime)}`; }
-      return { id: 'att-' + r.hr_hrattendanceid, category: 'Attendance', type, title, name: nameOf(r), meta, time: r.modifiedon || r.createdon };
-    });
+    // Query each source separately so frequent web check-ins never crowd out
+    // manual corrections for other employees (each source gets its own slice).
+    const [checkins, corrections] = await Promise.all([
+      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${web}`, orderby: 'modifiedon desc', top: 10 }),
+      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${man}`, orderby: 'modifiedon desc', top: 10 }),
+    ]);
+    return [...(checkins.data || []), ...(corrections.data || [])].map(r => mapAttendance(r, man));
   } catch (_) { return []; }
 }
 
