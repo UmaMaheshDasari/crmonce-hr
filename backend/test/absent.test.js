@@ -74,6 +74,14 @@ test('Approved Leave is Leave, never Absent', () => {
   assert.strictEqual(summarizeEmployee([], { working: 5, leaveDays: 2 }).absent, 3);   // 3 truly absent
 });
 
+test('Future working days are NOT counted as Absent (only up to today)', () => {
+  const full = rangeCounts('2026-07-01', '2026-07-31', { weekOffDays: [0, 6], holidays: [] }).working;      // whole month
+  const elapsed = rangeCounts('2026-07-01', '2026-07-10', { weekOffDays: [0, 6], holidays: [] }).working;   // up to the 10th
+  assert.ok(elapsed < full, 'elapsed working days < full-month working days');
+  // No punches yet → Absent = ELAPSED working days, never the future ones.
+  assert.strictEqual(summarizeEmployee([], { working: elapsed }).absent, elapsed);
+});
+
 test('Mixed month reconciles: Absent = Working − Attended − Leave', () => {
   const sessions = [
     day('2026-07-01', ['09:00', '18:00']),  // present

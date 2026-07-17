@@ -362,16 +362,24 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
       select: 'hr_days,hr_fromdate,hr_status',
       filter: `_hr_hremployee_value eq '${targetId}' and hr_status eq ${toValue('hr_leave_status', 'approved')}`,
     });
+    // Absent only counts working days that have already occurred (up to today).
+    const today = time.istDateStr();
     const leaveDays = (leaves || [])
-      .filter(l => String(l.hr_fromdate || '').slice(0, 7) === `${y}-${mm}`)
+      .filter(l => {
+        const lf = String(l.hr_fromdate || '').slice(0, 10);
+        return lf.slice(0, 7) === `${y}-${mm}` && lf <= today;   // exclude future leave
+      })
       .reduce((s, l) => s + (l.hr_days || 0), 0);
 
-    const workingDays = countWorkingDays(y, m);
-    // Absent = Working − Attended (any punch, incl. incomplete) − Approved Leave.
-    const absentDays = Math.max(0, workingDays - attended - leaveDays);
+    const workingDays = countWorkingDays(y, m);                  // full month (display)
+    const monthEnd = `${y}-${mm}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+    const capTo = today < monthEnd ? today : monthEnd;           // min(today, last day of month)
+    const workingElapsed = capTo >= from ? rangeCounts(from, capTo).working : 0;
+    // Absent = Elapsed Working − Attended (any punch, incl. incomplete) − Leave.
+    const absentDays = Math.max(0, workingElapsed - attended - leaveDays);
 
     res.json({
-      month: m, year: y, workingDays,
+      month: m, year: y, workingDays, workingElapsed,
       presentDays: present, halfDays: halfDay, incompleteDays: incomplete, attendedDays: attended,
       leaveDays, absentDays,
       lateCount, earlyExitCount: earlyCount,
@@ -440,6 +448,12 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   });
   const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
 
+  // Absent is only meaningful up to TODAY — future working days haven't happened
+  // yet, so they must NEVER be counted as Absent.
+  const today = time.istDateStr();
+  const capTo = to < today ? to : today;                                  // min(to, today)
+  const workingElapsed = capTo >= from ? rangeCounts(from, capTo).working : 0;
+
   const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
     select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
     filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
@@ -448,6 +462,7 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   (leaves || []).forEach(l => {
     const d = String(l.hr_fromdate || '').slice(0, 10);
     if (d < from || d > to) return;
+    if (d > today) return;                                                // future leave doesn't offset elapsed Absent
     leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
   });
 
@@ -472,7 +487,9 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   // employees are correctly marked Absent.
   const perEmployee = scope.map(e => {
     const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
-    return { emp: e, leaveDays, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working: rc.working, leaveDays }) };
+    // Absent uses ELAPSED working days (up to today); the Working Days column
+    // still shows the full range (rc.working).
+    return { emp: e, leaveDays, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working: workingElapsed, leaveDays }) };
   });
 
   const totals = perEmployee.reduce((t, p) => {
