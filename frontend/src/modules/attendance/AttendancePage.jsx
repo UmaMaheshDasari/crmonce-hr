@@ -30,9 +30,12 @@ export default function AttendancePage() {
   const [page, setPage] = useState(1);
   const limit = 20;
 
+  // In the "All" view we fetch all rows for the range (up to 2000) so records and
+  // synthesized absentees can be merged and sorted DATE-WISE on the client.
+  const allView = status === '';
   const { data, isLoading } = useQuery({
-    queryKey: ['attendance', empId, from, to, status, source, page],
-    queryFn: () => attendanceApi.list({ employeeId: empId, from, to, status, source, page, limit }),
+    queryKey: ['attendance', empId, from, to, status, source, allView ? 'all' : page],
+    queryFn: () => attendanceApi.list({ employeeId: empId, from, to, status, source, page: allView ? 1 : page, limit: allView ? 2000 : limit }),
     placeholderData: (prev) => prev,
   });
 
@@ -107,8 +110,28 @@ export default function AttendancePage() {
   });
 
   const records = data?.data?.data || [];
-  const total = data?.data?.count || 0;
-  const totalPages = Math.ceil(total / limit);
+  const serverTotal = data?.data?.count || 0;
+
+  // Combined, DATE-WISE list. All view = records + absentees merged, newest date
+  // first, with present/incomplete before absent within the same day. Absent-only
+  // view = absentees. Both are paginated on the client. Other filters stay
+  // server-paginated (records only).
+  let combined = null;
+  if (allView) {
+    combined = [
+      ...records.map(r => ({ type: 'record', date: String(r.hr_date || '').slice(0, 10), r })),
+      ...absentees.map(a => ({ type: 'absent', date: a.date, a })),
+    ].sort((x, y) => (x.date !== y.date ? (x.date < y.date ? 1 : -1) : (x.type === y.type ? 0 : x.type === 'record' ? -1 : 1)));
+  } else if (isAbsentView) {
+    combined = absentees.map(a => ({ type: 'absent', date: a.date, a }));
+  }
+  const clientPaged = combined !== null;
+  const displayTotal = clientPaged ? combined.length : serverTotal;
+  const totalPages = Math.max(1, Math.ceil(displayTotal / limit));
+  const pageRows = clientPaged
+    ? combined.slice((page - 1) * limit, page * limit)
+    : records.map(r => ({ type: 'record', r }));
+  const tableLoading = isLoading || (includeAbsentees && absentLoading);
 
   // Counts come from the aggregate /stats endpoint (whole filtered range, all
   // employees) — NOT from filtering the current page, and Absent is computed
@@ -123,8 +146,8 @@ export default function AttendancePage() {
   const toggleCard = (val) => { setStatus(status === val ? '' : val); setPage(1); };
 
   // Absent rows are synthesized (no attendance record exists for an absent day).
-  const renderAbsentRow = (a, i) => (
-    <tr key={`abs-${a.employee}-${a.date}-${i}`} className="hover:bg-red-50/30 transition-colors duration-150">
+  const renderAbsentRow = (a, key) => (
+    <tr key={key} className="hover:bg-red-50/30 transition-colors duration-150">
       {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{a.employee}</span></td>}
       <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd MMM yyyy') : '—'}</td>
       <td className="px-5 py-4 text-sm text-gray-300">—</td>
@@ -140,8 +163,76 @@ export default function AttendancePage() {
       </td>
     </tr>
   );
-  // Append absentees only on the last page (or a single page), so they aren't repeated.
-  const onLastPage = page >= (totalPages || 1);
+
+  const renderRecordRow = (r) => {
+    const cfg = STATUS_CONFIG[r.hr_status] || STATUS_CONFIG.incomplete;
+    return (
+      <tr key={r.hr_hrattendanceid} className="hover:bg-gray-50/50 transition-colors duration-150">
+        {isHR() && (
+          <td className="px-5 py-4">
+            <span className="text-sm font-semibold text-gray-900">
+              {r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '—'}
+            </span>
+          </td>
+        )}
+        <td className="px-5 py-4 text-sm text-gray-700 font-medium">{r.hr_date ? format(new Date(r.hr_date), 'dd MMM yyyy') : '—'}</td>
+        <td className="px-5 py-4"><span className="font-mono text-sm text-gray-600 bg-gray-50 px-2 py-0.5 rounded">{r.hr_intime || '—'}</span></td>
+        <td className="px-5 py-4"><span className="font-mono text-sm text-gray-600 bg-gray-50 px-2 py-0.5 rounded">{r.hr_outtime || '—'}</span></td>
+        <td className="px-5 py-4">
+          {(() => {
+            let punches = [];
+            try { punches = JSON.parse(r.hr_allpunches || '[]'); } catch (_) {}
+            if (!Array.isArray(punches) || punches.length === 0) return <span className="text-sm text-gray-300">—</span>;
+            return (
+              <div className="flex flex-wrap gap-1">
+                {punches.map((p, i) => (
+                  <span key={i} className={`font-mono text-xs px-1.5 py-0.5 rounded ${
+                    i === 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                    i === punches.length - 1 ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                    i % 2 === 1 ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                    'bg-blue-50 text-blue-700 border border-blue-200'}`}>{p}</span>
+                ))}
+              </div>
+            );
+          })()}
+        </td>
+        <td className="px-5 py-4">
+          {(() => {
+            const eff = r.hr_effectivehours || r.hr_workedhours || 0;
+            const pct = Math.min((eff / 9) * 100, 100);
+            return (
+              <div className="flex items-center gap-2">
+                <div className="w-14 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${eff >= 8 ? 'bg-emerald-500' : eff >= 4 ? 'bg-amber-500' : 'bg-red-400'}`} style={{ width: `${pct}%` }} />
+                </div>
+                <span className={`text-sm font-semibold tabular-nums ${eff >= 8 ? 'text-emerald-600' : eff >= 4 ? 'text-amber-600' : 'text-red-500'}`}>{formatDuration(eff)}</span>
+              </div>
+            );
+          })()}
+        </td>
+        <td className="px-5 py-4">
+          {r.hr_breakduration > 0 ? (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">{formatDuration(r.hr_breakduration)}</span>
+          ) : (<span className="text-sm text-gray-300">—</span>)}
+        </td>
+        <td className="px-5 py-4">
+          {r.hr_source === 'etime_device' ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg"><ComputerDesktopIcon className="w-3.5 h-3.5" /> Device</span>
+          ) : r.hr_source === 'web_checkin' ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg"><ClockIcon className="w-3.5 h-3.5" /> Web</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-lg"><PencilSquareIcon className="w-3.5 h-3.5" /> Manual</span>
+          )}
+        </td>
+        <td className="px-5 py-4">
+          <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+            <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+            {cfg.label}
+          </span>
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -152,7 +243,9 @@ export default function AttendancePage() {
           <p className="text-sm text-gray-500 mt-1">
             {isAbsentView
               ? `${absentees.length} absentee${absentees.length === 1 ? '' : 's'}`
-              : `${total} record${total === 1 ? '' : 's'}${status === '' && absentees.length ? ` · ${absentees.length} absent` : ''}`}
+              : allView
+                ? `${records.length} marked${absentees.length ? ` · ${absentees.length} absent` : ''}`
+                : `${serverTotal} record${serverTotal === 1 ? '' : 's'}`}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -288,130 +381,32 @@ export default function AttendancePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100/70">
-              {(isAbsentView ? absentLoading : isLoading) ? (
+              {tableLoading ? (
                 Array(10).fill(0).map((_, i) => (
                   <tr key={i}>{Array(isHR() ? 8 : 7).fill(0).map((_, j) => (
                     <td key={j} className="px-5 py-4"><div className="h-4 bg-gray-100 rounded-md animate-pulse" /></td>
                   ))}</tr>
                 ))
-              ) : isAbsentView ? (
-                absentees.length === 0 ? (
-                  <tr><td colSpan={9} className="px-5 py-16 text-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <CalendarDaysIcon className="w-10 h-10 text-gray-300" />
-                      <p className="text-sm text-gray-400 font-medium">No absentees for the selected period</p>
-                    </div>
-                  </td></tr>
-                ) : absentees.map(renderAbsentRow)
-              ) : (records.length === 0 && !(includeAbsentees && onLastPage && absentees.length)) ? (
+              ) : pageRows.length === 0 ? (
                 <tr><td colSpan={9} className="px-5 py-16 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <CalendarDaysIcon className="w-10 h-10 text-gray-300" />
-                    <p className="text-sm text-gray-400 font-medium">No attendance records found for selected period</p>
+                    <p className="text-sm text-gray-400 font-medium">
+                      {isAbsentView ? 'No absentees for the selected period' : 'No attendance found for the selected period'}
+                    </p>
                   </div>
                 </td></tr>
               ) : (
-                <>
-                {records.map(r => {
-                  const hoursPercent = Math.min(((r.hr_workedhours || 0) / 9) * 100, 100);
-                  const cfg = STATUS_CONFIG[r.hr_status] || STATUS_CONFIG.incomplete;
-                  return (
-                    <tr key={r.hr_hrattendanceid} className="hover:bg-gray-50/50 transition-colors duration-150">
-                      {isHR() && (
-                        <td className="px-5 py-4">
-                          <span className="text-sm font-semibold text-gray-900">
-                            {r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '—'}
-                          </span>
-                        </td>
-                      )}
-                      <td className="px-5 py-4 text-sm text-gray-700 font-medium">{r.hr_date ? format(new Date(r.hr_date), 'dd MMM yyyy') : '—'}</td>
-                      <td className="px-5 py-4">
-                        <span className="font-mono text-sm text-gray-600 bg-gray-50 px-2 py-0.5 rounded">{r.hr_intime || '—'}</span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="font-mono text-sm text-gray-600 bg-gray-50 px-2 py-0.5 rounded">{r.hr_outtime || '—'}</span>
-                      </td>
-                      <td className="px-5 py-4">
-                        {(() => {
-                          let punches = [];
-                          try { punches = JSON.parse(r.hr_allpunches || '[]'); } catch (_) {}
-                          if (!Array.isArray(punches) || punches.length === 0) {
-                            return <span className="text-sm text-gray-300">—</span>;
-                          }
-                          return (
-                            <div className="flex flex-wrap gap-1">
-                              {punches.map((p, i) => (
-                                <span key={i} className={`font-mono text-xs px-1.5 py-0.5 rounded ${
-                                  i === 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                                  i === punches.length - 1 ? 'bg-rose-50 text-rose-700 border border-rose-200' :
-                                  i % 2 === 1 ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                                  'bg-blue-50 text-blue-700 border border-blue-200'
-                                }`}>
-                                  {p}
-                                </span>
-                              ))}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-5 py-4">
-                        {(() => {
-                          const eff = r.hr_effectivehours || r.hr_workedhours || 0;
-                          const pct = Math.min((eff / 9) * 100, 100);
-                          return (
-                            <div className="flex items-center gap-2">
-                              <div className="w-14 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${eff >= 8 ? 'bg-emerald-500' : eff >= 4 ? 'bg-amber-500' : 'bg-red-400'}`} style={{ width: `${pct}%` }} />
-                              </div>
-                              <span className={`text-sm font-semibold tabular-nums ${eff >= 8 ? 'text-emerald-600' : eff >= 4 ? 'text-amber-600' : 'text-red-500'}`}>
-                                {formatDuration(eff)}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-5 py-4">
-                        {r.hr_breakduration > 0 ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">
-                            {formatDuration(r.hr_breakduration)}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-4">
-                        {r.hr_source === 'etime_device' ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg">
-                            <ComputerDesktopIcon className="w-3.5 h-3.5" /> Device
-                          </span>
-                        ) : r.hr_source === 'web_checkin' ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg">
-                            <ClockIcon className="w-3.5 h-3.5" /> Web
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-lg">
-                            <PencilSquareIcon className="w-3.5 h-3.5" /> Manual
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-                          <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                          {cfg.label}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {includeAbsentees && onLastPage && absentees.map(renderAbsentRow)}
-                </>
+                pageRows.map((item, i) => item.type === 'absent'
+                  ? renderAbsentRow(item.a, `abs-${item.a.employee}-${item.date}-${i}`)
+                  : renderRecordRow(item.r))
               )}
             </tbody>
           </table>
         </div>
         {totalPages > 1 && (
           <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between">
-            <span className="text-sm text-gray-500">Showing <span className="font-medium text-gray-700">{((page-1)*limit)+1}&ndash;{Math.min(page*limit, total)}</span> of <span className="font-medium text-gray-700">{total}</span></span>
+            <span className="text-sm text-gray-500">Showing <span className="font-medium text-gray-700">{((page-1)*limit)+1}&ndash;{Math.min(page*limit, displayTotal)}</span> of <span className="font-medium text-gray-700">{displayTotal}</span></span>
             <div className="flex gap-2">
               <button onClick={() => setPage(p => p-1)} disabled={page === 1} className="px-4 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Prev</button>
               <button onClick={() => setPage(p => p+1)} disabled={page >= totalPages} className="px-4 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Next</button>
