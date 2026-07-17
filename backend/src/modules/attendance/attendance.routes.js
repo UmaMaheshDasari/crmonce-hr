@@ -346,11 +346,13 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
       orderby: 'hr_date asc',
     });
     const shift = await getEmployeeShift(targetId);
-    let present = 0, halfDay = 0, lateCount = 0, earlyCount = 0, overtimeHours = 0;
+    let present = 0, halfDay = 0, incomplete = 0, attended = 0, lateCount = 0, earlyCount = 0, overtimeHours = 0;
     for (const r of (recs || [])) {
       const c = computeSession(punchesFromRecord(r), shift);
+      if ((c.count || 0) > 0) attended++;             // any punch → NOT absent
       if (c.status === 'present') present++;
       else if (c.status === 'half_day') halfDay++;
+      else if (c.status === 'incomplete') incomplete++;
       if (c.lateArrivalMin > 0) lateCount++;
       if (c.earlyDepartureMin > 0) earlyCount++;
       overtimeHours += c.overtimeHours;
@@ -365,11 +367,13 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
       .reduce((s, l) => s + (l.hr_days || 0), 0);
 
     const workingDays = countWorkingDays(y, m);
-    const absentDays = Math.max(0, workingDays - present - halfDay - leaveDays);
+    // Absent = Working − Attended (any punch, incl. incomplete) − Approved Leave.
+    const absentDays = Math.max(0, workingDays - attended - leaveDays);
 
     res.json({
       month: m, year: y, workingDays,
-      presentDays: present, halfDays: halfDay, leaveDays, absentDays,
+      presentDays: present, halfDays: halfDay, incompleteDays: incomplete, attendedDays: attended,
+      leaveDays, absentDays,
       lateCount, earlyExitCount: earlyCount,
       overtimeHours: Math.round(overtimeHours * 100) / 100,
     });
@@ -416,6 +420,92 @@ const fmtDur = (h) => {
 };
 const fmtMin = (m) => fmtDur((Number(m) || 0) / 60);
 
+/**
+ * SINGLE SOURCE OF TRUTH for range attendance figures (Present/Half/Incomplete/
+ * Absent/Leave). Used by BOTH the /stats cards and the Excel export so every view
+ * shows the SAME absent count. Absent = Working Days − Attended (any punch) −
+ * Approved Leave, per employee (holidays/week-offs are excluded from Working Days).
+ */
+async function buildRangeSummary(from, to, { targetId, department, designation } = {}) {
+  const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
+  if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
+  const { data: recs } = await d365.getAll(ENTITY, {
+    select: PUNCH_SELECT, filter: f.join(' and '), orderby: 'hr_date desc',
+  }, 10000);
+
+  const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {
+    select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
+    optionalSelect: SHIFT_COLS,
+    filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
+  });
+  const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
+
+  const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
+    select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
+    filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+  });
+  const leaveByEmp = {};
+  (leaves || []).forEach(l => {
+    const d = String(l.hr_fromdate || '').slice(0, 10);
+    if (d < from || d > to) return;
+    leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
+  });
+
+  const rc = rangeCounts(from, to);
+
+  // Compute each day's session once with THAT employee's shift; group by employee.
+  const byEmp = {};
+  const computed = (recs || []).map(r => {
+    const emp = empMap.get(r._hr_hremployee_value) || {};
+    const c = computeSession(punchesFromRecord(r), shiftOf(emp));
+    (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
+    return { r, c, emp };
+  });
+
+  let scope = emps || [];
+  if (targetId) scope = scope.filter(e => e.hr_hremployeeid === targetId);
+  if (department) scope = scope.filter(e => e.hr_department === department);
+  if (designation) scope = scope.filter(e => e.hr_designation === designation);
+
+  // Every active employee in scope gets a summary — INCLUDING those with zero
+  // records (summarizeEmployee([]) → Absent = Working Days), so no-punch
+  // employees are correctly marked Absent.
+  const perEmployee = scope.map(e => {
+    const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
+    return { emp: e, leaveDays, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working: rc.working, leaveDays }) };
+  });
+
+  const totals = perEmployee.reduce((t, p) => {
+    t.present += p.summary.present; t.half += p.summary.half; t.incomplete += p.summary.incomplete;
+    t.attended += p.summary.attended; t.absent += p.summary.absent; t.leave += p.leaveDays;
+    t.effectiveHours += p.summary.effectiveHours; t.overtimeHours += p.summary.overtimeHours;
+    return t;
+  }, { present: 0, half: 0, incomplete: 0, attended: 0, absent: 0, leave: 0, effectiveHours: 0, overtimeHours: 0, employees: perEmployee.length });
+
+  return { rc, empMap, byEmp, computed, perEmployee, totals };
+}
+
+// GET /api/attendance/stats — aggregate Present/Half/Incomplete/Absent/Leave for
+// a date range (+ optional employee/department/designation). Same math as the
+// export, so the dashboard cards and the Excel file always agree.
+router.get('/stats', requirePermission('attendance:read'), async (req, res, next) => {
+  try {
+    const { department, designation } = req.query;
+    const targetId = req.user.role === 'employee' ? req.user.id : req.query.employeeId;
+    const now = new Date();
+    const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+    const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
+    const { rc, totals } = await buildRangeSummary(from, to, { targetId, department, designation });
+    res.json({
+      from, to,
+      calendar: rc.calendar, working: rc.working, holidays: rc.holidays, weeklyOff: rc.weeklyOff,
+      present: totals.present, halfDay: totals.half, incomplete: totals.incomplete,
+      absent: totals.absent, leave: totals.leave, attended: totals.attended,
+      employees: totals.employees,
+    });
+  } catch (err) { next(err); }
+});
+
 // GET /api/attendance/export — .xlsx: Employee Attendance Summary (default sheet) + Daily detail
 router.get('/export', requirePermission('attendance:read'), async (req, res, next) => {
   try {
@@ -427,49 +517,8 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
 
-    // Attendance in range (date + employee scope) — feeds BOTH sheets.
-    // Cursor paging via @odata.nextLink (NOT $skip, which Dataverse ignores and
-    // which would return page 1 repeatedly → duplicate rows).
-    const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
-    if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
-    const { data: recs } = await d365.getAll(ENTITY, {
-      select: PUNCH_SELECT, filter: f.join(' and '), orderby: 'hr_date desc',
-    }, 10000);
-
-    // Active employees + approved leaves (for the summary).
-    const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {
-      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
-      optionalSelect: SHIFT_COLS,
-      filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
-    });
-    const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
-    const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-      select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
-      filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
-    });
-    const leaveByEmp = {};
-    (leaves || []).forEach(l => {
-      const d = String(l.hr_fromdate || '').slice(0, 10);
-      if (d < from || d > to) return;
-      leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
-    });
-
-    const rc = rangeCounts(from, to);
-
-    // Compute each session once with THAT employee's shift; group by employee.
-    const byEmp = {};
-    const computed = recs.map(r => {
-      const emp = empMap.get(r._hr_hremployee_value) || {};
-      const c = computeSession(punchesFromRecord(r), shiftOf(emp));
-      (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
-      return { r, c, emp };
-    });
-
-    // Employees in scope for the summary.
-    let scope = emps || [];
-    if (targetId) scope = scope.filter(e => e.hr_hremployeeid === targetId);
-    if (department) scope = scope.filter(e => e.hr_department === department);
-    if (designation) scope = scope.filter(e => e.hr_designation === designation);
+    // Single source of truth (shared with /stats) → identical Absent counts.
+    const { rc, computed, perEmployee } = await buildRangeSummary(from, to, { targetId, department, designation });
 
     const wb = new ExcelJS.Workbook();
 
@@ -488,9 +537,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     ];
     sum.getRow(1).font = { bold: true };
     sum.getColumn('missing').alignment = { wrapText: true, vertical: 'top' };
-    for (const e of scope) {
-      const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
-      const s = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working: rc.working, leaveDays });
+    for (const { emp: e, leaveDays, summary: s } of perEmployee) {
       sum.addRow({
         emp: e.hr_hremployee1 || 'Employee', dept: e.hr_department || '', desig: e.hr_designation || '',
         cal: rc.calendar, wd: rc.working, present: s.present, half: s.half, absent: s.absent,

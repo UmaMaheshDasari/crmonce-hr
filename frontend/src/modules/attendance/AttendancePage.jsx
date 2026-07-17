@@ -34,6 +34,15 @@ export default function AttendancePage() {
     placeholderData: (prev) => prev,
   });
 
+  // Aggregate stats for the cards — computed on the backend the SAME way as the
+  // Excel export (Absent = Working − Attended − Leave), so all views agree.
+  const { data: statsData } = useQuery({
+    queryKey: ['attendance-stats', empId, from, to],
+    queryFn: () => attendanceApi.stats({ employeeId: empId, from, to }),
+    placeholderData: (prev) => prev,
+  });
+  const stats = statsData?.data;
+
   const handleExport = async () => {
     setExporting(true);
     try {
@@ -73,16 +82,14 @@ export default function AttendancePage() {
   const total = data?.data?.count || 0;
   const totalPages = Math.ceil(total / limit);
 
-  const presentCount = records.filter(r => r.hr_status === 'present').length;
-  const absentCount = records.filter(r => r.hr_status === 'absent').length;
-  const halfDayCount = records.filter(r => r.hr_status === 'half_day').length;
-  const incompleteCount = records.filter(r => r.hr_status === 'incomplete').length;
-
+  // Counts come from the aggregate /stats endpoint (whole filtered range, all
+  // employees) — NOT from filtering the current page, and Absent is computed
+  // (Working − Attended − Leave), never by looking for absent records.
   const statCards = [
-    { label: 'Present', value: 'present', count: presentCount, icon: UserGroupIcon, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', border: 'border-l-emerald-500' },
-    { label: 'Absent', value: 'absent', count: absentCount, icon: XCircleIcon, iconBg: 'bg-red-100', iconColor: 'text-red-600', border: 'border-l-red-500' },
-    { label: 'Half Day', value: 'half_day', count: halfDayCount, icon: ClockIcon, iconBg: 'bg-amber-100', iconColor: 'text-amber-600', border: 'border-l-amber-500' },
-    { label: 'Incomplete', value: 'incomplete', count: incompleteCount, icon: ExclamationTriangleIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-l-slate-400' },
+    { label: 'Present', value: 'present', count: stats?.present ?? 0, icon: UserGroupIcon, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', border: 'border-l-emerald-500' },
+    { label: 'Absent', value: 'absent', count: stats?.absent ?? 0, icon: XCircleIcon, iconBg: 'bg-red-100', iconColor: 'text-red-600', border: 'border-l-red-500' },
+    { label: 'Half Day', value: 'half_day', count: stats?.halfDay ?? 0, icon: ClockIcon, iconBg: 'bg-amber-100', iconColor: 'text-amber-600', border: 'border-l-amber-500' },
+    { label: 'Incomplete', value: 'incomplete', count: stats?.incomplete ?? 0, icon: ExclamationTriangleIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-l-slate-400' },
   ];
 
   const toggleCard = (val) => { setStatus(status === val ? '' : val); setPage(1); };
