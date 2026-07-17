@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { attendanceApi, employeeApi } from '../../api/endpoints';
 import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCircleIcon, FunnelIcon, CalendarDaysIcon, ComputerDesktopIcon, PencilSquareIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format, startOfMonth, endOfMonth, subDays, subMonths } from 'date-fns';
 import { formatDuration } from '../../utils/formatDuration';
 import Button from '../../components/Button';
 import toast from 'react-hot-toast';
@@ -21,6 +21,7 @@ export default function AttendancePage() {
   const today = new Date();
   const [from, setFrom] = useState(format(startOfMonth(today), 'yyyy-MM-dd'));
   const [to, setTo] = useState(format(endOfMonth(today), 'yyyy-MM-dd'));
+  const [range, setRange] = useState('this_month');   // quick date range preset
   const [empId, setEmpId] = useState('');
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
@@ -70,7 +71,21 @@ export default function AttendancePage() {
     finally { setExporting(false); }
   };
 
+  // Quick date-range presets → set From/To. 'custom' leaves the inputs editable.
+  const fmt = (d) => format(d, 'yyyy-MM-dd');
+  const applyRange = (r) => {
+    setRange(r);
+    setPage(1);
+    const now = new Date();
+    if (r === 'today') { setFrom(fmt(now)); setTo(fmt(now)); }
+    else if (r === 'yesterday') { const y = subDays(now, 1); setFrom(fmt(y)); setTo(fmt(y)); }
+    else if (r === 'this_month') { setFrom(fmt(startOfMonth(now))); setTo(fmt(endOfMonth(now))); }
+    else if (r === 'last_month') { const lm = subMonths(now, 1); setFrom(fmt(startOfMonth(lm))); setTo(fmt(endOfMonth(lm))); }
+    // 'custom' → keep current from/to, user edits the date inputs
+  };
+
   const resetFilters = () => {
+    setRange('this_month');
     setFrom(format(startOfMonth(today), 'yyyy-MM-dd'));
     setTo(format(endOfMonth(today), 'yyyy-MM-dd'));
     setEmpId(''); setStatus(''); setSource(''); setView(''); setPage(1);
@@ -182,18 +197,28 @@ export default function AttendancePage() {
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Filters</span>
         </div>
         <div className="flex flex-wrap items-end gap-4">
-          <div className="flex-1 min-w-[180px]">
+          <div className="flex-1 min-w-[150px]">
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">Quick Range</label>
+            <select className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none cursor-pointer" value={range} onChange={e => applyRange(e.target.value)}>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="this_month">This Month</option>
+              <option value="last_month">Last Month</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div className="flex-1 min-w-[160px]">
             <label className="block text-xs font-medium text-gray-500 mb-1.5">From Date</label>
             <div className="relative">
               <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              <input type="date" className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }} />
+              <input type="date" className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={from} onChange={e => { setFrom(e.target.value); setRange('custom'); setPage(1); }} />
             </div>
           </div>
-          <div className="flex-1 min-w-[180px]">
+          <div className="flex-1 min-w-[160px]">
             <label className="block text-xs font-medium text-gray-500 mb-1.5">To Date</label>
             <div className="relative">
               <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              <input type="date" className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={to} onChange={e => { setTo(e.target.value); setPage(1); }} />
+              <input type="date" className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={to} onChange={e => { setTo(e.target.value); setRange('custom'); setPage(1); }} />
             </div>
           </div>
           {isHR() && (
@@ -386,7 +411,7 @@ export default function AttendancePage() {
         </div>
         {totalPages > 1 && (
           <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between">
-            <span className="text-sm text-gray-500">Showing <span className="font-medium text-gray-700">{((page-1)*limit)+1}\u2013{Math.min(page*limit, total)}</span> of <span className="font-medium text-gray-700">{total}</span></span>
+            <span className="text-sm text-gray-500">Showing <span className="font-medium text-gray-700">{((page-1)*limit)+1}&ndash;{Math.min(page*limit, total)}</span> of <span className="font-medium text-gray-700">{total}</span></span>
             <div className="flex gap-2">
               <button onClick={() => setPage(p => p-1)} disabled={page === 1} className="px-4 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Prev</button>
               <button onClick={() => setPage(p => p+1)} disabled={page >= totalPages} className="px-4 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Next</button>
