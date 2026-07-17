@@ -7,6 +7,7 @@ const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../serv
 const requestNotify = require('../../services/request-notify.service');
 const { verifyApprovalToken } = require('../../services/approval-token');
 const { resolveSender } = require('../../services/email/sender');
+const time = require('../../services/time.util');
 
 const ENTITY = d365.constructor.entities.leave;
 const EMP_ENTITY = d365.constructor.entities.employee;
@@ -202,6 +203,20 @@ router.post('/', async (req, res, next) => {
     const employeeSender = resolveSender({ email: req.user.email, label: 'Employee' });
     if (!employeeSender.ok) {
       return res.status(400).json({ error: employeeSender.reason });
+    }
+
+    // Dates: leave can start today or in the future — never in the past.
+    const fromDate = String(body.hr_fromdate || '').slice(0, 10);
+    const toDate = String(body.hr_todate || '').slice(0, 10);
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ error: 'From date and To date are required' });
+    }
+    const today = time.istDateStr();   // "today" in the app timezone (Asia/Kolkata)
+    if (fromDate < today) {
+      return res.status(400).json({ error: 'Leave cannot be applied for a past date. Please choose today or a future date.' });
+    }
+    if (toDate < fromDate) {
+      return res.status(400).json({ error: 'To date cannot be before From date.' });
     }
 
     if (body.hr_leavetype) body.hr_leavetype = toValue('hr_leave_type', body.hr_leavetype);

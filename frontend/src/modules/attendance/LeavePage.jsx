@@ -351,6 +351,7 @@ function LeaveActions({ leave, user, isHR }) {
 
 function ApplyLeaveModal({ onClose }) {
   const qc = useQueryClient();
+  const todayStr = format(new Date(), 'yyyy-MM-dd');   // leave can start today or later, never in the past
   const [form, setForm] = useState({ type: 'Casual Leave', from: '', to: '', reason: '' });
   const [approverId, setApproverId] = useState('');
   const [cc, setCc] = useState([]);              // selected employee ids
@@ -452,14 +453,14 @@ function ApplyLeaveModal({ onClose }) {
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">From Date</label>
               <div className="relative">
                 <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                <input type="date" className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.from} onChange={e => setForm(p => ({ ...p, from: e.target.value }))} />
+                <input type="date" min={todayStr} className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.from} onChange={e => setForm(p => ({ ...p, from: e.target.value, to: p.to && p.to < e.target.value ? e.target.value : p.to }))} />
               </div>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">To Date</label>
               <div className="relative">
                 <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                <input type="date" className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.to} min={form.from} onChange={e => setForm(p => ({ ...p, to: e.target.value }))} />
+                <input type="date" className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.to} min={form.from || todayStr} onChange={e => setForm(p => ({ ...p, to: e.target.value }))} />
               </div>
             </div>
           </div>
@@ -565,7 +566,7 @@ function ApplyLeaveModal({ onClose }) {
           </button>
           <button
             onClick={() => mutation.mutate()}
-            disabled={!form.from || !form.to || !approverId || mutation.isPending}
+            disabled={!form.from || !form.to || !approverId || form.from < todayStr || mutation.isPending}
             className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
           >
             {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
