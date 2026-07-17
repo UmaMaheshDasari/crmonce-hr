@@ -44,13 +44,14 @@ export default function AttendancePage() {
   });
   const stats = statsData?.data;
 
-  // Absent days have no attendance record, so when the "Absent" filter is active
-  // we list synthesized absentee rows (employee + working day with no activity).
+  // Absent days have no attendance record, so we synthesize absentee rows and show
+  // them both in the "All" view (appended) and when the Absent filter is active.
   const isAbsentView = status === 'absent';
+  const includeAbsentees = status === '' || isAbsentView;   // All view or Absent-only
   const { data: absentData, isLoading: absentLoading } = useQuery({
     queryKey: ['attendance-absentees', empId, from, to],
     queryFn: () => attendanceApi.absentees({ employeeId: empId, from, to }),
-    enabled: isAbsentView,
+    enabled: includeAbsentees,
     placeholderData: (prev) => prev,
   });
   const absentees = absentData?.data?.data || [];
@@ -106,13 +107,38 @@ export default function AttendancePage() {
 
   const toggleCard = (val) => { setStatus(status === val ? '' : val); setPage(1); };
 
+  // Absent rows are synthesized (no attendance record exists for an absent day).
+  const renderAbsentRow = (a, i) => (
+    <tr key={`abs-${a.employee}-${a.date}-${i}`} className="hover:bg-red-50/30 transition-colors duration-150">
+      {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{a.employee}</span></td>}
+      <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd MMM yyyy') : '—'}</td>
+      <td className="px-5 py-4 text-sm text-gray-300">—</td>
+      <td className="px-5 py-4 text-sm text-gray-300">—</td>
+      <td className="px-5 py-4 text-sm text-gray-300">—</td>
+      <td className="px-5 py-4 text-sm text-gray-300">—</td>
+      <td className="px-5 py-4 text-sm text-gray-300">—</td>
+      <td className="px-5 py-4 text-sm text-gray-300">—</td>
+      <td className="px-5 py-4">
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-700">
+          <span className="w-2 h-2 rounded-full bg-red-500" /> Absent
+        </span>
+      </td>
+    </tr>
+  );
+  // Append absentees only on the last page (or a single page), so they aren't repeated.
+  const onLastPage = page >= (totalPages || 1);
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Attendance</h1>
-          <p className="text-sm text-gray-500 mt-1">{isAbsentView ? `${absentees.length} absentee${absentees.length === 1 ? '' : 's'}` : `${total} records found`}</p>
+          <p className="text-sm text-gray-500 mt-1">
+            {isAbsentView
+              ? `${absentees.length} absentee${absentees.length === 1 ? '' : 's'}`
+              : `${total} record${total === 1 ? '' : 's'}${status === '' && absentees.length ? ` · ${absentees.length} absent` : ''}`}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <Button variant="secondary" icon={XCircleIcon} onClick={resetFilters}>Reset Filters</Button>
@@ -251,24 +277,8 @@ export default function AttendancePage() {
                       <p className="text-sm text-gray-400 font-medium">No absentees for the selected period</p>
                     </div>
                   </td></tr>
-                ) : absentees.map((a, i) => (
-                  <tr key={`${a.employee}-${a.date}-${i}`} className="hover:bg-gray-50/50 transition-colors duration-150">
-                    {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{a.employee}</span></td>}
-                    <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd MMM yyyy') : '—'}</td>
-                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
-                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
-                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
-                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
-                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
-                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
-                    <td className="px-5 py-4">
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-700">
-                        <span className="w-2 h-2 rounded-full bg-red-500" /> Absent
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              ) : records.length === 0 ? (
+                ) : absentees.map(renderAbsentRow)
+              ) : (records.length === 0 && !(includeAbsentees && onLastPage && absentees.length)) ? (
                 <tr><td colSpan={9} className="px-5 py-16 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <CalendarDaysIcon className="w-10 h-10 text-gray-300" />
@@ -276,7 +286,8 @@ export default function AttendancePage() {
                   </div>
                 </td></tr>
               ) : (
-                records.map(r => {
+                <>
+                {records.map(r => {
                   const hoursPercent = Math.min(((r.hr_workedhours || 0) / 9) * 100, 100);
                   const cfg = STATUS_CONFIG[r.hr_status] || STATUS_CONFIG.incomplete;
                   return (
@@ -366,7 +377,9 @@ export default function AttendancePage() {
                       </td>
                     </tr>
                   );
-                })
+                })}
+                {includeAbsentees && onLastPage && absentees.map(renderAbsentRow)}
+                </>
               )}
             </tbody>
           </table>
