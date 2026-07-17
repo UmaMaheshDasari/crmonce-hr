@@ -44,6 +44,17 @@ export default function AttendancePage() {
   });
   const stats = statsData?.data;
 
+  // Absent days have no attendance record, so when the "Absent" filter is active
+  // we list synthesized absentee rows (employee + working day with no activity).
+  const isAbsentView = status === 'absent';
+  const { data: absentData, isLoading: absentLoading } = useQuery({
+    queryKey: ['attendance-absentees', empId, from, to],
+    queryFn: () => attendanceApi.absentees({ employeeId: empId, from, to }),
+    enabled: isAbsentView,
+    placeholderData: (prev) => prev,
+  });
+  const absentees = absentData?.data?.data || [];
+
   const handleExport = async () => {
     setExporting(true);
     try {
@@ -101,7 +112,7 @@ export default function AttendancePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Attendance</h1>
-          <p className="text-sm text-gray-500 mt-1">{total} records found</p>
+          <p className="text-sm text-gray-500 mt-1">{isAbsentView ? `${absentees.length} absentee${absentees.length === 1 ? '' : 's'}` : `${total} records found`}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <Button variant="secondary" icon={XCircleIcon} onClick={resetFilters}>Reset Filters</Button>
@@ -226,14 +237,39 @@ export default function AttendancePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100/70">
-              {isLoading ? (
+              {(isAbsentView ? absentLoading : isLoading) ? (
                 Array(10).fill(0).map((_, i) => (
                   <tr key={i}>{Array(isHR() ? 8 : 7).fill(0).map((_, j) => (
                     <td key={j} className="px-5 py-4"><div className="h-4 bg-gray-100 rounded-md animate-pulse" /></td>
                   ))}</tr>
                 ))
+              ) : isAbsentView ? (
+                absentees.length === 0 ? (
+                  <tr><td colSpan={9} className="px-5 py-16 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <CalendarDaysIcon className="w-10 h-10 text-gray-300" />
+                      <p className="text-sm text-gray-400 font-medium">No absentees for the selected period</p>
+                    </div>
+                  </td></tr>
+                ) : absentees.map((a, i) => (
+                  <tr key={`${a.employee}-${a.date}-${i}`} className="hover:bg-gray-50/50 transition-colors duration-150">
+                    {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{a.employee}</span></td>}
+                    <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd MMM yyyy') : '—'}</td>
+                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
+                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
+                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
+                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
+                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
+                    <td className="px-5 py-4 text-sm text-gray-300">—</td>
+                    <td className="px-5 py-4">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-700">
+                        <span className="w-2 h-2 rounded-full bg-red-500" /> Absent
+                      </span>
+                    </td>
+                  </tr>
+                ))
               ) : records.length === 0 ? (
-                <tr><td colSpan={8} className="px-5 py-16 text-center">
+                <tr><td colSpan={9} className="px-5 py-16 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <CalendarDaysIcon className="w-10 h-10 text-gray-300" />
                     <p className="text-sm text-gray-400 font-medium">No attendance records found for selected period</p>

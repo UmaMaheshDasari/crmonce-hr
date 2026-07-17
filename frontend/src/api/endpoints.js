@@ -33,6 +33,7 @@ export const attendanceApi = {
     api.post('/attendance/correction', { attendanceId, actualCheckout, reason }),
   summaryMonthly: (params) => api.get('/attendance/summary/monthly', { params }),
   stats: (params) => api.get('/attendance/stats', { params }),
+  absentees: (params) => api.get('/attendance/absentees', { params }),
   hrOverview: () => api.get('/attendance/hr/overview'),
   exportExcel: (params) => api.get('/attendance/export', { params, responseType: 'blob' }),
 };

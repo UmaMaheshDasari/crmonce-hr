@@ -523,6 +523,83 @@ router.get('/stats', requirePermission('attendance:read'), async (req, res, next
   } catch (err) { next(err); }
 });
 
+// GET /api/attendance/absentees — the actual absent (employee, working-day) rows.
+// Absent = active employee on a WORKING day (not week-off/holiday, up to today)
+// with NO punch and NO approved leave. Powers the "Absent" table view — since an
+// absent day has no attendance record, these rows are synthesized here.
+router.get('/absentees', requirePermission('attendance:read'), async (req, res, next) => {
+  try {
+    const { department, designation } = req.query;
+    const targetId = req.user.role === 'employee' ? req.user.id : req.query.employeeId;
+    const now = new Date();
+    const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+    const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
+    const today = time.istDateStr();
+
+    // Working dates in range, only up to today (exclude week-off & holidays).
+    const capTo = to < today ? to : today;
+    const workDates = [];
+    if (capTo >= from) {
+      const end = new Date(`${capTo}T00:00:00Z`);
+      for (let d = new Date(`${from}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+        const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+        if (attnCfg.holidays.includes(ds)) continue;
+        if (attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
+        workDates.push(ds);
+      }
+    }
+    if (!workDates.length) return res.json({ data: [], count: 0 });
+
+    // (employee|date) that already have attendance activity.
+    const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
+    if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
+    const { data: recs } = await d365.getAll(ENTITY, {
+      select: 'hr_date,_hr_hremployee_value,hr_allpunches,hr_intime,hr_outtime,hr_punchcount',
+      filter: f.join(' and '), orderby: 'hr_date desc',
+    }, 10000);
+    const active = new Set();
+    (recs || []).forEach(r => {
+      if (punchesFromRecord(r).length > 0) active.add(`${r._hr_hremployee_value}|${String(r.hr_date).slice(0, 10)}`);
+    });
+
+    // Active employees in scope.
+    const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation', optionalSelect: SHIFT_COLS,
+      filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
+    });
+    let scope = emps || [];
+    if (targetId) scope = scope.filter(e => e.hr_hremployeeid === targetId);
+    if (department) scope = scope.filter(e => e.hr_department === department);
+    if (designation) scope = scope.filter(e => e.hr_designation === designation);
+
+    // Approved-leave (employee|date) set.
+    const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
+      select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
+      filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+    });
+    const onLeave = new Set();
+    (leaves || []).forEach(l => {
+      const lf = String(l.hr_fromdate || '').slice(0, 10);
+      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      for (const ds of workDates) if (ds >= lf && ds <= lt) onLeave.add(`${l._hr_hremployee_value}|${ds}`);
+    });
+
+    const CAP = 5000;
+    const rows = [];
+    for (const e of scope) {
+      for (const ds of workDates) {
+        const key = `${e.hr_hremployeeid}|${ds}`;
+        if (active.has(key) || onLeave.has(key)) continue;
+        rows.push({ employee: e.hr_hremployee1 || 'Employee', department: e.hr_department || '', designation: e.hr_designation || '', date: ds, status: 'absent' });
+        if (rows.length >= CAP) break;
+      }
+      if (rows.length >= CAP) break;
+    }
+    rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.employee.localeCompare(b.employee)));
+    res.json({ data: rows, count: rows.length });
+  } catch (err) { next(err); }
+});
+
 // GET /api/attendance/export — .xlsx: Employee Attendance Summary (default sheet) + Daily detail
 router.get('/export', requirePermission('attendance:read'), async (req, res, next) => {
   try {
