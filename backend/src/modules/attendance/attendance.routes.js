@@ -551,6 +551,54 @@ router.get('/stats', requirePermission('attendance:read'), async (req, res, next
   } catch (err) { next(err); }
 });
 
+// GET /api/attendance/weekly — Present/Absent per weekday (Mon–Fri) for the
+// current week, for the dashboard chart. Present = employees with a punch that
+// day; Absent = active − present − leave on a working day (0 for future days).
+router.get('/weekly', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const today = time.istDateStr();
+    const addDays = (ds, n) => { const d = new Date(`${ds}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
+    const dow = new Date(`${today}T00:00:00Z`).getUTCDay();           // 0 Sun … 6 Sat
+    const monday = addDays(today, dow === 0 ? -6 : 1 - dow);
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    const dates = dayNames.map((_, i) => addDays(monday, i));
+    const from = dates[0], to = dates[4];
+
+    const { data: recs } = await d365.getAll(ENTITY, {
+      select: 'hr_date,_hr_hremployee_value,hr_allpunches,hr_intime,hr_outtime,hr_punchcount',
+      filter: `hr_date ge ${from} and hr_date le ${to}`, orderby: 'hr_date desc',
+    }, 10000);
+    const presentByDate = {}; dates.forEach(d => (presentByDate[d] = new Set()));
+    (recs || []).forEach(r => {
+      const d = String(r.hr_date || '').slice(0, 10);
+      if (presentByDate[d] && punchesFromRecord(r).length > 0) presentByDate[d].add(r._hr_hremployee_value);
+    });
+
+    const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {
+      select: 'hr_hremployeeid', optionalSelect: SHIFT_COLS, filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
+    });
+    const activeCount = (emps || []).length;
+
+    const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
+      select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status', filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+    });
+    const leaveByDate = {}; dates.forEach(d => (leaveByDate[d] = new Set()));
+    (leaves || []).forEach(l => {
+      const lf = String(l.hr_fromdate || '').slice(0, 10);
+      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      dates.forEach(d => { if (d >= lf && d <= lt) leaveByDate[d].add(l._hr_hremployee_value); });
+    });
+
+    const data = dates.map((d, i) => {
+      const isWorking = !attnCfg.weekOffDays.includes(new Date(`${d}T00:00:00Z`).getUTCDay()) && !attnCfg.holidays.includes(d);
+      const present = presentByDate[d].size;
+      const absent = (isWorking && d <= today) ? Math.max(0, activeCount - present - leaveByDate[d].size) : 0;
+      return { day: dayNames[i], date: d, present, absent };
+    });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
 // GET /api/attendance/absentees — the actual absent (employee, working-day) rows.
 // Absent = active employee on a WORKING day (not week-off/holiday, up to today)
 // with NO punch and NO approved leave. Powers the "Absent" table view — since an

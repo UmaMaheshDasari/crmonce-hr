@@ -170,16 +170,14 @@ export default function Dashboard() {
   })();
   const leaveDaysThisMonth = monthlySummary?.data?.leaveDays ?? 0;
 
-  // Build weekly attendance data from today's attendance list for chart
-  const weeklyAttendanceData = (() => {
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-    const todayIndex = Math.min(new Date().getDay() - 1, 4);
-    return days.map((day, i) => ({
-      day,
-      present: i === todayIndex ? presentToday : 0,
-      absent: 0,
-    }));
-  })();
+  // Real weekly attendance (Present/Absent per weekday) for the chart.
+  const { data: weeklyData } = useQuery({
+    queryKey: ['attendance-weekly'],
+    queryFn: () => attendanceApi.weekly(),
+    enabled: isHR(),
+  });
+  const weeklyAttendanceData = weeklyData?.data?.data
+    || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(day => ({ day, present: 0, absent: 0 }));
 
   // ── Recent activity (real system events, auto-refresh every 30s) ─────────
   const { data: activityData, isLoading: activityLoading } = useQuery({
