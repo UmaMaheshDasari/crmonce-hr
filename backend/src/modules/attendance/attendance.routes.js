@@ -26,20 +26,48 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
     if (targetId) filters.push(`_hr_hremployee_value eq '${targetId}'`);
     if (from) filters.push(`hr_date ge ${from}`);
     if (to) filters.push(`hr_date le ${to}`);
-    if (status) filters.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
     if (source) filters.push(`hr_source eq ${toValue('hr_attendance_source', source)}`);
 
-    // Dataverse ignores $skip → fetch first (page*limit) rows and slice server-side.
+    // Present/Half Day/Incomplete are DYNAMIC (computed from punches + shift), so
+    // filter/display them by the computed status — NOT the stored hr_status, which
+    // can be stale (esp. device syncs). This keeps the table in sync with the cards.
+    const COMPUTED = ['present', 'half_day', 'incomplete'];
+    const useComputed = COMPUTED.includes(status);
+    if (status && !useComputed) filters.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
+
+    const SELECT = 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours';
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const lim = Math.max(1, parseInt(limit, 10) || 30);
-    const result = await d365.getList(ENTITY, {
-      select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours',
-      filter: filters.join(' and ') || undefined,
-      orderby: 'hr_date desc',
-      top: pageNum * lim,
-    });
-    const pageData = (result.data || []).slice((pageNum - 1) * lim);
-    res.json(labelsForList('hr_hrattendances', { data: pageData, count: result.count }));
+    const baseFilter = filters.join(' and ') || undefined;
+
+    // Fetch all matching rows when we must compute+filter; otherwise page via $top.
+    let recs, storedCount;
+    if (useComputed) {
+      const { data } = await d365.getAll(ENTITY, { select: SELECT, filter: baseFilter, orderby: 'hr_date desc' }, 10000);
+      recs = data || [];
+    } else {
+      const { data, count } = await d365.getList(ENTITY, { select: SELECT, filter: baseFilter, orderby: 'hr_date desc', top: pageNum * lim });
+      recs = data || [];
+      storedCount = count;
+    }
+
+    // Override each record's status with the computed value so the badge matches
+    // the cards and the computed filter.
+    const shiftMap = await buildShiftMap();
+    for (const r of recs) {
+      r.hr_status = computeSession(punchesFromRecord(r), shiftMap.get(r._hr_hremployee_value) || resolveShift()).status;
+    }
+
+    let out, count;
+    if (useComputed) {
+      const matched = recs.filter(r => r.hr_status === status);
+      count = matched.length;
+      out = matched.slice((pageNum - 1) * lim, pageNum * lim);
+    } else {
+      count = storedCount;
+      out = recs.slice((pageNum - 1) * lim);
+    }
+    res.json(labelsForList('hr_hrattendances', { data: out, count }));
   } catch (err) { next(err); }
 });
 
