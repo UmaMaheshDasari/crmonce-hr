@@ -82,7 +82,10 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   }
   const breakH = breakHours(punches);
   const effectiveHours = Math.max(0, round2(totalSpanHours - breakH));
-  const overtimeHours = Math.max(0, round2(effectiveHours - shift.durationHours));
+  // Overtime = effective hours beyond the company standard (default 9h), NOT the
+  // shift span — so working past 9h earns overtime regardless of a longer shift.
+  const overtimeAfter = Number.isFinite(opts.overtimeAfterHours) ? opts.overtimeAfterHours : policy.attendance.overtimeAfterHours();
+  const overtimeHours = Math.max(0, round2(effectiveHours - overtimeAfter));
   // Thresholds come from the Company Policy layer (fall back to the shift).
   const halfDayThreshold = Number.isFinite(opts.halfDayThreshold) ? opts.halfDayThreshold : policy.attendance.halfDayThreshold(shift.durationHours);
   const requiredHours = Number.isFinite(opts.requiredHours) ? opts.requiredHours : policy.attendance.requiredShiftHours(shift.durationHours);

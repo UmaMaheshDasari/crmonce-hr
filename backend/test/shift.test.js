@@ -25,13 +25,14 @@ test('resolveEmployeeShift derives start/end/duration from the assigned start', 
   }
 });
 
-test('explicit Shift End Time drives duration / early-exit / overtime', () => {
+test('explicit Shift End Time drives duration + early-exit (OT is the 9h standard)', () => {
   const s = cfg.resolveEmployeeShift('Custom Shift', '10:00', '16:00');   // 6h
   assert.strictEqual(s.start, '10:00');
   assert.strictEqual(s.end, '16:00');
   assert.strictEqual(s.durationHours, 6);
   assert.strictEqual(computeSession(['10:00', '15:30'], s).earlyDepartureMin, 30);  // vs 16:00 end
-  assert.strictEqual(computeSession(['10:00', '17:00'], s).overtimeHours, 1);        // 7h - 6h
+  assert.strictEqual(computeSession(['10:00', '17:00'], s).overtimeHours, 0);        // 7h effective < 9h standard
+  assert.strictEqual(computeSession(['10:00', '20:00'], s).overtimeHours, 1);        // 10h effective - 9h standard
 });
 
 test('overnight shift via explicit end (22:00 → 06:00 = 8h, isNight)', () => {
@@ -79,11 +80,12 @@ test('early exit measured against the employee shift end', () => {
   assert.strictEqual(computeSession(['13:30', '23:00'], S('Noon', '13:30')).earlyDepartureMin, 30);
 });
 
-// ── Overtime = effective - employee shift duration ──────────────────────────
-test('overtime uses the employee shift duration', () => {
+// ── Overtime = effective hours beyond the 9h company standard (not shift span) ─
+test('overtime accrues on effective hours beyond 9h, regardless of shift length', () => {
   assert.strictEqual(computeSession(['09:00', '20:00'], S('General', '09:00')).overtimeHours, 2);  // 11h - 9h
-  assert.strictEqual(computeSession(['07:00', '19:00'], S('Morning', '07:00')).overtimeHours, 2);  // 12h - 10h
-  assert.strictEqual(computeSession(['11:30', '21:30'], S('Evening', '11:30')).overtimeHours, 0);  // 10h - 10h
+  assert.strictEqual(computeSession(['07:00', '19:00'], S('Morning', '07:00')).overtimeHours, 3);  // 12h - 9h
+  assert.strictEqual(computeSession(['11:30', '21:30'], S('Evening', '11:30')).overtimeHours, 1);  // 10h - 9h
+  assert.strictEqual(computeSession(['09:00', '18:00'], S('General', '09:00')).overtimeHours, 0);  // 9h - 9h = none
 });
 
 // ── Export parity: the export computes each row with the employee's shift, so a

@@ -16,6 +16,7 @@ const DEFAULTS = {
   monthlyPaidLeave:      1,      // paid leave RECORDS per calendar month (rest = LOP)
   requiredShiftHours:    null,   // null → use the shift's own duration
   halfDayThreshold:      null,   // null → shift duration / 2
+  overtimeAfterHours:    9,      // overtime accrues on EFFECTIVE hours beyond this (company standard)
   graceMinutes:          5,      // late is counted only AFTER this many minutes past shift start
   compensationEnabled:   true,
   lateDeductionEnabled:  false,
@@ -34,6 +35,7 @@ const envProvider = {
       monthlyPaidLeave:      num(process.env.POLICY_MONTHLY_PAID_LEAVE, DEFAULTS.monthlyPaidLeave),
       requiredShiftHours:    numOrNull(process.env.POLICY_REQUIRED_HOURS),
       halfDayThreshold:      numOrNull(process.env.POLICY_HALFDAY_HOURS),
+      overtimeAfterHours:    num(process.env.POLICY_OVERTIME_AFTER_HOURS, DEFAULTS.overtimeAfterHours),
       graceMinutes:          num(process.env.POLICY_GRACE_MINUTES, DEFAULTS.graceMinutes),
       compensationEnabled:   bool(process.env.POLICY_COMPENSATION_ENABLED, DEFAULTS.compensationEnabled),
       lateDeductionEnabled:  bool(process.env.POLICY_LATE_DEDUCTION, DEFAULTS.lateDeductionEnabled),
@@ -57,6 +59,8 @@ module.exports = {
   attendance: {
     requiredShiftHours: (shiftDuration) => settings().requiredShiftHours ?? shiftDuration,
     halfDayThreshold:   (shiftDuration) => settings().halfDayThreshold ?? round2(shiftDuration / 2),
+    // Overtime accrues on effective hours beyond this many hours (default 9).
+    overtimeAfterHours: () => settings().overtimeAfterHours,
     // Grace window (minutes) after shift start within which a check-in is On Time.
     graceMinutes:       () => settings().graceMinutes,
   },

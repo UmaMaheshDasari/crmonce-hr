@@ -148,7 +148,7 @@ export default function EmployeeForm() {
               <Field label="Shift Start Time" name="hr_shiftstarttime" type="time" register={register} errors={errors} />
               <Field label="Shift End Time" name="hr_shiftendtime" type="time" register={register} errors={errors} />
             </div>
-            <p className="text-xs text-gray-400 mt-2">Late is measured from Shift Start (+5&nbsp;min grace); Early Exit from Shift End; Overtime beyond (End&nbsp;−&nbsp;Start).</p>
+            <p className="text-xs text-gray-400 mt-2">Late is measured from Shift Start (+5&nbsp;min grace); Early Exit from Shift End; Overtime beyond 9&nbsp;effective&nbsp;hours.</p>
           </div>
         </div>
 
