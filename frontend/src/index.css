@@ -8,6 +8,10 @@
 @layer base {
   * { box-sizing: border-box; }
 
+  /* Buttons never wrap their label onto a second line (app-wide safety net).
+     The reusable <Button> component enforces height/variant/spacing on top. */
+  button { white-space: nowrap; }
+
   body {
     @apply bg-gray-50 text-gray-900 antialiased;
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

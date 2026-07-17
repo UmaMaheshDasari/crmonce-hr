@@ -5,6 +5,7 @@ import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCirc
 import { useAuth } from '../../context/AuthContext';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { formatDuration } from '../../utils/formatDuration';
+import Button from '../../components/Button';
 import toast from 'react-hot-toast';
 
 const STATUS_CONFIG = {
@@ -103,28 +104,14 @@ export default function AttendancePage() {
           <p className="text-sm text-gray-500 mt-1">{total} records found</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <button
-            onClick={resetFilters}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 border border-gray-200 text-sm font-semibold rounded-xl hover:bg-gray-50 transition-all duration-200"
-          >
-            <XCircleIcon className="w-4.5 h-4.5" /> Reset Filters
-          </button>
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-emerald-200 hover:bg-emerald-700 disabled:opacity-60 transition-all duration-200"
-          >
-            <ArrowDownTrayIcon className="w-4.5 h-4.5" /> {exporting ? 'Exporting…' : 'Export Excel'}
-          </button>
+          <Button variant="secondary" icon={XCircleIcon} onClick={resetFilters}>Reset Filters</Button>
+          <Button variant="success" icon={ArrowDownTrayIcon} loading={exporting} onClick={handleExport}>
+            {exporting ? 'Exporting…' : 'Export Excel'}
+          </Button>
           {isHR() && (
-            <button
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-60 transition-all duration-200"
-            >
-              <ArrowPathIcon className={`w-4.5 h-4.5 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
-              {syncMutation.isPending ? 'Syncing...' : 'Sync eTime'}
-            </button>
+            <Button icon={ArrowPathIcon} loading={syncMutation.isPending} onClick={() => syncMutation.mutate()}>
+              {syncMutation.isPending ? 'Syncing…' : 'Sync eTime'}
+            </Button>
           )}
         </div>
       </div>

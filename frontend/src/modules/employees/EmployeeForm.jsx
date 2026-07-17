@@ -4,6 +4,7 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { employeeApi } from '../../api/endpoints';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
+import Button from '../../components/Button';
 import toast from 'react-hot-toast';
 
 const ROLES = ['employee', 'hr_manager', 'recruiter', 'super_admin'];
@@ -180,23 +181,10 @@ export default function EmployeeForm() {
 
         {/* Action Buttons - Sticky Footer */}
         <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex gap-3 justify-end rounded-b-xl">
-          <button
-            type="button"
-            onClick={() => navigate('/employees')}
-            className="px-6 py-2.5 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting || mutation.isPending}
-            className="inline-flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-          >
-            {(isSubmitting || mutation.isPending) && (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            )}
+          <Button type="button" variant="secondary" onClick={() => navigate('/employees')}>Cancel</Button>
+          <Button type="submit" loading={isSubmitting || mutation.isPending}>
             {isEdit ? 'Save Changes' : 'Create Employee'}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

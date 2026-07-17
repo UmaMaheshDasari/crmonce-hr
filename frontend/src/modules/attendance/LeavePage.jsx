@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { leaveApi } from '../../api/endpoints';
 import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import Button from '../../components/Button';
 import { useAuth } from '../../context/AuthContext';
 import { format, differenceInCalendarDays } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -561,17 +562,15 @@ function ApplyLeaveModal({ onClose }) {
 
         {/* Modal Footer */}
         <div className="flex-shrink-0 px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex gap-3">
-          <button onClick={onClose} className="flex-1 px-4 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">
-            Cancel
-          </button>
-          <button
+          <Button variant="secondary" fullWidth onClick={onClose}>Cancel</Button>
+          <Button
+            fullWidth
             onClick={() => mutation.mutate()}
-            disabled={!form.from || !form.to || !approverId || form.from < todayStr || mutation.isPending}
-            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
+            loading={mutation.isPending}
+            disabled={!form.from || !form.to || !approverId || form.from < todayStr}
           >
-            {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             Submit Application
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -627,12 +626,7 @@ export default function LeavePage() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Leave Management</h1>
           <p className="text-sm text-gray-500 mt-1">{leaves.length} requests</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200"
-        >
-          <PlusIcon className="w-4.5 h-4.5" /> Apply Leave
-        </button>
+        <Button onClick={() => setShowModal(true)} icon={PlusIcon}>Apply Leave</Button>
       </div>
 
       {/* Pill-style Status Tabs */}

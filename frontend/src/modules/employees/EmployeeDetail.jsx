@@ -108,8 +108,8 @@ export default function EmployeeDetail() {
                   </div>
                 </div>
                 {isHR() && (
-                  <Link to={`/employees/${id}/edit`} className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg transition-all duration-200">
-                    <PencilIcon className="w-4 h-4" /> Edit Employee
+                  <Link to={`/employees/${id}/edit`} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg transition-all duration-200">
+                    <PencilIcon className="w-[18px] h-[18px]" /> Edit Employee
                   </Link>
                 )}
               </div>

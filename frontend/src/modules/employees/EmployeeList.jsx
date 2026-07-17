@@ -67,8 +67,8 @@ export default function EmployeeList() {
           <p className="text-gray-400 text-sm mt-1 font-medium">{total} total employees</p>
         </div>
         {isHR() && (
-          <Link to="/employees/new" className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
-            <PlusIcon className="w-4 h-4" /> Add Employee
+          <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
+            <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
           </Link>
         )}
       </div>
@@ -140,8 +140,8 @@ export default function EmployeeList() {
                       <p className="text-gray-900 font-semibold mb-1">No employees found</p>
                       <p className="text-gray-400 text-sm mb-5">Try adjusting your search or filter criteria</p>
                       {isHR() && (
-                        <Link to="/employees/new" className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors">
-                          <PlusIcon className="w-4 h-4" /> Add Employee
+                        <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
+                          <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
                         </Link>
                       )}
                     </div>
