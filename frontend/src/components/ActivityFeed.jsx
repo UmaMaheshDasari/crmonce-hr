@@ -25,6 +25,7 @@ const STYLE = {
   employee_added:        { icon: '👤', dot: 'bg-violet-500',  ring: 'ring-violet-500/20' },
   payroll_generated:     { icon: '💰', dot: 'bg-violet-500',  ring: 'ring-violet-500/20' },
   document_uploaded:     { icon: '📄', dot: 'bg-blue-500',    ring: 'ring-blue-500/20' },
+  holiday_added:         { icon: '🎉', dot: 'bg-rose-500',    ring: 'ring-rose-500/20' },
 };
 const CATEGORY_STYLE = {
   Attendance: { icon: '⏱️', dot: 'bg-emerald-500', ring: 'ring-emerald-500/20' },
@@ -33,6 +34,7 @@ const CATEGORY_STYLE = {
   Employee:   { icon: '👤', dot: 'bg-violet-500',  ring: 'ring-violet-500/20' },
   Payroll:    { icon: '💰', dot: 'bg-violet-500',  ring: 'ring-violet-500/20' },
   Documents:  { icon: '📄', dot: 'bg-blue-500',    ring: 'ring-blue-500/20' },
+  Holiday:    { icon: '🎉', dot: 'bg-rose-500',    ring: 'ring-rose-500/20' },
   System:     { icon: '⚙️', dot: 'bg-gray-400',    ring: 'ring-gray-400/20' },
 };
 const styleFor = (a) => STYLE[a.type] || CATEGORY_STYLE[a.category] || CATEGORY_STYLE.System;

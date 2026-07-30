@@ -66,6 +66,13 @@ export const leaveApi = {
     api.post(`/attendance/leave/${id}/email-action`, { action, token, remarks }),
 };
 
+// ── Holiday Calendar (HR-managed) ────────────────────────────────
+export const holidayApi = {
+  list: () => api.get('/holidays'),
+  add: (data) => api.post('/holidays', data),
+  remove: (id) => api.delete(`/holidays/${id}`),
+};
+
 // ── Payroll ──────────────────────────────────────────────────────
 export const payrollApi = {
   list: (params) => api.get('/payroll', { params }),

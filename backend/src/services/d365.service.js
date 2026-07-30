@@ -198,6 +198,7 @@ class D365Service {
     designation: 'hr_hrdesignations',
     goal:        'hr_hrgoals',
     attendanceRequest: 'hr_attendancerequests',   // Missing Punch / Attendance correction requests
+    holiday:     'hr_holidays',                   // HR-managed holiday calendar
   };
 }
 

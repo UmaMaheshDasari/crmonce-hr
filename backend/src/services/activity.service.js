@@ -48,14 +48,28 @@ async function fromAttendance() {
     const web = toValue('hr_attendance_source', 'web_checkin');
     const man = toValue('hr_attendance_source', 'manual_correction');
     const device = toValue('hr_attendance_source', 'etime_device');
-    // Query each source separately so one high-volume source never crowds out
-    // the others (each gets its own recent slice).
-    const [checkins, corrections, devices] = await Promise.all([
-      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${web}`, orderby: 'modifiedon desc', top: 10 }),
-      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${man}`, orderby: 'modifiedon desc', top: 10 }),
-      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${device}`, orderby: 'modifiedon desc', top: 10 }),
+    // Only WEB check-ins/outs + manual corrections are surfaced. High-volume DEVICE
+    // (eTime) punches are intentionally excluded — they flooded the feed and aren't
+    // the meaningful events (web check-ins, leaves, missing-punch, holidays are).
+    const [checkins, corrections] = await Promise.all([
+      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${web}`, orderby: 'modifiedon desc', top: 12 }),
+      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${man}`, orderby: 'modifiedon desc', top: 12 }),
     ]);
-    return [...(checkins.data || []), ...(corrections.data || []), ...(devices.data || [])].map(r => mapAttendance(r, man, device));
+    return [...(checkins.data || []), ...(corrections.data || [])].map(r => mapAttendance(r, man, device));
+  } catch (_) { return []; }
+}
+
+// Recently added holidays (HR-managed calendar) → "Holiday Added" activity.
+async function fromHolidays() {
+  try {
+    const { data } = await d365.getList(E.holiday, {
+      select: 'hr_holidayid,hr_name,hr_date,createdon', orderby: 'createdon desc', top: 6,
+    });
+    return (data || []).map(r => ({
+      id: 'hol-' + r.hr_holidayid, category: 'Holiday', type: 'holiday_added',
+      title: 'Holiday Added', name: r.hr_name || 'Holiday',
+      meta: String(r.hr_date || '').slice(0, 10), time: r.createdon,
+    }));
   } catch (_) { return []; }
 }
 
@@ -110,7 +124,7 @@ let cache = null, cacheAt = 0;
 async function recent(limit = 20) {
   const now = Date.now();
   if (!cache || now - cacheAt >= 15000) {                              // short TTL (30s polling)
-    const parts = await Promise.all([fromAttendance(), fromLeaves(), fromEmployees(), fromPayroll(), fromDocuments()]);
+    const parts = await Promise.all([fromAttendance(), fromLeaves(), fromEmployees(), fromPayroll(), fromDocuments(), fromHolidays()]);
     cache = [...runtime(), ...parts.flat()]
       .filter(a => a.time)
       .sort((a, b) => new Date(b.time) - new Date(a.time));

@@ -99,6 +99,18 @@ function resolveEmployeeShift(shiftName, shiftStart, shiftEnd) {
   };
 }
 
+// Holidays = env HOLIDAYS (base) + the HR-managed calendar (hr_holidays), merged.
+// holiday.service refreshes the dynamic set; a cached merged array is exposed via
+// the `holidays` getter so EVERY existing consumer (rangeCounts, weekly, classify,
+// absentees…) picks up HR holidays automatically — no per-endpoint change.
+const envHolidays = parseList(process.env.HOLIDAYS);            // YYYY-MM-DD
+let dynamicHolidays = [];
+let mergedHolidays = [...envHolidays];
+function setDynamicHolidays(list) {
+  dynamicHolidays = Array.isArray(list) ? list.map(d => String(d).slice(0, 10)).filter(Boolean) : [];
+  mergedHolidays = Array.from(new Set([...envHolidays, ...dynamicHolidays]));
+}
+
 module.exports = {
   shifts,
   defaultShiftCode,
@@ -109,7 +121,8 @@ module.exports = {
   DEFAULT_SHIFT_HOURS,
   // Week-off days 0=Sun … 6=Sat (configurable, never hardcoded).
   weekOffDays: parseList(process.env.WEEK_OFF_DAYS || '0,6').map(Number).filter(n => n >= 0 && n <= 6),
-  holidays: parseList(process.env.HOLIDAYS),                 // YYYY-MM-DD (optionally from hr_holiday later)
+  get holidays() { return mergedHolidays; },                   // env + HR calendar (cached)
+  setDynamicHolidays,
   lateGraceMinutes: num(process.env.LATE_GRACE_MINUTES, 0),
   earlyGraceMinutes: num(process.env.EARLY_GRACE_MINUTES, 0),
   _toMin: toMin,

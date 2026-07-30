@@ -26,6 +26,7 @@ const documentRoutes   = require('./modules/documents/document.routes');
 const activityRoutes   = require('./modules/activity/activity.routes');
 const dashboardRoutes  = require('./modules/dashboard/dashboard.routes');
 const attendanceRequestRoutes = require('./modules/attendance/attendance-request.routes');
+const holidayRoutes    = require('./modules/attendance/holiday.routes');
 
 const { authenticateToken } = require('./middleware/auth.middleware');
 const { isAxiosError, formatAxiosError, summarize } = require('./utils/axiosError');
@@ -105,6 +106,7 @@ app.use('/api/documents',   authenticateToken, documentRoutes);
 app.use('/api/activity',    authenticateToken, activityRoutes);
 app.use('/api/dashboard',   authenticateToken, dashboardRoutes);
 app.use('/api/attendance-requests', authenticateToken, attendanceRequestRoutes);
+app.use('/api/holidays',    authenticateToken, holidayRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));
@@ -136,6 +138,10 @@ server.listen(PORT, () => {
     require('./services/provision-attendance-request')
       .ensureAttendanceRequestTable(logger)
       .catch(err => logger.warn(`[provision] attendance-request setup skipped: ${err.message}`));
+    require('./services/provision-holiday')
+      .ensureHolidayTable(logger)
+      .then(() => require('./services/holiday.service').refresh(true))   // load HR holidays into attendance calc
+      .catch(err => logger.warn(`[provision] holiday setup skipped: ${err.message}`));
   }
 
   // Start ZKTeco push listener
