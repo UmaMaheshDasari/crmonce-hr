@@ -29,11 +29,15 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 const ATT_SELECT = 'hr_hrattendanceid,hr_source,hr_intime,hr_outtime,hr_date,_hr_hremployee_value,createdon,modifiedon';
 
-function mapAttendance(r, man) {
+function mapAttendance(r, man, device) {
   let type, title, meta;
   // Punch times (hr_intime/hr_outtime) are stored "HH:MM" in the app zone;
   // to12h only reformats — no timezone shift.
   if (r.hr_source === man) { type = 'attendance_correction'; title = 'Attendance Correction'; meta = `Attendance corrected for ${time.fmtDate(r.hr_date)}`; }
+  else if (r.hr_source === device) {
+    if (r.hr_outtime) { type = 'device_checkout'; title = 'Device Check Out'; meta = `Checked out at ${time.to12h(r.hr_outtime)}`; }
+    else { type = 'device_checkin'; title = 'Device Check In'; meta = `Checked in at ${time.to12h(r.hr_intime)}`; }
+  }
   else if (r.hr_outtime) { type = 'web_checkout'; title = 'Web Check Out'; meta = `Checked out at ${time.to12h(r.hr_outtime)}`; }
   else { type = 'web_checkin'; title = 'Web Check In'; meta = `Checked in at ${time.to12h(r.hr_intime)}`; }
   return { id: 'att-' + r.hr_hrattendanceid, category: 'Attendance', type, title, name: nameOf(r), meta, time: r.modifiedon || r.createdon };
@@ -43,13 +47,15 @@ async function fromAttendance() {
   try {
     const web = toValue('hr_attendance_source', 'web_checkin');
     const man = toValue('hr_attendance_source', 'manual_correction');
-    // Query each source separately so frequent web check-ins never crowd out
-    // manual corrections for other employees (each source gets its own slice).
-    const [checkins, corrections] = await Promise.all([
+    const device = toValue('hr_attendance_source', 'etime_device');
+    // Query each source separately so one high-volume source never crowds out
+    // the others (each gets its own recent slice).
+    const [checkins, corrections, devices] = await Promise.all([
       d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${web}`, orderby: 'modifiedon desc', top: 10 }),
       d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${man}`, orderby: 'modifiedon desc', top: 10 }),
+      d365.getList(E.attendance, { select: ATT_SELECT, filter: `hr_source eq ${device}`, orderby: 'modifiedon desc', top: 10 }),
     ]);
-    return [...(checkins.data || []), ...(corrections.data || [])].map(r => mapAttendance(r, man));
+    return [...(checkins.data || []), ...(corrections.data || []), ...(devices.data || [])].map(r => mapAttendance(r, man, device));
   } catch (_) { return []; }
 }
 
