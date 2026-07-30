@@ -132,17 +132,25 @@ server.listen(PORT, () => {
   logger.info(`   Health check → http://localhost:${PORT}/health`);
   initJobs();
 
-  // Best-effort: create the Missing Punch table if it doesn't exist yet (idempotent).
-  // Skipped when it already exists or the app lacks customization rights (logged).
+  // Best-effort: create the Missing Punch / Holiday tables if they don't exist yet
+  // (idempotent). Skipped when they exist or the app lacks customization rights.
   if (process.env.AUTO_PROVISION !== 'false') {
     require('./services/provision-attendance-request')
       .ensureAttendanceRequestTable(logger)
       .catch(err => logger.warn(`[provision] attendance-request setup skipped: ${err.message}`));
     require('./services/provision-holiday')
       .ensureHolidayTable(logger)
-      .then(() => require('./services/holiday.service').refresh(true))   // load HR holidays into attendance calc
       .catch(err => logger.warn(`[provision] holiday setup skipped: ${err.message}`));
   }
+
+  // Load the HR holiday calendar into attendance.config so holidays are excluded
+  // from Working Days / Absent everywhere — ALWAYS (independent of provisioning),
+  // and refresh periodically so new holidays apply without a restart (and across
+  // pm2 instances). A holiday is a non-working day: never Absent, never Leave.
+  const holidaySvc = require('./services/holiday.service');
+  const loadHolidays = () => holidaySvc.refresh(true).catch(err => logger.warn(`[holiday] calendar load failed: ${err.message}`));
+  setTimeout(loadHolidays, 2000);                        // after any table provisioning above
+  setInterval(loadHolidays, 10 * 60 * 1000).unref();     // every 10 min
 
   // Start ZKTeco push listener
   zkPushService.start((punch) => {
