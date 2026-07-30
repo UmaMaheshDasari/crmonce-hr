@@ -182,7 +182,9 @@ export default function Dashboard() {
   const activityItems = activityData?.data?.data ?? [];
 
   // Leave summary — period-filtered (This/Last Month, This/Last Year, Custom).
-  const [leaveRange, setLeaveRange] = useState('this_month');
+  // Default to This Year: "Total Leave Taken" is a year-to-date figure, so a
+  // month-scoped default would read 0 unless leave happened to fall in this month.
+  const [leaveRange, setLeaveRange] = useState('this_year');
   const [leaveCustom, setLeaveCustom] = useState({ from: '', to: '' });
   const leavePeriod = (() => {
     const d = new Date(), fmt = (x) => format(x, 'yyyy-MM-dd');
