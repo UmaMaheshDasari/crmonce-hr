@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { attendanceApi, employeeApi } from '../../api/endpoints';
 import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCircleIcon, FunnelIcon, CalendarDaysIcon, ComputerDesktopIcon, PencilSquareIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
-import { format, startOfMonth, endOfMonth, subDays, subMonths } from 'date-fns';
+import { format, startOfMonth, endOfMonth, subDays, subMonths, startOfYear } from 'date-fns';
 import { formatDuration } from '../../utils/formatDuration';
 import Button from '../../components/Button';
 import toast from 'react-hot-toast';
@@ -60,6 +60,31 @@ export default function AttendancePage() {
   });
   const absentees = absentData?.data?.data || [];
 
+  // Dynamic Attendance Start Date — the (selected) employee's earliest attendance
+  // record. Drives the date-picker minDate + quick-filter clamping. Never hardcoded;
+  // refetched per employee so each employee gets their OWN minimum selectable date.
+  const { data: firstDateData } = useQuery({
+    queryKey: ['attendance-first-date', empId],
+    queryFn: () => attendanceApi.firstDate({ employeeId: empId || undefined }),
+    placeholderData: (prev) => prev,
+  });
+  const startDate = firstDateData?.data?.firstDate || null;   // 'YYYY-MM-DD' or null
+  const clampFrom = (d) => (startDate && d && d < startDate ? startDate : d);
+
+  // When the start date resolves (or the selected employee changes), pull From up
+  // so the range never begins before the employee's Attendance Start Date.
+  useEffect(() => {
+    if (startDate && from < startDate) setFrom(startDate);
+  }, [startDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const guardDate = (v) => {
+    if (startDate && v && v < startDate) {
+      toast.error('Attendance records are available only from your first attendance date.');
+      return startDate;   // auto-reset to the Attendance Start Date
+    }
+    return v;
+  };
+
   const handleExport = async () => {
     setExporting(true);
     try {
@@ -80,16 +105,19 @@ export default function AttendancePage() {
     setRange(r);
     setPage(1);
     const now = new Date();
-    if (r === 'today') { setFrom(fmt(now)); setTo(fmt(now)); }
-    else if (r === 'yesterday') { const y = subDays(now, 1); setFrom(fmt(y)); setTo(fmt(y)); }
-    else if (r === 'this_month') { setFrom(fmt(startOfMonth(now))); setTo(fmt(endOfMonth(now))); }
-    else if (r === 'last_month') { const lm = subMonths(now, 1); setFrom(fmt(startOfMonth(lm))); setTo(fmt(endOfMonth(lm))); }
+    let f = null, t = null;
+    if (r === 'today') { f = fmt(now); t = fmt(now); }
+    else if (r === 'yesterday') { const y = subDays(now, 1); f = fmt(y); t = fmt(y); }
+    else if (r === 'this_month') { f = fmt(startOfMonth(now)); t = fmt(endOfMonth(now)); }
+    else if (r === 'last_month') { const lm = subMonths(now, 1); f = fmt(startOfMonth(lm)); t = fmt(endOfMonth(lm)); }
+    else if (r === 'this_year') { f = fmt(startOfYear(now)); t = fmt(now); }
     // 'custom' → keep current from/to, user edits the date inputs
+    if (f !== null) { setFrom(clampFrom(f)); setTo(t); }   // clamp start to the Attendance Start Date
   };
 
   const resetFilters = () => {
     setRange('this_month');
-    setFrom(format(startOfMonth(today), 'yyyy-MM-dd'));
+    setFrom(clampFrom(format(startOfMonth(today), 'yyyy-MM-dd')));
     setTo(format(endOfMonth(today), 'yyyy-MM-dd'));
     setEmpId(''); setStatus(''); setSource(''); setView(''); setPage(1);
   };
@@ -297,6 +325,7 @@ export default function AttendancePage() {
               <option value="yesterday">Yesterday</option>
               <option value="this_month">This Month</option>
               <option value="last_month">Last Month</option>
+              <option value="this_year">This Year</option>
               <option value="custom">Custom</option>
             </select>
           </div>
@@ -304,14 +333,15 @@ export default function AttendancePage() {
             <label className="block text-xs font-medium text-gray-500 mb-1.5">From Date</label>
             <div className="relative">
               <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              <input type="date" className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={from} onChange={e => { setFrom(e.target.value); setRange('custom'); setPage(1); }} />
+              <input type="date" min={startDate || undefined} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={from} onChange={e => { setFrom(guardDate(e.target.value)); setRange('custom'); setPage(1); }} />
             </div>
+            {startDate && <p className="text-[10px] text-gray-400 mt-1">Available from {startDate}</p>}
           </div>
           <div className="flex-1 min-w-[160px]">
             <label className="block text-xs font-medium text-gray-500 mb-1.5">To Date</label>
             <div className="relative">
               <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              <input type="date" className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={to} onChange={e => { setTo(e.target.value); setRange('custom'); setPage(1); }} />
+              <input type="date" min={startDate || undefined} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={to} onChange={e => { setTo(guardDate(e.target.value)); setRange('custom'); setPage(1); }} />
             </div>
           </div>
           {isHR() && (

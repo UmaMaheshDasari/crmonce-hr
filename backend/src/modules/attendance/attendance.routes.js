@@ -377,6 +377,18 @@ router.get('/my-status', requirePermission('attendance:read'), async (req, res, 
   } catch (err) { next(err); }
 });
 
+// GET /api/attendance/first-date — the employee's dynamic Attendance Start Date:
+// the earliest attendance record of ANY source (device / web / manual). Drives the
+// date-picker minDate and quick-filter clamping on the client. Never hardcoded;
+// null when the employee has no attendance history yet. HR may pass ?employeeId=.
+router.get('/first-date', requirePermission('attendance:read'), async (req, res, next) => {
+  try {
+    const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
+    const firstDate = await getFirstAttendanceDate(targetId);   // min hr_date, computed once
+    res.json({ firstDate: firstDate || null });
+  } catch (err) { next(err); }
+});
+
 // ── Dynamic summaries (no fixed calendar values) ─────────────────────────────
 function countWorkingDays(y, m) {
   const daysInMonth = new Date(y, m, 0).getDate();

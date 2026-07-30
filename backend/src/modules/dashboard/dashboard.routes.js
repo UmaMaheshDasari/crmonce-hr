@@ -6,6 +6,7 @@ const { computeSession, punchesFromRecord } = require('../../services/attendance
 const attnCfg = require('../../services/attendance.config');
 const { rangeCounts, effectiveWorking } = require('../../services/attendance-summary.util');
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
+const { earliestAttendanceDate } = require('../../services/attendance-range.util');
 const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
 
@@ -110,11 +111,9 @@ router.get('/summary', async (req, res, next) => {
 
     // ── This month's attendance figures (live) ────────────────────────────────
     let present = 0, half = 0, incomplete = 0, attended = 0, lateDays = 0, workedEff = 0, overtime = 0;
-    let earliestRec = null;
+    const earliestRec = earliestAttendanceDate(monthRecs);   // fallback Attendance Start Date
     for (const r of monthRecs) {
       const c = computeSession(punchesFromRecord(r), shift);
-      const ds = String(r.hr_date).slice(0, 10);
-      if (!earliestRec || ds < earliestRec) earliestRec = ds;
       if ((c.count || 0) > 0) { attended++; workedEff += c.effectiveHours || 0; overtime += c.overtimeHours || 0; }
       if (c.status === 'present') present++;
       else if (c.status === 'half_day') half++;

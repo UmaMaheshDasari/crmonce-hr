@@ -29,6 +29,7 @@ export const attendanceApi = {
   checkin: () => api.post('/attendance/checkin'),
   checkout: () => api.post('/attendance/checkout'),
   myStatus: () => api.get('/attendance/my-status'),
+  firstDate: (params) => api.get('/attendance/first-date', { params }),   // dynamic Attendance Start Date
   correction: (attendanceId, actualCheckout, reason) =>
     api.post('/attendance/correction', { attendanceId, actualCheckout, reason }),
   summaryMonthly: (params) => api.get('/attendance/summary/monthly', { params }),
