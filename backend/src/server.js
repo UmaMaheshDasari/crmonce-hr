@@ -25,6 +25,7 @@ const performanceRoutes= require('./modules/performance/performance.routes');
 const documentRoutes   = require('./modules/documents/document.routes');
 const activityRoutes   = require('./modules/activity/activity.routes');
 const dashboardRoutes  = require('./modules/dashboard/dashboard.routes');
+const attendanceRequestRoutes = require('./modules/attendance/attendance-request.routes');
 
 const { authenticateToken } = require('./middleware/auth.middleware');
 const { isAxiosError, formatAxiosError, summarize } = require('./utils/axiosError');
@@ -103,6 +104,7 @@ app.use('/api/performance', authenticateToken, performanceRoutes);
 app.use('/api/documents',   authenticateToken, documentRoutes);
 app.use('/api/activity',    authenticateToken, activityRoutes);
 app.use('/api/dashboard',   authenticateToken, dashboardRoutes);
+app.use('/api/attendance-requests', authenticateToken, attendanceRequestRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));

@@ -7,6 +7,8 @@ import { format, startOfMonth, endOfMonth, subDays, subMonths, startOfYear } fro
 import { formatDuration } from '../../utils/formatDuration';
 import Button from '../../components/Button';
 import toast from 'react-hot-toast';
+import { Link } from 'react-router-dom';
+import MissingPunchModal from './MissingPunchModal';
 
 const STATUS_CONFIG = {
   present: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Present' },
@@ -29,6 +31,8 @@ export default function AttendancePage() {
   const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 20;
+  const [missingModal, setMissingModal] = useState({ open: false, date: '' });
+  const [warnDismissed, setWarnDismissed] = useState(false);
 
   // In the "All" view we fetch all rows for the range (up to 2000) so records and
   // synthesized absentees can be merged and sorted DATE-WISE on the client.
@@ -277,6 +281,9 @@ export default function AttendancePage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          <Link to="/attendance-requests">
+            <Button variant="secondary" icon={PencilSquareIcon}>{isHR() ? 'Requests' : 'My Requests'}</Button>
+          </Link>
           <Button variant="secondary" icon={XCircleIcon} onClick={resetFilters}>Reset Filters</Button>
           <Button variant="success" icon={ArrowDownTrayIcon} loading={exporting} onClick={handleExport}>
             {exporting ? 'Exporting…' : 'Export Excel'}
@@ -288,6 +295,24 @@ export default function AttendancePage() {
           )}
         </div>
       </div>
+
+      {/* Missing-punch warning — an incomplete day means a punch is likely missing */}
+      {!warnDismissed && records.some(r => r.hr_status === 'incomplete') && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <ExclamationTriangleIcon className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800">You may have forgotten a punch.</p>
+            <p className="text-xs text-amber-700">One or more days are incomplete. You can't edit attendance directly — submit a correction request for HR approval.</p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Button variant="secondary" onClick={() => {
+              const inc = records.find(r => r.hr_status === 'incomplete');
+              setMissingModal({ open: true, date: inc ? String(inc.hr_date || '').slice(0, 10) : '' });
+            }}>Request Correction</Button>
+            <button onClick={() => setWarnDismissed(true)} className="text-xs font-medium text-amber-700 hover:text-amber-900 px-2">Dismiss</button>
+          </div>
+        </div>
+      )}
 
       {/* Summary Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -444,6 +469,8 @@ export default function AttendancePage() {
           </div>
         )}
       </div>
+
+      <MissingPunchModal open={missingModal.open} defaultDate={missingModal.date} onClose={() => setMissingModal({ open: false, date: '' })} />
     </div>
   );
 }

@@ -26,6 +26,7 @@ const LEAVE = d365.constructor.entities.leave;
 const TYPE_CFG = {
   leave:           { title: 'Leave' },
   late_permission: { title: 'Late Permission' },
+  missing_punch:   { title: 'Missing Punch' },
 };
 
 // Seed/placeholder addresses that must never receive mail (e.g. admin@yourcompany.com).

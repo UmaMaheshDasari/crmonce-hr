@@ -10,6 +10,7 @@ import EmployeesHome from './modules/employees/EmployeesHome';
 import EmployeeDetail from './modules/employees/EmployeeDetail';
 import EmployeeForm from './modules/employees/EmployeeForm';
 import AttendancePage from './modules/attendance/AttendancePage';
+import AttendanceRequestsPage from './modules/attendance/AttendanceRequestsPage';
 import LeavePage from './modules/attendance/LeavePage';
 import PayrollPage from './modules/payroll/PayrollPage';
 import RecruitmentPage from './modules/recruitment/RecruitmentPage';
@@ -50,6 +51,7 @@ function AppRoutes() {
         <Route path="employees/:id" element={<EmployeeDetail />} />
         <Route path="employees/:id/edit" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
         <Route path="attendance" element={<AttendancePage />} />
+        <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
         <Route path="leave" element={<LeavePage />} />
         <Route path="payroll" element={<PayrollPage />} />
         <Route path="recruitment" element={<RecruitmentPage />} />

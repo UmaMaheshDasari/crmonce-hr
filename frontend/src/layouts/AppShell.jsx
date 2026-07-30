@@ -6,13 +6,14 @@ import {
   HomeIcon, UsersIcon, ClockIcon, CurrencyDollarIcon,
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
-  CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon,
+  CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
   { to: '/',            label: 'Dashboard',    icon: HomeIcon,            exact: true },
   { to: '/employees',   label: 'Employees',    icon: UsersIcon },
   { to: '/attendance',  label: 'Attendance',    icon: ClockIcon },
+  { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
   { to: '/leave',       label: 'Leave',        icon: CalendarDaysIcon },
   { to: '/payroll',     label: 'Payroll',      icon: CurrencyDollarIcon },
   { to: '/tax-declarations', label: 'Tax Declarations', icon: DocumentTextIcon },
@@ -26,6 +27,7 @@ const LABEL_MAP = {
   '/':            'Dashboard',
   '/employees':   'Employees',
   '/attendance':  'Attendance',
+  '/attendance-requests': 'Attendance Requests',
   '/leave':       'Leave',
   '/payroll':     'Payroll',
   '/tax-declarations': 'Tax Declarations',

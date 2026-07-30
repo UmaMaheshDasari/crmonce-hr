@@ -197,6 +197,7 @@ class D365Service {
     department:  'hr_hrdepartments',
     designation: 'hr_hrdesignations',
     goal:        'hr_hrgoals',
+    attendanceRequest: 'hr_attendancerequests',   // Missing Punch / Attendance correction requests
   };
 }
 

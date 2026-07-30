@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { leaveApi } from '../../api/endpoints';
+import { leaveApi, attendanceRequestApi } from '../../api/endpoints';
 
 /**
  * Landing page for the email "Approve / Reject" buttons.
@@ -38,12 +38,13 @@ export default function ApprovalAction() {
       setState({ status: 'error', message: 'This approval link is incomplete or invalid.' });
       return;
     }
-    if (type !== 'leave') {
+    const actionFor = { leave: leaveApi.emailAction, missing_punch: attendanceRequestApi.emailAction }[type];
+    if (!actionFor) {
       setState({ status: 'error', message: 'Unsupported request type.' });
       return;
     }
 
-    leaveApi.emailAction(id, action, token)
+    actionFor(id, action, token)
       .then(() => setState({
         status: 'success',
         message: `Request ${action === 'approved' ? 'approved' : 'rejected'} successfully.`,
