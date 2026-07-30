@@ -390,7 +390,11 @@ router.get('/my-status', requirePermission('attendance:read'), async (req, res, 
 // null when the employee has no attendance history yet. HR may pass ?employeeId=.
 router.get('/first-date', requirePermission('attendance:read'), async (req, res, next) => {
   try {
-    const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
+    // Employees clamp to their OWN first punch. HR/Admin clamp only when viewing a
+    // SPECIFIC employee; "All Employees" (no employeeId) has no single start date,
+    // so there is NO minimum — don't fall back to the admin's own first punch.
+    const targetId = req.user.role === 'employee' ? req.user.id : req.query.employeeId;
+    if (!targetId) return res.json({ firstDate: null });
     const firstDate = await getFirstAttendanceDate(targetId);   // min hr_date, computed once
     res.json({ firstDate: firstDate || null });
   } catch (err) { next(err); }
