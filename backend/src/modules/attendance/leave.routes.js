@@ -8,7 +8,7 @@ const requestNotify = require('../../services/request-notify.service');
 const { verifyApprovalToken } = require('../../services/approval-token');
 const { resolveSender } = require('../../services/email/sender');
 const time = require('../../services/time.util');
-const { leaveSummary } = require('../../services/leave-summary.util');
+const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
 
 const ENTITY = d365.constructor.entities.leave;
 const EMP_ENTITY = d365.constructor.entities.employee;
@@ -122,8 +122,10 @@ router.get('/approvers', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/attendance/leave/summary — dynamic leave stats for the dashboard cards
-// (Available / Taken / Pending / Approved / Rejected / LOP / This Month / This Year).
+// GET /api/attendance/leave/summary — dynamic Leave Summary stats for the dashboard
+// cards (Pending Approval / Approved Leaves / Rejected Leaves / Total Leave Taken)
+// over a [from, to] period. Reads leave records from hr_hrleaves (NOT attendance),
+// scoped to the logged-in employee; Total Leave Taken = sum of Approved leave days.
 router.get('/summary', async (req, res, next) => {
   try {
     const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
@@ -132,16 +134,23 @@ router.get('/summary', async (req, res, next) => {
     const pad = (n) => String(n).padStart(2, '0');
     const from = req.query.from || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
+    // hr_todate is needed so we can recover the day count when hr_days is blank.
     const { data } = await d365.getList(ENTITY, {
-      select: 'hr_days,hr_fromdate,hr_status',
+      select: 'hr_days,hr_fromdate,hr_todate,hr_status',
       filter: `_hr_hremployee_value eq '${targetId}'`,
     });
     const rows = (data || []).map(l => ({
-      days: Number(l.hr_days) || 0,
+      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate),   // hr_days, else from→to span
       fromDate: String(l.hr_fromdate || '').slice(0, 10),
       status: toLabel('hr_leave_status', l.hr_status),
     }));
-    res.json(leaveSummary(rows, { from, to }));
+    const summary = leaveSummary(rows, { from, to });
+    // Diagnostic logging (checklist #9): who, how many records, and the computed total.
+    console.log(
+      `[leave/summary] employee=${targetId} period=${from}..${to} ` +
+      `records=${rows.length} approvedInPeriod=${summary.approvedCount} takenDays=${summary.taken}`
+    );
+    res.json(summary);
   } catch (err) { next(err); }
 });
 

@@ -3,6 +3,29 @@
  * (inclusive, on the leave's fromDate) — drives the dashboard Leave Summary.
  * rows: [{ days:Number, fromDate:'YYYY-MM-DD', status:'approved|pending|rejected|cancelled' }]
  */
+
+/** Inclusive day span between two 'YYYY-MM-DD' dates (from & to both count). 0 if invalid. */
+function daysInclusive(fromDate, toDate) {
+  const f = String(fromDate || '').slice(0, 10);
+  const t = String(toDate || '').slice(0, 10);
+  if (!f || !t) return 0;
+  const a = new Date(`${f}T00:00:00Z`);
+  const b = new Date(`${t}T00:00:00Z`);
+  if (isNaN(a.getTime()) || isNaN(b.getTime()) || b < a) return 0;
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+/**
+ * The number of leave days for a record. Prefer the stored hr_days; when it is
+ * blank/zero/non-numeric (legacy or imported leaves often have no hr_days), fall
+ * back to the inclusive from→to span so an approved leave is never worth 0 days.
+ */
+function resolveDays(rawDays, fromDate, toDate) {
+  const n = Number(rawDays);
+  if (Number.isFinite(n) && n > 0) return n;
+  return daysInclusive(fromDate, toDate);
+}
+
 function leaveSummary(rows = [], { from, to } = {}) {
   const inPeriod = rows.filter(r => {
     const d = String(r.fromDate || '').slice(0, 10);
@@ -27,4 +50,4 @@ function leaveSummary(rows = [], { from, to } = {}) {
   };
 }
 
-module.exports = { leaveSummary };
+module.exports = { leaveSummary, daysInclusive, resolveDays };

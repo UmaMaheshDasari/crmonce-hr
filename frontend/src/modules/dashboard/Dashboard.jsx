@@ -204,7 +204,9 @@ export default function Dashboard() {
     { label: 'Pending Approval', value: ls.pendingCount ?? 0, sub: `${ls.pendingDays ?? 0} day${ls.pendingDays === 1 ? '' : 's'}`, tone: 'text-amber-700 bg-amber-50' },
     { label: 'Approved Leaves', value: ls.approvedCount ?? 0, sub: `${ls.approvedDays ?? 0} day${ls.approvedDays === 1 ? '' : 's'}`, tone: 'text-emerald-700 bg-emerald-50' },
     { label: 'Rejected Leaves', value: ls.rejectedCount ?? 0, sub: 'requests', tone: 'text-red-700 bg-red-50' },
-    { label: 'Total Leave Taken', value: ls.taken ?? 0, sub: 'approved days', tone: 'text-indigo-700 bg-indigo-50' },
+    { label: 'Total Leave Taken', value: ls.taken ?? 0,
+      sub: (ls.approvedCount ?? 0) === 0 ? 'No approved leave for selected period' : 'approved days',
+      tone: 'text-indigo-700 bg-indigo-50' },
   ] : [];
 
   return (
