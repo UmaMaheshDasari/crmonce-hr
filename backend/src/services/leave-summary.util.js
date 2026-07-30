@@ -1,34 +1,29 @@
 /**
- * Pure leave-summary math (unit-testable, no I/O).
- * rows: [{ days:Number, fromDate:'YYYY-MM-DD', status:'approved|pending|rejected|cancelled', type:'Casual Leave|LOP|…' }]
+ * Pure leave-summary math (unit-testable, no I/O). Filters by a [from, to] period
+ * (inclusive, on the leave's fromDate) — drives the dashboard Leave Summary.
+ * rows: [{ days:Number, fromDate:'YYYY-MM-DD', status:'approved|pending|rejected|cancelled' }]
  */
-function leaveSummary(rows = [], { year, month, entitlement = 24 } = {}) {
-  const ym = `${year}-${String(month).padStart(2, '0')}`;
-  const inYear = rows.filter(r => String(r.fromDate || '').startsWith(String(year)));
+function leaveSummary(rows = [], { from, to } = {}) {
+  const inPeriod = rows.filter(r => {
+    const d = String(r.fromDate || '').slice(0, 10);
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  });
   const days = (arr) => arr.reduce((s, r) => s + (Number(r.days) || 0), 0);
-  const byStatus = (s) => inYear.filter(r => r.status === s);
+  const byStatus = (s) => inPeriod.filter(r => r.status === s);
 
   const approved = byStatus('approved');
   const pending = byStatus('pending');
   const rejected = byStatus('rejected');
-  const lop = approved.filter(r => r.type === 'LOP');
-  const casual = approved.filter(r => r.type === 'Casual Leave');
-  const sick = approved.filter(r => r.type === 'Sick Leave');
-  const thisMonth = approved.filter(r => String(r.fromDate || '').slice(0, 7) === ym);
-  const takenYear = days(approved);
 
   return {
-    entitlement,
-    available: Math.max(0, entitlement - takenYear),
-    taken: takenYear,
-    pending: days(pending), pendingCount: pending.length,
-    approved: takenYear, approvedCount: approved.length,
-    rejected: days(rejected), rejectedCount: rejected.length,
-    lop: days(lop),
-    casual: days(casual),
-    sick: days(sick),
-    currentMonth: days(thisMonth),
-    currentYear: takenYear,
+    from: from || null, to: to || null,
+    pendingCount: pending.length, pendingDays: days(pending),
+    approvedCount: approved.length, approvedDays: days(approved),
+    rejectedCount: rejected.length,
+    taken: days(approved),   // Total Leave Taken = approved days in the period
   };
 }
 

@@ -63,4 +63,16 @@ function summarizeEmployee(sessions = [], { working = 0, leaveDays = 0 } = {}) {
   };
 }
 
-module.exports = { rangeCounts, summarizeEmployee, fmtDate };
+/**
+ * Working days for an employee within [from, capTo], starting at their FIRST
+ * attendance date — never before their first punch. Returns 0 when the employee
+ * has no attendance history (firstDate falsy) or their first date is after capTo.
+ */
+function effectiveWorking(from, capTo, firstDate, opts = {}) {
+  if (!firstDate) return 0;
+  const effFrom = firstDate > from ? firstDate : from;
+  if (!capTo || capTo < effFrom) return 0;
+  return rangeCounts(effFrom, capTo, opts).working;
+}
+
+module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking };

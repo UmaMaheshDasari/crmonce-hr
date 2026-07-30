@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { format, startOfMonth, endOfMonth, subMonths, startOfYear, endOfYear, subYears } from 'date-fns';
 import { employeeApi, attendanceApi, leaveApi, payrollApi, recruitmentApi, activityApi } from '../../api/endpoints';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { UsersIcon, ClockIcon, CurrencyDollarIcon, BriefcaseIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon } from '@heroicons/react/24/outline';
@@ -179,21 +181,30 @@ export default function Dashboard() {
   });
   const activityItems = activityData?.data?.data ?? [];
 
-  // Leave summary (dynamic) — Available / Taken / Pending / Approved / Rejected / LOP …
+  // Leave summary — period-filtered (This/Last Month, This/Last Year, Custom).
+  const [leaveRange, setLeaveRange] = useState('this_month');
+  const [leaveCustom, setLeaveCustom] = useState({ from: '', to: '' });
+  const leavePeriod = (() => {
+    const d = new Date(), fmt = (x) => format(x, 'yyyy-MM-dd');
+    switch (leaveRange) {
+      case 'last_month': { const lm = subMonths(d, 1); return { from: fmt(startOfMonth(lm)), to: fmt(endOfMonth(lm)) }; }
+      case 'this_year': return { from: fmt(startOfYear(d)), to: fmt(endOfYear(d)) };
+      case 'last_year': { const ly = subYears(d, 1); return { from: fmt(startOfYear(ly)), to: fmt(endOfYear(ly)) }; }
+      case 'custom': return { from: leaveCustom.from || undefined, to: leaveCustom.to || undefined };
+      default: return { from: fmt(startOfMonth(d)), to: fmt(endOfMonth(d)) };   // this_month
+    }
+  })();
   const { data: leaveSummaryData } = useQuery({
-    queryKey: ['leave-summary', user?.id],
-    queryFn: () => leaveApi.summary(),
-    enabled: !!user?.id,
+    queryKey: ['leave-summary', user?.id, leavePeriod.from, leavePeriod.to],
+    queryFn: () => leaveApi.summary({ from: leavePeriod.from, to: leavePeriod.to }),
+    enabled: !!user?.id && (leaveRange !== 'custom' || (!!leaveCustom.from && !!leaveCustom.to)),
   });
   const ls = leaveSummaryData?.data;
-  // Only unique, business-meaningful metrics (no Available/LOP/This Month/This Year).
   const leaveCards = ls ? [
-    { label: 'Pending Approval', value: ls.pendingCount, sub: 'requests', tone: 'text-amber-700 bg-amber-50' },
-    { label: 'Approved Leaves', value: ls.approvedCount, sub: `${ls.approved} day${ls.approved === 1 ? '' : 's'}`, tone: 'text-emerald-700 bg-emerald-50' },
-    { label: 'Rejected Leaves', value: ls.rejectedCount, sub: 'requests', tone: 'text-red-700 bg-red-50' },
-    { label: 'Total Leave Taken', value: ls.taken, sub: 'days this year', tone: 'text-indigo-700 bg-indigo-50' },
-    { label: 'Casual Leave', value: ls.casual, sub: 'days taken', tone: 'text-sky-700 bg-sky-50' },
-    { label: 'Sick Leave', value: ls.sick, sub: 'days taken', tone: 'text-violet-700 bg-violet-50' },
+    { label: 'Pending Approval', value: ls.pendingCount ?? 0, sub: `${ls.pendingDays ?? 0} day${ls.pendingDays === 1 ? '' : 's'}`, tone: 'text-amber-700 bg-amber-50' },
+    { label: 'Approved Leaves', value: ls.approvedCount ?? 0, sub: `${ls.approvedDays ?? 0} day${ls.approvedDays === 1 ? '' : 's'}`, tone: 'text-emerald-700 bg-emerald-50' },
+    { label: 'Rejected Leaves', value: ls.rejectedCount ?? 0, sub: 'requests', tone: 'text-red-700 bg-red-50' },
+    { label: 'Total Leave Taken', value: ls.taken ?? 0, sub: 'approved days', tone: 'text-indigo-700 bg-indigo-50' },
   ] : [];
 
   return (
@@ -304,23 +315,43 @@ export default function Dashboard() {
       )}
 
       {/* Leave Summary */}
-      {leaveCards.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-100 p-6">
-          <div className="mb-5">
-            <h2 className="text-base font-bold text-gray-900">Leave Summary</h2>
-            <p className="text-xs text-gray-400 mt-0.5">This year</p>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {leaveCards.map(c => (
-              <div key={c.label} className={`rounded-xl p-4 ${c.tone}`}>
-                <p className="text-2xl font-extrabold tabular-nums leading-none">{c.value ?? 0}</p>
-                <p className="text-[13px] font-semibold mt-1.5 leading-tight">{c.label}</p>
-                <p className="text-[11px] mt-0.5 opacity-70">{c.sub}</p>
-              </div>
-            ))}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <h2 className="text-base font-bold text-gray-900">Leave Summary</h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={leaveRange}
+              onChange={e => setLeaveRange(e.target.value)}
+              className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none cursor-pointer"
+            >
+              <option value="this_month">This Month</option>
+              <option value="last_month">Last Month</option>
+              <option value="this_year">This Year</option>
+              <option value="last_year">Last Year</option>
+              <option value="custom">Custom Range</option>
+            </select>
+            {leaveRange === 'custom' && (
+              <>
+                <input type="date" value={leaveCustom.from} onChange={e => setLeaveCustom(c => ({ ...c, from: e.target.value }))} className="h-9 px-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                <span className="text-gray-400 text-sm">–</span>
+                <input type="date" value={leaveCustom.to} min={leaveCustom.from} onChange={e => setLeaveCustom(c => ({ ...c, to: e.target.value }))} className="h-9 px-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20" />
+              </>
+            )}
           </div>
         </div>
-      )}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {leaveCards.map(c => (
+            <div key={c.label} className={`rounded-xl px-4 py-3 ${c.tone}`}>
+              <p className="text-2xl font-extrabold tabular-nums leading-none">{c.value}</p>
+              <p className="text-[13px] font-semibold mt-1.5 leading-tight">{c.label}</p>
+              <p className="text-[11px] mt-0.5 opacity-70">{c.sub}</p>
+            </div>
+          ))}
+          {leaveCards.length === 0 && Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-xl px-4 py-3 bg-gray-50 animate-pulse h-[74px]" />
+          ))}
+        </div>
+      </div>
 
       {/* Activity Feed */}
       <div className="bg-white rounded-xl border border-gray-100 p-6 hover:shadow-md transition-shadow duration-300">

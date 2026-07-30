@@ -207,6 +207,34 @@ async function buildShiftMap() {
   return map;
 }
 
+// An employee's FIRST attendance date (device or web). Attendance history — and
+// therefore Absent/Present/Working-day math — starts only from this date; nothing
+// before the first punch is ever counted.
+async function getFirstAttendanceDate(employeeId) {
+  try {
+    const { data } = await d365.getList(ENTITY, {
+      select: 'hr_date', filter: `_hr_hremployee_value eq '${employeeId}'`, orderby: 'hr_date asc', top: 1,
+    });
+    return (data && data[0]) ? String(data[0].hr_date).slice(0, 10) : null;
+  } catch (_) { return null; }
+}
+/** employeeId → first attendance date (min hr_date), via one aggregate query. */
+async function getFirstAttendanceMap() {
+  const map = new Map();
+  try {
+    const fetchXml = `<fetch aggregate="true"><entity name="hr_hrattendance">` +
+      `<attribute name="hr_date" aggregate="min" alias="first"/>` +
+      `<attribute name="_hr_hremployee_value" groupby="true" alias="emp"/></entity></fetch>`;
+    const rows = await d365.executeFetchXml('hr_hrattendances', fetchXml);
+    for (const r of (rows || [])) {
+      const emp = r.emp && typeof r.emp === 'object' ? r.emp.Value : r.emp;
+      const first = r.first;
+      if (emp && first) map.set(String(emp), String(first).slice(0, 10));
+    }
+  } catch (_) { /* degrade: no clamping */ }
+  return map;
+}
+
 // Find the most recent prior-day record that is still OPEN (forgot checkout).
 async function findOpenPriorRecord(employeeId, today) {
   const { data } = await d365.getList(ENTITY, {
@@ -402,7 +430,10 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
     const workingDays = countWorkingDays(y, m);                  // full month (display)
     const monthEnd = `${y}-${mm}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
     const capTo = today < monthEnd ? today : monthEnd;           // min(today, last day of month)
-    const workingElapsed = capTo >= from ? rangeCounts(from, capTo).working : 0;
+    // Working days start at the employee's FIRST attendance date (never before
+    // their first punch). No attendance history → 0 working days → 0 absent.
+    const firstDate = await getFirstAttendanceDate(targetId);
+    const workingElapsed = effectiveWorking(from, capTo, firstDate);
     // Absent = Elapsed Working − Attended (any punch, incl. incomplete) − Leave.
     const absentDays = Math.max(0, workingElapsed - attended - leaveDays);
 
@@ -445,7 +476,7 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
 });
 
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
-const { rangeCounts, summarizeEmployee } = require('../../services/attendance-summary.util');
+const { rangeCounts, summarizeEmployee, effectiveWorking } = require('../../services/attendance-summary.util');
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
   const v = Number(h);
@@ -477,10 +508,10 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
 
   // Absent is only meaningful up to TODAY — future working days haven't happened
-  // yet, so they must NEVER be counted as Absent.
+  // yet, so they must NEVER be counted as Absent (per-employee working days are
+  // computed below from each employee's first attendance date).
   const today = time.istDateStr();
   const capTo = to < today ? to : today;                                  // min(to, today)
-  const workingElapsed = capTo >= from ? rangeCounts(from, capTo).working : 0;
 
   const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
     select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
@@ -495,6 +526,7 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   });
 
   const rc = rangeCounts(from, to);
+  const firstMap = await getFirstAttendanceMap();   // employeeId → first attendance date
 
   // Compute each day's session once with THAT employee's shift; group by employee.
   const byEmp = {};
@@ -510,14 +542,14 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   if (department) scope = scope.filter(e => e.hr_department === department);
   if (designation) scope = scope.filter(e => e.hr_designation === designation);
 
-  // Every active employee in scope gets a summary — INCLUDING those with zero
-  // records (summarizeEmployee([]) → Absent = Working Days), so no-punch
-  // employees are correctly marked Absent.
+  // Each employee's Working Days start at their FIRST attendance date (never
+  // before their first punch) and end at min(to, today). An employee with no
+  // attendance history at all has 0 working days → never marked Absent.
   const perEmployee = scope.map(e => {
     const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
-    // Absent uses ELAPSED working days (up to today); the Working Days column
-    // still shows the full range (rc.working).
-    return { emp: e, leaveDays, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working: workingElapsed, leaveDays }) };
+    const firstDate = firstMap.get(e.hr_hremployeeid);
+    const working = effectiveWorking(from, capTo, firstDate);
+    return { emp: e, leaveDays, working, firstDate, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays }) };
   });
 
   const totals = perEmployee.reduce((t, p) => {
@@ -707,10 +739,10 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     ];
     sum.getRow(1).font = { bold: true };
     sum.getColumn('missing').alignment = { wrapText: true, vertical: 'top' };
-    for (const { emp: e, leaveDays, summary: s } of perEmployee) {
+    for (const { emp: e, leaveDays, working, summary: s } of perEmployee) {
       sum.addRow({
         emp: e.hr_hremployee1 || 'Employee', dept: e.hr_department || '', desig: e.hr_designation || '',
-        cal: rc.calendar, wd: rc.working, present: s.present, half: s.half, absent: s.absent,
+        cal: rc.calendar, wd: working, present: s.present, half: s.half, absent: s.absent,
         leave: leaveDays, hol: rc.holidays, woff: rc.weeklyOff, incomplete: s.incomplete,
         missing: s.missingPunchDetails.length ? s.missingPunchDetails.join('\n') : 'None',
         eff: fmtDur(s.effectiveHours), brk: fmtDur(s.breakHours), ot: fmtDur(s.overtimeHours),

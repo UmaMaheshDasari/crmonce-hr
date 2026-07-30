@@ -8,7 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { computeSession } = require('../src/services/attendance.util');
-const { rangeCounts, summarizeEmployee } = require('../src/services/attendance-summary.util');
+const { rangeCounts, summarizeEmployee, effectiveWorking } = require('../src/services/attendance-summary.util');
 
 // A day's session from raw punches (default GENERAL 09:00–18:00 shift).
 const day = (date, punches) => ({ ...computeSession(punches), date });
@@ -53,6 +53,30 @@ test('No Punch on a working day → Absent', () => {
   const s = summarizeEmployee([], { working: 1 });
   assert.strictEqual(s.attended, 0);
   assert.strictEqual(s.absent, 1);
+});
+
+// ── Attendance history starts at the employee's FIRST punch date ─────────────
+test('Employee with NO attendance history → 0 working days (never Absent)', () => {
+  const working = effectiveWorking('2026-07-01', '2026-07-31', null, { weekOffDays: [0, 6], holidays: [] });
+  assert.strictEqual(working, 0);
+  assert.strictEqual(summarizeEmployee([], { working }).absent, 0);
+});
+
+test('First punch months after joining → working starts at first punch, not range start', () => {
+  // Range = full July; employee\'s first-ever punch is 2026-07-20.
+  const full = rangeCounts('2026-07-01', '2026-07-31', { weekOffDays: [0, 6], holidays: [] }).working;
+  const fromFirst = effectiveWorking('2026-07-01', '2026-07-31', '2026-07-20', { weekOffDays: [0, 6], holidays: [] });
+  assert.ok(fromFirst < full, 'working days counted only from the first punch date');
+  assert.strictEqual(fromFirst, rangeCounts('2026-07-20', '2026-07-31', { weekOffDays: [0, 6], holidays: [] }).working);
+});
+
+test('First punch BEFORE the range → full range working days used', () => {
+  const w = effectiveWorking('2026-07-01', '2026-07-31', '2026-03-15', { weekOffDays: [0, 6], holidays: [] });
+  assert.strictEqual(w, rangeCounts('2026-07-01', '2026-07-31', { weekOffDays: [0, 6], holidays: [] }).working);
+});
+
+test('First punch after capTo (all future) → 0 working days', () => {
+  assert.strictEqual(effectiveWorking('2026-07-01', '2026-07-10', '2026-07-20', { weekOffDays: [0, 6], holidays: [] }), 0);
 });
 
 test('Saturday & Sunday are Weekly Off, excluded from Working Days (never Absent)', () => {

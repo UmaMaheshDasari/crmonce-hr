@@ -127,19 +127,21 @@ router.get('/approvers', async (req, res, next) => {
 router.get('/summary', async (req, res, next) => {
   try {
     const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
+    // Period comes from the dashboard filter; default = current month.
     const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const from = req.query.from || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    const to = req.query.to || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
     const { data } = await d365.getList(ENTITY, {
-      select: 'hr_days,hr_fromdate,hr_status,hr_leavetype',
+      select: 'hr_days,hr_fromdate,hr_status',
       filter: `_hr_hremployee_value eq '${targetId}'`,
     });
     const rows = (data || []).map(l => ({
       days: Number(l.hr_days) || 0,
       fromDate: String(l.hr_fromdate || '').slice(0, 10),
       status: toLabel('hr_leave_status', l.hr_status),
-      type: toLabel('hr_leave_type', l.hr_leavetype),
     }));
-    const entitlement = Number(process.env.ANNUAL_LEAVE_ENTITLEMENT) || 24;
-    res.json(leaveSummary(rows, { year: now.getFullYear(), month: now.getMonth() + 1, entitlement }));
+    res.json(leaveSummary(rows, { from, to }));
   } catch (err) { next(err); }
 });
 
