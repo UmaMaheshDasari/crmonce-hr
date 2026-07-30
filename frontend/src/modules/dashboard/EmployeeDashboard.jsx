@@ -19,14 +19,16 @@ function greeting() {
 }
 const fmtDay = (iso) => { try { return format(new Date(`${iso}T00:00:00`), 'dd MMM'); } catch { return '—'; } };
 
-// today's status → { label, tone } for the hero pill
+// today's status → { label, tone } for the hero pill.
+// An "incomplete" day (a punch exists, one is just missing) counts as Present —
+// the employee showed up; the missing punch is surfaced separately as a warning.
 function todayStatus(t) {
   if (!t) return { label: 'Loading…', tone: 'bg-white/15 text-white' };
   if (t.state === 'in') return { label: 'Checked In', tone: 'bg-emerald-400/25 text-emerald-50 ring-1 ring-emerald-300/40' };
   switch (t.status) {
-    case 'present': return { label: 'Present', tone: 'bg-emerald-400/25 text-emerald-50 ring-1 ring-emerald-300/40' };
+    case 'present':
+    case 'incomplete': return { label: 'Present', tone: 'bg-emerald-400/25 text-emerald-50 ring-1 ring-emerald-300/40' };
     case 'half_day': return { label: 'Half Day', tone: 'bg-amber-400/25 text-amber-50 ring-1 ring-amber-300/40' };
-    case 'incomplete': return { label: 'Incomplete', tone: 'bg-slate-400/25 text-slate-50 ring-1 ring-slate-200/40' };
     default: return { label: 'Not Checked In', tone: 'bg-white/15 text-white ring-1 ring-white/25' };
   }
 }
@@ -110,7 +112,9 @@ export default function EmployeeDashboard() {
   });
   const busy = checkin.isPending || checkout.isPending;
 
-  const daysPresent = m ? (m.presentDays + m.halfDays * 0.5) : 0;
+  // Incomplete days count as Present (the employee attended — a punch is just
+  // missing). Half days count as 0.5. Missing punches are flagged, not penalised.
+  const daysPresent = m ? (m.presentDays + m.incompleteDays + m.halfDays * 0.5) : 0;
   const st = todayStatus(t);
 
   const kpis = m && lv ? [
@@ -171,8 +175,11 @@ export default function EmployeeDashboard() {
             <div className="flex items-center gap-2">
               <ClockIcon className="w-5 h-5 text-indigo-500" />
               <h2 className="text-base font-bold text-gray-900">Today's Attendance</h2>
-              {t && <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_PILL[t.status] || 'bg-gray-100 text-gray-500'}`}>
-                {t.state === 'in' ? 'Working' : (t.status === 'absent' ? 'No punch yet' : t.status.replace('_', ' '))}
+              {t && <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${t.status === 'incomplete' ? STATUS_PILL.present : (STATUS_PILL[t.status] || 'bg-gray-100 text-gray-500')}`}>
+                {t.state === 'in' ? 'Working'
+                  : t.status === 'incomplete' ? 'Present · missing punch'
+                  : t.status === 'absent' ? 'No punch yet'
+                  : t.status.replace('_', ' ')}
               </span>}
             </div>
             <p className="text-lg font-bold text-gray-900 tabular-nums">
