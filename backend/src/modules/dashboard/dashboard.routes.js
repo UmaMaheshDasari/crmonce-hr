@@ -189,4 +189,142 @@ router.get('/summary', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/dashboard/admin-summary — ONE call powers the whole HR/Admin dashboard:
+// hero, 4 KPI cards, attendance overview (Present/Absent/Late), action items,
+// the admin's own attendance widget, leave summary and recent activity. HR/Admin
+// only. Every figure is live from Dataverse.
+// ─────────────────────────────────────────────────────────────────────────────
+const { requireRole } = require('../../middleware/auth.middleware');
+const JOB = d365.constructor.entities.job;
+const PAYROLL = d365.constructor.entities.payroll;
+const DOC = d365.constructor.entities.document;
+const SHIFT_MAP = (emp) => attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime);
+const addDays = (ds, n) => { const d = new Date(`${ds}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
+
+router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const today = time.istDateStr();
+    const [Y, M] = today.split('-').map(Number);
+    const mm = pad2(M);
+    const monthFrom = `${Y}-${mm}-01`;
+    const monthStartIso = `${monthFrom}T00:00:00Z`;
+
+    // This week's working window (Mon → today) for the overview + corrections.
+    const dow = new Date(`${today}T00:00:00Z`).getUTCDay();      // 0 Sun … 6 Sat
+    const monday = addDays(today, dow === 0 ? -6 : 1 - dow);
+    const weekDates = [0, 1, 2, 3, 4].map(i => addDays(monday, i));  // Mon–Fri
+    const weekFrom = weekDates[0], weekTo = weekDates[4];
+
+    // Leave Summary period (dashboard filter) — defaults to This Year.
+    const leaveFrom = req.query.from || `${Y}-01-01`;
+    const leaveTo = req.query.to || `${Y}-12-31`;
+
+    const activeVal = toValue('hr_employee_status', 'active');
+    const pendingLeaveVal = toValue('hr_leave_status', 'pending');
+    const approvedLeaveVal = toValue('hr_leave_status', 'approved');
+    const openJobVal = toValue('hr_job_status', 'open');
+    const processedVal = toValue('hr_payroll_status', 'processed');
+
+    const [empsRes, weekAttRes, jobsRes, payrollRes, leavesRes, docsRes, activityItems] = await Promise.all([
+      d365.getListOptional(EMP, {
+        select: 'hr_hremployeeid,hr_hremployee1,hr_department,createdon',
+        optionalSelect: `${SHIFT_COLS},hr_designation`, filter: `hr_status eq ${activeVal}`, top: 5000,
+      }).catch(() => ({ data: [] })),
+      d365.getAll(ATT, {
+        select: PUNCH_SELECT, filter: `hr_date ge ${weekFrom} and hr_date le ${weekTo}`, orderby: 'hr_date desc',
+      }, 10000).catch(() => ({ data: [] })),
+      d365.getList(JOB, { select: 'hr_hrjobid', filter: `hr_status eq ${openJobVal}`, top: 500 }).catch(() => ({ data: [] })),
+      d365.getList(PAYROLL, { select: 'hr_netpay,hr_status', filter: `hr_month eq ${M} and hr_year eq ${Y}`, top: 2000 }).catch(() => ({ data: [] })),
+      d365.getList(LEAVE, { select: 'hr_days,hr_fromdate,hr_todate,hr_status,_hr_hremployee_value', top: 5000 }).catch(() => ({ data: [] })),
+      d365.getList(DOC, { select: 'hr_hrdocumentid,createdon', filter: `createdon ge ${monthStartIso}`, top: 2000 }).catch(() => ({ data: [] })),
+      activity.recent(8).catch(() => []),
+    ]);
+
+    const emps = empsRes.data || [];
+    const weekAtt = weekAttRes.data || [];
+    const allLeaves = leavesRes.data || [];
+    const shiftByEmp = new Map(emps.map(e => [e.hr_hremployeeid, SHIFT_MAP(e)]));
+
+    // ── KPI cards ─────────────────────────────────────────────────────────────
+    const totalEmployees = emps.length;
+    const presentTodaySet = new Set();
+    weekAtt.forEach(r => {
+      if (String(r.hr_date).slice(0, 10) === today && punchesFromRecord(r).length > 0) presentTodaySet.add(r._hr_hremployee_value);
+    });
+    const presentToday = presentTodaySet.size;
+    const openPositions = (jobsRes.data || []).length;
+    const payrollRows = payrollRes.data || [];
+    const payrollProcessed = payrollRows.filter(p => p.hr_status === processedVal);
+    const payroll = {
+      status: payrollProcessed.length ? 'Processed' : 'Pending',
+      count: payrollRows.length,
+      netTotal: payrollProcessed.reduce((s, p) => s + (p.hr_netpay || 0), 0),
+    };
+
+    // ── Action items (replacing the old duplicate Quick Stats) ─────────────────
+    const pendingLeaveApprovals = allLeaves.filter(l => l.hr_status === pendingLeaveVal).length;
+    const correctionsPending = weekAtt.filter(r => punchesFromRecord(r).length % 2 === 1).length;  // odd punch = missing check-in/out
+    const newEmployeesThisMonth = emps.filter(e => String(e.createdon || '') >= monthStartIso).length;
+    const documentsPendingReview = (docsRes.data || []).length;
+
+    // ── Attendance overview (Present / Absent / Late per weekday) ──────────────
+    const onLeaveByDate = {}; weekDates.forEach(d => (onLeaveByDate[d] = new Set()));
+    allLeaves.filter(l => l.hr_status === approvedLeaveVal).forEach(l => {
+      const lf = String(l.hr_fromdate || '').slice(0, 10);
+      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      weekDates.forEach(d => { if (d >= lf && d <= lt) onLeaveByDate[d].add(l._hr_hremployee_value); });
+    });
+    const byDate = {}; weekDates.forEach(d => (byDate[d] = { present: new Set(), late: new Set() }));
+    weekAtt.forEach(r => {
+      const ds = String(r.hr_date).slice(0, 10);
+      if (!byDate[ds] || punchesFromRecord(r).length === 0) return;
+      byDate[ds].present.add(r._hr_hremployee_value);
+      const c = computeSession(punchesFromRecord(r), shiftByEmp.get(r._hr_hremployee_value));
+      if (c.lateArrivalMin > 0) byDate[ds].late.add(r._hr_hremployee_value);
+    });
+    const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const overview = weekDates.map(d => {
+      const isWorking = !attnCfg.weekOffDays.includes(new Date(`${d}T00:00:00Z`).getUTCDay()) && !attnCfg.holidays.includes(d);
+      const present = byDate[d].present.size;
+      const late = byDate[d].late.size;
+      const absent = (isWorking && d <= today) ? Math.max(0, totalEmployees - present - onLeaveByDate[d].size) : 0;
+      return { day: dayName[new Date(`${d}T00:00:00Z`).getUTCDay()], date: d, present, absent, late };
+    });
+
+    // ── Admin's own attendance widget (today) ──────────────────────────────────
+    const myRec = weekAtt.find(r => r._hr_hremployee_value === req.user.id && String(r.hr_date).slice(0, 10) === today) || null;
+    const myShift = shiftByEmp.get(req.user.id) || attnCfg.resolveShift();
+    const ct = computeSession(myRec ? punchesFromRecord(myRec) : [], myShift);
+    const todayView = {
+      date: today, status: ct.status, state: ct.state,
+      firstPunch: ct.firstPunch, lastPunch: ct.lastPunch, punchCount: ct.count,
+      workedHours: ct.totalSpanHours, breakHours: ct.breakHours, effectiveHours: ct.effectiveHours,
+      overtimeHours: ct.overtimeHours, lateByMin: ct.lateArrivalMin, earlyExitMin: ct.earlyDepartureMin,
+      canCheckIn: ct.state !== 'in', canCheckOut: ct.state === 'in',
+    };
+
+    // ── Leave Summary (org-wide, period-filtered) ──────────────────────────────
+    const leaveRows = allLeaves.map(l => ({
+      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate),
+      fromDate: String(l.hr_fromdate || '').slice(0, 10),
+      status: toLabel('hr_leave_status', l.hr_status),
+    }));
+    const leave = leaveSummary(leaveRows, { from: leaveFrom, to: leaveTo });
+    leave.hasActivity = leaveRows.some(r => r.fromDate && r.fromDate >= leaveFrom && r.fromDate <= leaveTo);
+
+    res.json({
+      employee: { name: req.user.name || 'Admin' },
+      shift: { name: myShift.name, start: myShift.start, end: myShift.end, durationHours: myShift.durationHours },
+      systemStatus: 'operational',
+      kpis: { totalEmployees, presentToday, openPositions, payroll },
+      actions: { pendingLeaveApprovals, correctionsPending, newEmployeesThisMonth, documentsPendingReview },
+      overview,
+      today: todayView,
+      leave,
+      activity: activityItems,
+    });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

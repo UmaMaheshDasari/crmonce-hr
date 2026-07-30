@@ -100,9 +100,10 @@ export const activityApi = {
   list: (limit = 20) => api.get('/activity', { params: { limit } }),
 };
 
-// ── Dashboard (single aggregated summary — powers the whole employee dashboard) ──
+// ── Dashboard (single aggregated summary — one call powers the whole dashboard) ──
 export const dashboardApi = {
-  summary: (params) => api.get('/dashboard/summary', { params }),
+  summary: (params) => api.get('/dashboard/summary', { params }),            // employee
+  adminSummary: (params) => api.get('/dashboard/admin-summary', { params }), // HR / admin
 };
 
 // ── Documents ────────────────────────────────────────────────────
