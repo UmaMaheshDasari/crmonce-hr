@@ -286,7 +286,11 @@ router.post('/checkin', requirePermission('attendance:read'), async (req, res, n
       return res.status(400).json({ error: 'You are already checked in — check out first' });
     }
     const c = computeSession([...punches, { t: nowHHMM(), d: 'in' }], shift);
-    const updated = await d365.update(ENTITY, record.hr_hrattendanceid, punchPayload(c));
+    // A WEB check-in tags the record as web_checkin — even when appending to a day
+    // that was started on the eTime device — so the Source reflects the web action.
+    const updated = await d365.update(ENTITY, record.hr_hrattendanceid, {
+      ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'web_checkin'),
+    });
     res.json(labelsForEntity('hr_hrattendances', updated));
   } catch (err) { next(err); }
 });
@@ -304,7 +308,10 @@ router.post('/checkout', requirePermission('attendance:read'), async (req, res, 
       return res.status(400).json({ error: 'You are not currently checked in' });
     }
     const c = computeSession([...punches, { t: nowHHMM(), d: 'out' }], shift);
-    const updated = await d365.update(ENTITY, record.hr_hrattendanceid, punchPayload(c));
+    // A WEB check-out tags the record as web_checkin so the Source shows Web, not Device.
+    const updated = await d365.update(ENTITY, record.hr_hrattendanceid, {
+      ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'web_checkin'),
+    });
     res.json(labelsForEntity('hr_hrattendances', updated));
   } catch (err) { next(err); }
 });
