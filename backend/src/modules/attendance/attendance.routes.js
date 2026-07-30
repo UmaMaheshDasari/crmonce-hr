@@ -218,20 +218,25 @@ async function getFirstAttendanceDate(employeeId) {
     return (data && data[0]) ? String(data[0].hr_date).slice(0, 10) : null;
   } catch (_) { return null; }
 }
-/** employeeId → first attendance date (min hr_date), via one aggregate query. */
+/** employeeId → first attendance date (min hr_date), via one aggregate query.
+ * FetchXML groups a lookup by its LOGICAL name (hr_hremployee), not the OData
+ * `_..._value` form — the latter errors and would leave the map empty, which then
+ * zeroes every Absent count (working days clamp to 0). Callers must still tolerate
+ * an empty map (see the in-range fallback in buildRangeSummary). */
 async function getFirstAttendanceMap() {
   const map = new Map();
   try {
     const fetchXml = `<fetch aggregate="true"><entity name="hr_hrattendance">` +
       `<attribute name="hr_date" aggregate="min" alias="first"/>` +
-      `<attribute name="_hr_hremployee_value" groupby="true" alias="emp"/></entity></fetch>`;
+      `<attribute name="hr_hremployee" groupby="true" alias="emp"/></entity></fetch>`;
     const rows = await d365.executeFetchXml('hr_hrattendances', fetchXml);
     for (const r of (rows || [])) {
+      // A grouped lookup comes back as { Value } (or occasionally the raw guid).
       const emp = r.emp && typeof r.emp === 'object' ? r.emp.Value : r.emp;
       const first = r.first;
       if (emp && first) map.set(String(emp), String(first).slice(0, 10));
     }
-  } catch (_) { /* degrade: no clamping */ }
+  } catch (_) { /* degrade: buildRangeSummary falls back to earliest in-range punch */ }
   return map;
 }
 
@@ -432,7 +437,10 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
     const capTo = today < monthEnd ? today : monthEnd;           // min(today, last day of month)
     // Working days start at the employee's FIRST attendance date (never before
     // their first punch). No attendance history → 0 working days → 0 absent.
-    const firstDate = await getFirstAttendanceDate(targetId);
+    // Prefer the true first-ever date; fall back to the earliest in-range punch
+    // (recs are ordered hr_date asc) so a lookup miss never zeroes Absent.
+    const firstDate = (await getFirstAttendanceDate(targetId))
+      || (recs && recs[0] ? String(recs[0].hr_date).slice(0, 10) : null);
     const workingElapsed = effectiveWorking(from, capTo, firstDate);
     // Absent = Elapsed Working − Attended (any punch, incl. incomplete) − Leave.
     const absentDays = Math.max(0, workingElapsed - attended - leaveDays);
@@ -529,11 +537,19 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const firstMap = await getFirstAttendanceMap();   // employeeId → first attendance date
 
   // Compute each day's session once with THAT employee's shift; group by employee.
+  // Also track each employee's EARLIEST in-range punch date as a resilient fallback
+  // for the first-attendance clamp (used when the aggregate map is unavailable —
+  // without it a failed map would clamp working days to 0 and zero every Absent).
   const byEmp = {};
+  const firstInRange = {};
   const computed = (recs || []).map(r => {
     const emp = empMap.get(r._hr_hremployee_value) || {};
     const c = computeSession(punchesFromRecord(r), shiftOf(emp));
+    const ds = String(r.hr_date).slice(0, 10);
     (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
+    if (!firstInRange[r._hr_hremployee_value] || ds < firstInRange[r._hr_hremployee_value]) {
+      firstInRange[r._hr_hremployee_value] = ds;
+    }
     return { r, c, emp };
   });
 
@@ -547,7 +563,9 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   // attendance history at all has 0 working days → never marked Absent.
   const perEmployee = scope.map(e => {
     const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
-    const firstDate = firstMap.get(e.hr_hremployeeid);
+    // Prefer the true first-ever date; fall back to the earliest in-range punch so
+    // an unavailable aggregate never forces working days (and thus Absent) to 0.
+    const firstDate = firstMap.get(e.hr_hremployeeid) || firstInRange[e.hr_hremployeeid] || null;
     const working = effectiveWorking(from, capTo, firstDate);
     return { emp: e, leaveDays, working, firstDate, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays }) };
   });
