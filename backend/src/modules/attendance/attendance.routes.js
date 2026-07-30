@@ -402,53 +402,45 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
       orderby: 'hr_date asc',
     });
     const shift = await getEmployeeShift(targetId);
-    // Sessions indexed by date for the shared classifier; late/early/overtime are
-    // tallied across every punch record (any day) as before.
-    const sessionByDate = new Map();
-    let lateCount = 0, earlyCount = 0, overtimeHours = 0;
+    let present = 0, halfDay = 0, incomplete = 0, attended = 0, lateCount = 0, earlyCount = 0, overtimeHours = 0;
     for (const r of (recs || [])) {
       const c = computeSession(punchesFromRecord(r), shift);
-      const ds = String(r.hr_date).slice(0, 10);
-      sessionByDate.set(ds, { ...c, date: ds });
+      if ((c.count || 0) > 0) attended++;             // any punch → NOT absent
+      if (c.status === 'present') present++;
+      else if (c.status === 'half_day') halfDay++;
+      else if (c.status === 'incomplete') incomplete++;
       if (c.lateArrivalMin > 0) lateCount++;
       if (c.earlyDepartureMin > 0) earlyCount++;
       overtimeHours += c.overtimeHours;
     }
 
-    const today = time.istDateStr();
-    const monthEnd = `${y}-${mm}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
-    const capTo = today < monthEnd ? today : monthEnd;           // min(today, last day of month)
-
-    // Approved-leave DATES for this month, per day, capped to the elapsed window.
     const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-      select: 'hr_fromdate,hr_todate,hr_status',
+      select: 'hr_days,hr_fromdate,hr_status',
       filter: `_hr_hremployee_value eq '${targetId}' and hr_status eq ${toValue('hr_leave_status', 'approved')}`,
     });
-    const leaveDates = new Set();
-    (leaves || []).forEach(l => {
-      const lf = String(l.hr_fromdate || '').slice(0, 10);
-      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
-      if (!lf) return;
-      const start = lf < from ? from : lf;
-      const stop = lt > capTo ? capTo : lt;
-      if (stop < start) return;
-      const end = new Date(`${stop}T00:00:00Z`);
-      for (let d = new Date(`${start}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-        leaveDates.add(`${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`);
-      }
-    });
+    // Absent only counts working days that have already occurred (up to today).
+    const today = time.istDateStr();
+    const leaveDays = (leaves || [])
+      .filter(l => {
+        const lf = String(l.hr_fromdate || '').slice(0, 10);
+        return lf.slice(0, 7) === `${y}-${mm}` && lf <= today;   // exclude future leave
+      })
+      .reduce((s, l) => s + (l.hr_days || 0), 0);
 
     const workingDays = countWorkingDays(y, m);                  // full month (display)
+    const monthEnd = `${y}-${mm}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+    const capTo = today < monthEnd ? today : monthEnd;           // min(today, last day of month)
     // Working days start at the employee's FIRST attendance date (never before
     // their first punch). No attendance history → 0 working days → 0 absent.
-    // SAME classifier the cards / rows / export use → identical Absent.
     const firstDate = await getFirstAttendanceDate(targetId);
-    const days = classifyEmployeeDays(from, capTo, firstDate, sessionByDate, leaveDates);
+    const workingElapsed = effectiveWorking(from, capTo, firstDate);
+    // Absent = Elapsed Working − Attended (any punch, incl. incomplete) − Leave.
+    const absentDays = Math.max(0, workingElapsed - attended - leaveDays);
 
     res.json({
-      month: m, year: y, workingDays, workingElapsed: days.working,
-      presentDays: days.present, halfDays: days.half, incompleteDays: days.incomplete, attendedDays: days.attended,
-      leaveDays: days.leave, absentDays: days.absent,
+      month: m, year: y, workingDays, workingElapsed,
+      presentDays: present, halfDays: halfDay, incompleteDays: incomplete, attendedDays: attended,
+      leaveDays, absentDays,
       lateCount, earlyExitCount: earlyCount,
       overtimeHours: Math.round(overtimeHours * 100) / 100,
     });
@@ -484,7 +476,7 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
 });
 
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
-const { rangeCounts, classifyEmployeeDays } = require('../../services/attendance-summary.util');
+const { rangeCounts, summarizeEmployee, effectiveWorking } = require('../../services/attendance-summary.util');
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
   const v = Number(h);
@@ -497,11 +489,9 @@ const fmtMin = (m) => fmtDur((Number(m) || 0) / 60);
 
 /**
  * SINGLE SOURCE OF TRUTH for range attendance figures (Present/Half/Incomplete/
- * Absent/Leave). Every view — /stats cards, /absentees rows and the Excel export
- * — derives from the per-day classification here, so the Absent COUNT and the
- * exact Absent ROWS always agree. Absent = a working day (holidays & week-offs
- * excluded), on/after the employee's first punch, with no punch and no approved
- * leave. See classifyEmployeeDays for the rules.
+ * Absent/Leave). Used by BOTH the /stats cards and the Excel export so every view
+ * shows the SAME absent count. Absent = Working Days − Attended (any punch) −
+ * Approved Leave, per employee (holidays/week-offs are excluded from Working Days).
  */
 async function buildRangeSummary(from, to, { targetId, department, designation } = {}) {
   const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
@@ -518,44 +508,32 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
 
   // Absent is only meaningful up to TODAY — future working days haven't happened
-  // yet, so they must NEVER be counted as Absent.
+  // yet, so they must NEVER be counted as Absent (per-employee working days are
+  // computed below from each employee's first attendance date).
   const today = time.istDateStr();
   const capTo = to < today ? to : today;                                  // min(to, today)
 
-  // Per-employee SET of approved-leave DATES (expanded across from→to, per day),
-  // capped to the elapsed window so future leave never offsets elapsed Absent.
   const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-    select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
+    select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
     filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
   });
-  const leaveDatesByEmp = {};
+  const leaveByEmp = {};
   (leaves || []).forEach(l => {
-    const lf = String(l.hr_fromdate || '').slice(0, 10);
-    const lt = String(l.hr_todate || '').slice(0, 10) || lf;
-    if (!lf) return;
-    const start = lf < from ? from : lf;
-    const stop = lt > capTo ? capTo : lt;                                 // cap to elapsed window
-    if (stop < start) return;
-    const set = leaveDatesByEmp[l._hr_hremployee_value] || (leaveDatesByEmp[l._hr_hremployee_value] = new Set());
-    const end = new Date(`${stop}T00:00:00Z`);
-    for (let d = new Date(`${start}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-      set.add(`${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`);
-    }
+    const d = String(l.hr_fromdate || '').slice(0, 10);
+    if (d < from || d > to) return;
+    if (d > today) return;                                                // future leave doesn't offset elapsed Absent
+    leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
   });
 
   const rc = rangeCounts(from, to);
   const firstMap = await getFirstAttendanceMap();   // employeeId → first attendance date
 
-  // Compute each day's session once with THAT employee's shift. Index by date
-  // (for the classifier) and keep the flat array (for the Daily-detail sheet).
-  const sessionByEmp = {};
+  // Compute each day's session once with THAT employee's shift; group by employee.
   const byEmp = {};
   const computed = (recs || []).map(r => {
     const emp = empMap.get(r._hr_hremployee_value) || {};
     const c = computeSession(punchesFromRecord(r), shiftOf(emp));
-    const ds = String(r.hr_date).slice(0, 10);
-    (sessionByEmp[r._hr_hremployee_value] = sessionByEmp[r._hr_hremployee_value] || new Map()).set(ds, { ...c, date: ds });
-    (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: ds });
+    (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
     return { r, c, emp };
   });
 
@@ -564,26 +542,24 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   if (department) scope = scope.filter(e => e.hr_department === department);
   if (designation) scope = scope.filter(e => e.hr_designation === designation);
 
-  // Classify each employee's working days from their first punch to min(to, today).
+  // Each employee's Working Days start at their FIRST attendance date (never
+  // before their first punch) and end at min(to, today). An employee with no
+  // attendance history at all has 0 working days → never marked Absent.
   const perEmployee = scope.map(e => {
+    const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
     const firstDate = firstMap.get(e.hr_hremployeeid);
-    const days = classifyEmployeeDays(
-      from, capTo, firstDate,
-      sessionByEmp[e.hr_hremployeeid] || new Map(),
-      leaveDatesByEmp[e.hr_hremployeeid] || new Set(),
-    );
-    // `summary`/`leaveDays`/`working` kept for the export's existing destructure.
-    return { emp: e, firstDate, working: days.working, leaveDays: days.leave, summary: days, days };
+    const working = effectiveWorking(from, capTo, firstDate);
+    return { emp: e, leaveDays, working, firstDate, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays }) };
   });
 
   const totals = perEmployee.reduce((t, p) => {
-    t.present += p.days.present; t.half += p.days.half; t.incomplete += p.days.incomplete;
-    t.attended += p.days.attended; t.absent += p.days.absent; t.leave += p.days.leave;
-    t.effectiveHours += p.days.effectiveHours; t.overtimeHours += p.days.overtimeHours;
+    t.present += p.summary.present; t.half += p.summary.half; t.incomplete += p.summary.incomplete;
+    t.attended += p.summary.attended; t.absent += p.summary.absent; t.leave += p.leaveDays;
+    t.effectiveHours += p.summary.effectiveHours; t.overtimeHours += p.summary.overtimeHours;
     return t;
   }, { present: 0, half: 0, incomplete: 0, attended: 0, absent: 0, leave: 0, effectiveHours: 0, overtimeHours: 0, employees: perEmployee.length });
 
-  return { rc, empMap, byEmp, computed, perEmployee, totals, from, to, capTo };
+  return { rc, empMap, byEmp, computed, perEmployee, totals };
 }
 
 // GET /api/attendance/stats — aggregate Present/Half/Incomplete/Absent/Leave for
@@ -633,6 +609,7 @@ router.get('/weekly', requireRole('super_admin', 'hr_manager'), async (req, res,
     const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {
       select: 'hr_hremployeeid', optionalSelect: SHIFT_COLS, filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
     });
+    const activeCount = (emps || []).length;
 
     const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
       select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status', filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
@@ -644,23 +621,10 @@ router.get('/weekly', requireRole('super_admin', 'hr_manager'), async (req, res,
       dates.forEach(d => { if (d >= lf && d <= lt) leaveByDate[d].add(l._hr_hremployee_value); });
     });
 
-    // Same Absent rule as the rest: a working day, on/after the employee's first
-    // punch, with no punch and no approved leave. Employees with no attendance
-    // history yet (or whose first punch is later than the day) are never Absent.
-    const firstMap = await getFirstAttendanceMap();
     const data = dates.map((d, i) => {
       const isWorking = !attnCfg.weekOffDays.includes(new Date(`${d}T00:00:00Z`).getUTCDay()) && !attnCfg.holidays.includes(d);
       const present = presentByDate[d].size;
-      let absent = 0;
-      if (isWorking && d <= today) {
-        for (const e of (emps || [])) {
-          const fd = firstMap.get(e.hr_hremployeeid);
-          if (!fd || fd > d) continue;                              // no punch history on/before this day
-          if (presentByDate[d].has(e.hr_hremployeeid)) continue;    // punched → not absent
-          if (leaveByDate[d].has(e.hr_hremployeeid)) continue;      // approved leave → not absent
-          absent++;
-        }
-      }
+      const absent = (isWorking && d <= today) ? Math.max(0, activeCount - present - leaveByDate[d].size) : 0;
       return { day: dayNames[i], date: d, present, absent };
     });
     res.json({ data });
@@ -668,9 +632,9 @@ router.get('/weekly', requireRole('super_admin', 'hr_manager'), async (req, res,
 });
 
 // GET /api/attendance/absentees — the actual absent (employee, working-day) rows.
-// Since an absent day has no attendance record, these rows are SYNTHESIZED from
-// buildRangeSummary — the SAME per-day classification the /stats card counts. The
-// row count therefore equals the card's Absent total exactly (business rule #9).
+// Absent = active employee on a WORKING day (not week-off/holiday, up to today)
+// with NO punch and NO approved leave. Powers the "Absent" table view — since an
+// absent day has no attendance record, these rows are synthesized here.
 router.get('/absentees', requirePermission('attendance:read'), async (req, res, next) => {
   try {
     const { department, designation } = req.query;
@@ -678,22 +642,66 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
     const now = new Date();
     const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
+    const today = time.istDateStr();
 
-    const { perEmployee } = await buildRangeSummary(from, to, { targetId, department, designation });
+    // Working dates in range, only up to today (exclude week-off & holidays).
+    const capTo = to < today ? to : today;
+    const workDates = [];
+    if (capTo >= from) {
+      const end = new Date(`${capTo}T00:00:00Z`);
+      for (let d = new Date(`${from}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+        const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+        if (attnCfg.holidays.includes(ds)) continue;
+        if (attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
+        workDates.push(ds);
+      }
+    }
+    if (!workDates.length) return res.json({ data: [], count: 0 });
+
+    // (employee|date) that already have attendance activity.
+    const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
+    if (targetId) f.push(`_hr_hremployee_value eq '${targetId}'`);
+    const { data: recs } = await d365.getAll(ENTITY, {
+      select: 'hr_date,_hr_hremployee_value,hr_allpunches,hr_intime,hr_outtime,hr_punchcount',
+      filter: f.join(' and '), orderby: 'hr_date desc',
+    }, 10000);
+    const active = new Set();
+    (recs || []).forEach(r => {
+      if (punchesFromRecord(r).length > 0) active.add(`${r._hr_hremployee_value}|${String(r.hr_date).slice(0, 10)}`);
+    });
+
+    // Active employees in scope.
+    const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation', optionalSelect: SHIFT_COLS,
+      filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
+    });
+    let scope = emps || [];
+    if (targetId) scope = scope.filter(e => e.hr_hremployeeid === targetId);
+    if (department) scope = scope.filter(e => e.hr_department === department);
+    if (designation) scope = scope.filter(e => e.hr_designation === designation);
+
+    // Approved-leave (employee|date) set.
+    const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
+      select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
+      filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+    });
+    const onLeave = new Set();
+    (leaves || []).forEach(l => {
+      const lf = String(l.hr_fromdate || '').slice(0, 10);
+      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      for (const ds of workDates) if (ds >= lf && ds <= lt) onLeave.add(`${l._hr_hremployee_value}|${ds}`);
+    });
 
     const CAP = 5000;
     const rows = [];
-    outer:
-    for (const p of perEmployee) {
-      for (const ds of p.days.absentDates) {
-        rows.push({
-          employee: p.emp.hr_hremployee1 || 'Employee',
-          department: p.emp.hr_department || '',
-          designation: p.emp.hr_designation || '',
-          date: ds, status: 'absent',
-        });
-        if (rows.length >= CAP) break outer;
+    for (const e of scope) {
+      for (const ds of workDates) {
+        const key = `${e.hr_hremployeeid}|${ds}`;
+        if (active.has(key) || onLeave.has(key)) continue;
+        rows.push({ employee: e.hr_hremployee1 || 'Employee', department: e.hr_department || '', designation: e.hr_designation || '', date: ds, status: 'absent' });
+        if (rows.length >= CAP) break;
       }
+      if (rows.length >= CAP) break;
     }
     rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.employee.localeCompare(b.employee)));
     res.json({ data: rows, count: rows.length });
