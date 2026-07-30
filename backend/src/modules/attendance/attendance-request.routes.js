@@ -98,11 +98,14 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
       hr_name: `Missing Punch — ${req.user.name} — ${attendanceDate}`,
       hr_employeeid: req.user.id, hr_employeename: req.user.name, hr_employeeemail: req.user.email || '',
       hr_attendancedate: String(attendanceDate).slice(0, 10),
-      hr_punchtype: punchType,                 // 'lunch_out' | 'missing_check_out' | …  (Text)
-      hr_requestedtime: requestedTime,          // 'HH:MM' (Text)
+      hr_punchtype: String(punchType),          // 'lunch_out' | 'missing_check_out' | …  (Text)
+      hr_requestedtime: String(requestedTime),  // 'HH:MM' (Text)
       hr_reason: reason || '', hr_remarks: remarks || '', hr_attachmenturl: attachmentUrl || '',
       hr_status: 'pending',                     // Text
     };
+    // Guard: every hr_attendancerequests column is Edm.String — never let a numeric
+    // slip into the payload (that is the 0x80048d19 / "convert Int32 to String" 400).
+    for (const k of Object.keys(body)) if (typeof body[k] === 'number') body[k] = String(body[k]);
     console.log('[attendance-requests] create payload →', JSON.stringify(body));
 
     // Requirement #10: if the table is missing, PROVISION it automatically and
