@@ -47,6 +47,7 @@ export const attendanceRequestApi = {
   approve: (id, comment) => api.patch(`/attendance-requests/${id}/approve`, { comment }),
   reject: (id, comment) => api.patch(`/attendance-requests/${id}/reject`, { comment }),
   emailAction: (id, action, token, comment) => api.post(`/attendance-requests/${id}/email-action`, { action, token, comment }),
+  setup: () => api.post('/attendance-requests/setup'),   // super-admin: provision the Dataverse table
 };
 
 // ── Leave ────────────────────────────────────────────────────────

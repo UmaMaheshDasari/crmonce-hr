@@ -23,6 +23,7 @@ const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
 const requestNotify = require('../../services/request-notify.service');
 const { verifyApprovalToken } = require('../../services/approval-token');
+const { ensureAttendanceRequestTable } = require('../../services/provision-attendance-request');
 
 const REQ = d365.constructor.entities.attendanceRequest;
 const ATT = d365.constructor.entities.attendance;
@@ -66,6 +67,16 @@ const view = (r) => ({
   createdon: r.createdon,
 });
 const safeJson = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };
+
+// POST /api/attendance-requests/setup — create the Dataverse table on demand
+// (Super Admin). Returns { status: 'exists' | 'created' | 'unavailable', reason? }
+// so provisioning can be triggered + diagnosed without SSH/log access.
+router.post('/setup', requireRole('super_admin'), async (req, res, next) => {
+  try {
+    const result = await ensureAttendanceRequestTable(global.logger || console);
+    res.status(result.status === 'unavailable' ? 502 : 200).json(result);
+  } catch (err) { res.status(500).json({ status: 'error', reason: err.message }); }
+});
 
 // POST /api/attendance-requests — employee submits a Missing Punch request.
 router.post('/', requirePermission('attendance:read'), async (req, res, next) => {
