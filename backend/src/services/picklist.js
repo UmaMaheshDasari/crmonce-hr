@@ -44,18 +44,10 @@ const PICKLISTS = {
     'Paternity Leave': 123140004,
     'LOP': 123140005,
   },
-  // hr_attendancerequest (Missing Punch workflow)
-  hr_punchtype: {
-    missing_check_in: 123140000,
-    missing_check_out: 123140001,
-    lunch_out: 123140002,
-    lunch_in: 123140003,
-  },
-  hr_request_status: {
-    pending: 123140000,
-    approved: 123140001,
-    rejected: 123140002,
-  },
+  // NOTE: hr_attendancerequest.hr_punchtype and hr_status are TEXT columns in
+  // Dataverse (not Choice) — the backend stores/reads plain string codes
+  // ('lunch_out', 'pending', …). Do NOT add option-set maps for them or the create
+  // payload will send integers into Edm.String columns and Dataverse rejects it.
   // hr_hrjob
   hr_job_status: {
     open: 123140000,
