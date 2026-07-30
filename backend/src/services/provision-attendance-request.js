@@ -79,6 +79,23 @@ async function inspectColumns(log) {
   }
 }
 
+/** Create a single missing column by its logical name (e.g. 'hr_employeeemail').
+ *  Returns true if the column now exists, false if it can't be created. */
+async function addMissingColumn(logicalName, log) {
+  const col = COLUMNS.find(c => c.SchemaName.toLowerCase() === String(logicalName).toLowerCase());
+  if (!col) return false;   // unknown / primary / lookup — caller will drop it instead
+  try {
+    await post(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes`, col);
+    log?.info?.(`[provision] added missing column ${col.SchemaName}`);
+    return true;
+  } catch (e) {
+    const msg = e.response?.data?.error?.message || e.message;
+    if (isExists(msg)) return true;   // already present (race)
+    log?.warn?.(`[provision] could not add column ${col.SchemaName}: ${msg}`);
+    return false;
+  }
+}
+
 async function createSchema(log) {
   try {
     await post('EntityDefinitions', ENTITY_BODY);
@@ -125,4 +142,4 @@ async function ensureAttendanceRequestTable(log = console) {
   }
 }
 
-module.exports = { ensureAttendanceRequestTable, inspectColumns };
+module.exports = { ensureAttendanceRequestTable, inspectColumns, addMissingColumn };

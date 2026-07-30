@@ -23,7 +23,7 @@ const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
 const requestNotify = require('../../services/request-notify.service');
 const { verifyApprovalToken } = require('../../services/approval-token');
-const { ensureAttendanceRequestTable } = require('../../services/provision-attendance-request');
+const { ensureAttendanceRequestTable, addMissingColumn } = require('../../services/provision-attendance-request');
 
 const REQ = d365.constructor.entities.attendanceRequest;
 const ATT = d365.constructor.entities.attendance;
@@ -71,6 +71,41 @@ const view = (r) => ({
 });
 const safeJson = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };
 
+// Create the request, self-healing an incomplete Dataverse schema:
+//  - table missing entirely → provision it, then retry;
+//  - a column missing ("property 'X' does not exist") → add that column if we can,
+//    else drop it from the payload and retry.
+// Guarantees the insert succeeds against whatever schema actually exists.
+async function robustCreateRequest(body) {
+  const log = global.logger || console;
+  let payload = { ...body };
+  const triedAdd = new Set();
+  for (let i = 0; i < 25; i++) {
+    try { return await d365.create(REQ, payload); }
+    catch (err) {
+      const msg = err.message || '';
+      const missingProp = msg.match(/property '([^']+)' does not exist/i);
+      if (missingProp) {
+        const prop = missingProp[1];
+        if (!triedAdd.has(prop)) {                  // try to CREATE the column once…
+          triedAdd.add(prop);
+          if (await addMissingColumn(prop, log).catch(() => false)) continue;   // added → retry full payload
+        }
+        delete payload[prop];                       // …still missing / not creatable → omit it
+        log.warn?.(`[attendance-requests] column ${prop} unavailable — omitted from payload`);
+        continue;
+      }
+      if (notConfigured(err)) {                      // whole table missing → provision + retry
+        const prov = await ensureAttendanceRequestTable(log).catch(() => ({ status: 'unavailable' }));
+        if (prov.status === 'unavailable') { const e = new Error('Attendance Requests could not be provisioned automatically. The D365 app registration needs the System Customizer role. Details: ' + (prov.reason || 'permission denied')); e.status = 503; throw e; }
+        continue;
+      }
+      throw err;                                     // unrelated error → bubble up
+    }
+  }
+  const e = new Error('Could not create the request after schema repair'); e.status = 500; throw e;
+}
+
 // POST /api/attendance-requests/setup — create the Dataverse table on demand
 // (Super Admin). Returns { status: 'exists' | 'created' | 'unavailable', reason? }
 // so provisioning can be triggered + diagnosed without SSH/log access.
@@ -108,18 +143,9 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     for (const k of Object.keys(body)) if (typeof body[k] === 'number') body[k] = String(body[k]);
     console.log('[attendance-requests] create payload →', JSON.stringify(body));
 
-    // Requirement #10: if the table is missing, PROVISION it automatically and
-    // retry — never return "not configured" when we can self-heal.
-    let created;
-    try { created = await d365.create(REQ, body); }
-    catch (err) {
-      if (!notConfigured(err)) throw err;
-      const prov = await ensureAttendanceRequestTable(global.logger || console).catch(() => ({ status: 'unavailable' }));
-      if (prov.status === 'unavailable') {
-        return res.status(503).json({ error: 'Attendance Requests could not be provisioned automatically. The D365 app registration needs the System Customizer role. Details: ' + (prov.reason || 'permission denied') });
-      }
-      created = await d365.create(REQ, body);   // retry after provisioning
-    }
+    // Requirement #10: self-heal the schema (create table / add missing columns)
+    // and retry — never return "not configured" when we can fix it automatically.
+    const created = await robustCreateRequest(body);
 
     // Activity + emails (best-effort, never block the response).
     activity.record({ category: 'Attendance', type: 'correction_submitted', title: 'Missing Punch Request',
@@ -139,7 +165,7 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     })();
 
     res.status(201).json({ data: view(created) });
-  } catch (err) { next(err); }
+  } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // GET /api/attendance-requests — employees see their own; HR/Admin see all (?status=pending).
