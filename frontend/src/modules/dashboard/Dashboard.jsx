@@ -144,13 +144,6 @@ export default function Dashboard() {
     enabled: !isHR() && !!user?.id,
   });
 
-  // Leave balance / taken for employee
-  const { data: myLeaves, isLoading: myLeavesLoading } = useQuery({
-    queryKey: ['my-leaves', user?.id],
-    queryFn: () => leaveApi.list({ employeeId: user?.id }),
-    enabled: !isHR() && !!user?.id,
-  });
-
   // ── Derived values ─────────────────────────────────────────────
   const presentToday = todayAttendance?.data?.data?.length ?? todayAttendance?.data?.count ?? 0;
 
@@ -168,7 +161,6 @@ export default function Dashboard() {
     const total = (s.presentDays || 0) + (s.halfDays || 0) * 0.5;
     return Number.isInteger(total) ? total : total.toFixed(1);
   })();
-  const leaveDaysThisMonth = monthlySummary?.data?.leaveDays ?? 0;
 
   // Real weekly attendance (Present/Absent per weekday) for the chart.
   const { data: weeklyData } = useQuery({
@@ -194,15 +186,14 @@ export default function Dashboard() {
     enabled: !!user?.id,
   });
   const ls = leaveSummaryData?.data;
+  // Only unique, business-meaningful metrics (no Available/LOP/This Month/This Year).
   const leaveCards = ls ? [
-    { label: 'Available', value: ls.available, tone: 'text-emerald-700 bg-emerald-50' },
-    { label: 'Leave Taken', value: ls.taken, tone: 'text-indigo-700 bg-indigo-50' },
-    { label: 'Pending', value: ls.pendingCount, tone: 'text-amber-700 bg-amber-50' },
-    { label: 'Approved', value: ls.approvedCount, tone: 'text-emerald-700 bg-emerald-50' },
-    { label: 'Rejected', value: ls.rejectedCount, tone: 'text-red-700 bg-red-50' },
-    { label: 'LOP', value: ls.lop, tone: 'text-rose-700 bg-rose-50' },
-    { label: 'This Month', value: ls.currentMonth, tone: 'text-violet-700 bg-violet-50' },
-    { label: 'This Year', value: ls.currentYear, tone: 'text-slate-700 bg-slate-100' },
+    { label: 'Pending Approval', value: ls.pendingCount, sub: 'requests', tone: 'text-amber-700 bg-amber-50' },
+    { label: 'Approved Leaves', value: ls.approvedCount, sub: `${ls.approved} day${ls.approved === 1 ? '' : 's'}`, tone: 'text-emerald-700 bg-emerald-50' },
+    { label: 'Rejected Leaves', value: ls.rejectedCount, sub: 'requests', tone: 'text-red-700 bg-red-50' },
+    { label: 'Total Leave Taken', value: ls.taken, sub: 'days this year', tone: 'text-indigo-700 bg-indigo-50' },
+    { label: 'Casual Leave', value: ls.casual, sub: 'days taken', tone: 'text-sky-700 bg-sky-50' },
+    { label: 'Sick Leave', value: ls.sick, sub: 'days taken', tone: 'text-violet-700 bg-violet-50' },
   ] : [];
 
   return (
@@ -237,9 +228,8 @@ export default function Dashboard() {
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="xl:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-5">
+            {/* Leave metrics live in the Leave Summary below — no duplicates here. */}
             <KPICard label="Days Present" value={presentDays} icon={ClockIcon} color="text-green-600" sub="This month" loading={summaryLoading} trend="up" />
-            <KPICard label="Leaves Taken" value={leaveDaysThisMonth} icon={ClockIcon} color="text-amber-600" sub="This month" loading={summaryLoading} />
-            <KPICard label="Pending Requests" value={(() => { const records = myLeaves?.data?.data; if (!Array.isArray(records)) return 0; return records.filter(l => l.hr_status === 'pending' || l.hr_status === 0).length; })()} icon={ClockIcon} color="text-indigo-600" sub="Leave requests" loading={myLeavesLoading} />
             <KPICard label="Next Payday" value={(() => { const now = new Date(); const next = new Date(now.getFullYear(), now.getMonth() + 1, 1); return next.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); })()} icon={CurrencyDollarIcon} color="text-purple-600" sub="Salary date" />
           </div>
           <CheckInOut />
@@ -318,13 +308,14 @@ export default function Dashboard() {
         <div className="bg-white rounded-xl border border-gray-100 p-6">
           <div className="mb-5">
             <h2 className="text-base font-bold text-gray-900">Leave Summary</h2>
-            <p className="text-xs text-gray-400 mt-0.5">This year · entitlement {ls.entitlement} days</p>
+            <p className="text-xs text-gray-400 mt-0.5">This year</p>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {leaveCards.map(c => (
               <div key={c.label} className={`rounded-xl p-4 ${c.tone}`}>
-                <p className="text-2xl font-extrabold tabular-nums">{c.value ?? 0}</p>
-                <p className="text-xs font-semibold mt-0.5 opacity-80">{c.label}</p>
+                <p className="text-2xl font-extrabold tabular-nums leading-none">{c.value ?? 0}</p>
+                <p className="text-[13px] font-semibold mt-1.5 leading-tight">{c.label}</p>
+                <p className="text-[11px] mt-0.5 opacity-70">{c.sub}</p>
               </div>
             ))}
           </div>

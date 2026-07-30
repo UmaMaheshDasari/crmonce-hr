@@ -12,6 +12,8 @@ function leaveSummary(rows = [], { year, month, entitlement = 24 } = {}) {
   const pending = byStatus('pending');
   const rejected = byStatus('rejected');
   const lop = approved.filter(r => r.type === 'LOP');
+  const casual = approved.filter(r => r.type === 'Casual Leave');
+  const sick = approved.filter(r => r.type === 'Sick Leave');
   const thisMonth = approved.filter(r => String(r.fromDate || '').slice(0, 7) === ym);
   const takenYear = days(approved);
 
@@ -23,6 +25,8 @@ function leaveSummary(rows = [], { year, month, entitlement = 24 } = {}) {
     approved: takenYear, approvedCount: approved.length,
     rejected: days(rejected), rejectedCount: rejected.length,
     lop: days(lop),
+    casual: days(casual),
+    sick: days(sick),
     currentMonth: days(thisMonth),
     currentYear: takenYear,
   };

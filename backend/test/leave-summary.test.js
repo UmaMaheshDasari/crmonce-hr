@@ -24,6 +24,8 @@ test('leaveSummary: dynamic counts for the dashboard', () => {
   assert.strictEqual(s.lop, 1);            // LOP days
   assert.strictEqual(s.currentMonth, 3);   // approved July: 2 + 1
   assert.strictEqual(s.currentYear, 6);
+  assert.strictEqual(s.casual, 2);         // approved Casual Leave days
+  assert.strictEqual(s.sick, 3);           // approved Sick Leave days
 });
 
 test('leaveSummary: available never negative (over-taken)', () => {
