@@ -130,6 +130,14 @@ server.listen(PORT, () => {
   logger.info(`   Health check → http://localhost:${PORT}/health`);
   initJobs();
 
+  // Best-effort: create the Missing Punch table if it doesn't exist yet (idempotent).
+  // Skipped when it already exists or the app lacks customization rights (logged).
+  if (process.env.AUTO_PROVISION !== 'false') {
+    require('./services/provision-attendance-request')
+      .ensureAttendanceRequestTable(logger)
+      .catch(err => logger.warn(`[provision] attendance-request setup skipped: ${err.message}`));
+  }
+
   // Start ZKTeco push listener
   zkPushService.start((punch) => {
     // Broadcast real-time punch to frontend via Socket.io
