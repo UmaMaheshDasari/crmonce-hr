@@ -63,7 +63,7 @@ async function fromAttendance() {
 async function fromHolidays() {
   try {
     const { data } = await d365.getList(E.holiday, {
-      select: 'hr_holidayid,hr_name,hr_date,createdon', orderby: 'createdon desc', top: 6,
+      select: 'hr_holidayid,hr_name,hr_date,createdon', orderby: 'createdon desc', top: 3,
     });
     return (data || []).map(r => ({
       id: 'hol-' + r.hr_holidayid, category: 'Holiday', type: 'holiday_added',

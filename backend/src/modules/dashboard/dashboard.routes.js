@@ -7,6 +7,7 @@ const attnCfg = require('../../services/attendance.config');
 const { rangeCounts, effectiveWorking } = require('../../services/attendance-summary.util');
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
 const { earliestAttendanceDate } = require('../../services/attendance-range.util');
+const holidayService = require('../../services/holiday.service');
 const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
 
@@ -61,7 +62,7 @@ router.get('/summary', async (req, res, next) => {
     const approvedVal = toValue('hr_leave_status', 'approved');
 
     // ── Parallel Dataverse reads (one round trip each; the client makes ONE call) ──
-    const [emp, monthRecsRes, allLeavesRes, firstDate, openPrior, activityItems] = await Promise.all([
+    const [emp, monthRecsRes, allLeavesRes, firstDate, openPrior, activityItems, holidays] = await Promise.all([
       d365.getByIdOptional(EMP, empId, {
         select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
         optionalSelect: `${SHIFT_COLS},hr_joiningdate,hr_salary`,
@@ -78,6 +79,7 @@ router.get('/summary', async (req, res, next) => {
       firstAttendanceDate(empId),
       openPriorRecord(empId, today),
       activity.recent(6).catch(() => []),
+      holidayService.listHolidays().catch(() => []),
     ]);
 
     const shift = attnCfg.resolveEmployeeShift(emp.hr_shiftname, emp.hr_shiftstarttime, emp.hr_shiftendtime);
@@ -168,8 +170,14 @@ router.get('/summary', async (req, res, next) => {
       if (p < todayD) p = new Date(Date.UTC(Y, M, salaryDay));   // rolled to next month
       return `${p.getUTCFullYear()}-${pad2(p.getUTCMonth() + 1)}-${pad2(p.getUTCDate())}`;
     })();
-    const upcoming = (attnCfg.holidays || []).filter(d => d >= today).sort();
-    const upcomingHoliday = upcoming.length ? { date: upcoming[0], label: time.fmtDate(upcoming[0]) } : null;
+    // Next holiday (with its NAME) from the HR calendar, falling back to any env dates.
+    const upcomingList = [
+      ...holidays.filter(h => h.date >= today),
+      ...(attnCfg.holidays || []).filter(d => d >= today && !holidays.some(h => h.date === d)).map(d => ({ date: d, name: 'Holiday' })),
+    ].sort((a, b) => a.date.localeCompare(b.date));
+    const upcomingHoliday = upcomingList.length
+      ? { date: upcomingList[0].date, name: upcomingList[0].name, label: time.fmtDate(upcomingList[0].date) }
+      : null;
 
     res.json({
       employee: {

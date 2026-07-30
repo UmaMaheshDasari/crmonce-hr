@@ -125,7 +125,7 @@ export default function EmployeeDashboard() {
     { icon: CalendarDaysIcon, label: 'Pending Leave', value: lv.pendingCount, sub: `${lv.pendingDays} day${lv.pendingDays === 1 ? '' : 's'}`, iconBg: 'bg-orange-50', iconColor: 'text-orange-600' },
     { icon: DocumentCheckIcon, label: 'Approved Leave', value: lv.approvedCount, sub: `${lv.approvedDays} day${lv.approvedDays === 1 ? '' : 's'}`, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
     { icon: CurrencyDollarIcon, label: 'Next Payday', value: fmtDay(d.nextPayday), sub: 'salary date', iconBg: 'bg-violet-50', iconColor: 'text-violet-600' },
-    { icon: SunIcon, label: 'Upcoming Holiday', value: d.upcomingHoliday ? fmtDay(d.upcomingHoliday.date) : '—', sub: d.upcomingHoliday ? 'holiday' : 'none scheduled', iconBg: 'bg-sky-50', iconColor: 'text-sky-600' },
+    { icon: SunIcon, label: 'Upcoming Holiday', value: d.upcomingHoliday ? fmtDay(d.upcomingHoliday.date) : '—', sub: d.upcomingHoliday ? (d.upcomingHoliday.name || 'holiday') : 'none scheduled', iconBg: 'bg-sky-50', iconColor: 'text-sky-600' },
   ] : [];
 
   const leaveCards = lv ? [

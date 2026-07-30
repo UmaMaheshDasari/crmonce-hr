@@ -7,7 +7,6 @@ const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
-const activity = require('../../services/activity.service');
 const holidayService = require('../../services/holiday.service');
 const { ensureHolidayTable, addMissingColumn } = require('../../services/provision-holiday');
 
@@ -56,7 +55,8 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
 
     const created = await robustCreate({ hr_name: name, hr_date: date, hr_description: String(req.body.description || '') });
     await holidayService.refresh(true);   // calculations exclude it immediately
-    activity.record({ category: 'Holiday', type: 'holiday_added', title: 'Holiday Added', name, meta: date });
+    // NOTE: no activity.record here — the feed derives "Holiday Added" from the
+    // table (activity.service.fromHolidays), so recording here too would double it.
     res.status(201).json({ data: { id: created.hr_holidayid, name, date } });
   } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
