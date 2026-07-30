@@ -73,7 +73,7 @@ router.get('/summary', async (req, res, next) => {
       d365.getList(LEAVE, {
         select: 'hr_days,hr_fromdate,hr_todate,hr_status',
         filter: `_hr_hremployee_value eq '${empId}'`,
-      }).catch(() => ({ data: [] })),
+      }).catch((e) => { console.error(`[dashboard/summary] leave read FAILED for ${empId}: ${e.message}`); return { data: [] }; }),
       firstAttendanceDate(empId),
       openPriorRecord(empId, today),
       activity.recent(6).catch(() => []),
@@ -153,6 +153,13 @@ router.get('/summary', async (req, res, next) => {
     }));
     const leave = leaveSummary(leaveRows, { from: leaveFrom, to: leaveTo });
     leave.hasActivity = leaveRows.some(r => r.fromDate && r.fromDate >= leaveFrom && r.fromDate <= leaveTo);
+    // Diagnostic: reveals whether the query returned 0 rows (lookup/data issue) or
+    // rows exist but none fall in the period / match a counted status.
+    console.log(
+      `[dashboard/summary] employee=${empId} leaveRecords=${leaveRows.length} ` +
+      `period=${leaveFrom}..${leaveTo} statuses=[${leaveRows.map(r => `${r.status}@${r.fromDate}`).slice(0, 8).join(', ')}] ` +
+      `pending=${leave.pendingCount} approved=${leave.approvedCount} rejected=${leave.rejectedCount} hasActivity=${leave.hasActivity}`
+    );
 
     // ── Next payday & upcoming holiday ────────────────────────────────────────
     const salaryDay = parseInt(process.env.SALARY_DAY, 10) || 1;
