@@ -15,6 +15,11 @@ const esc = (v) => String(v ?? '—')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+// Long free text (e.g. Leave Reason): HTML-escaped (XSS-safe), with paragraphs,
+// line breaks and multiple spaces PRESERVED via white-space:pre-wrap. Never truncated.
+const longText = (v) =>
+  `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.6;color:#111827;font-size:14px;">${esc(v)}</div>`;
+
 const STATUS_COLORS = {
   approved:  { bg: '#ecfdf5', fg: '#065f46', dot: '#10b981' },
   rejected:  { bg: '#fef2f2', fg: '#991b1b', dot: '#ef4444' },
@@ -152,7 +157,9 @@ const greet = (name) => `<p style="margin:0 0 12px;font-size:15px;color:#111827;
 
 /** Rows shared by request emails (approver + CC). `rows` = type-specific [label,value]. */
 function requestRows(d) {
-  const base = (d.rows || []).map(([k, v]) => [k, esc(v)]);
+  // Reason (and any long free-text field) keeps its full formatting; everything
+  // else is a single escaped value.
+  const base = (d.rows || []).map(([k, v]) => [k, /reason|comment|remark|note/i.test(k) ? longText(v) : esc(v)]);
   base.push(['Current Status', statusBadge(d.status || 'L1 Pending')]);
   base.push(['Apply Time', esc(d.applyTime)]);
   return base;
@@ -237,5 +244,5 @@ module.exports = {
   statusBadge, button, profileCard, summaryCard, banner, layout,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder,
-  _esc: esc,
+  _esc: esc, _longText: longText,
 };

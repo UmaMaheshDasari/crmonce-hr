@@ -24,6 +24,30 @@ test('approver email: correct subject + both action buttons + no "Hello Super Ad
   assert.ok(!/Hello Super Admin/.test(html));
 });
 
+test('leave reason: full text, XSS-escaped, line breaks preserved (not truncated)', () => {
+  const longReason = 'I need leave because my passport verification is scheduled.\n\n- Bank work for education loan\n- Multiple   spaces kept\n<script>alert(1)</script>';
+  const { html } = T.newRequestApprover({
+    moduleTitle: 'Leave',
+    employee: { name: 'Vishwesh Boina', id: 'E1', department: 'Engineering', email: 'v@crmonce.com' },
+    rows: [['Leave Type', 'Casual Leave'], ['Reason', longReason]],
+    applyTime: '2026-07-06T10:00:00Z',
+    approverName: 'Uma Mahesh',
+    approveUrl: 'x', rejectUrl: 'y',
+  });
+  assert.ok(html.includes('passport verification'));                 // full reason present
+  assert.ok(html.includes('education loan'));                        // not truncated
+  assert.ok(html.includes('white-space:pre-wrap'));                  // line breaks/spaces preserved
+  assert.ok(html.includes('&lt;script&gt;'));                        // escaped
+  assert.ok(!html.includes('<script>alert(1)</script>'));            // XSS neutralized
+});
+
+test('longText escapes and preserves formatting', () => {
+  const out = T._longText('a & b\n<c>');
+  assert.ok(out.includes('a &amp; b'));
+  assert.ok(out.includes('&lt;c&gt;'));
+  assert.ok(out.includes('white-space:pre-wrap'));
+});
+
 test('acknowledgement: subject + greeting', () => {
   const { subject, html } = T.acknowledgement({ moduleTitle: 'Leave', employeeName: 'V', approverName: 'Uma' });
   assert.strictEqual(subject, 'Leave Request Submitted');

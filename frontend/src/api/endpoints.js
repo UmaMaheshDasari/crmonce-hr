@@ -47,6 +47,7 @@ export const leaveApi = {
   approveL1: (id, action, remarks) => api.patch(`/attendance/leave/${id}/l1`, { action, remarks }),
   approveL2: (id, action, remarks) => api.patch(`/attendance/leave/${id}/l2`, { action, remarks }),
   pendingApprovals: () => api.get('/attendance/leave/pending-approvals'),
+  summary: (params) => api.get('/attendance/leave/summary', { params }),
   approvers: () => api.get('/attendance/leave/approvers'),
   ccCandidates: () => api.get('/attendance/leave/cc-candidates'),
   // Approve/Reject from an email button (carries the signed link token).

@@ -8,6 +8,7 @@ const requestNotify = require('../../services/request-notify.service');
 const { verifyApprovalToken } = require('../../services/approval-token');
 const { resolveSender } = require('../../services/email/sender');
 const time = require('../../services/time.util');
+const { leaveSummary } = require('../../services/leave-summary.util');
 
 const ENTITY = d365.constructor.entities.leave;
 const EMP_ENTITY = d365.constructor.entities.employee;
@@ -118,6 +119,27 @@ router.get('/approvers', async (req, res, next) => {
         department: a.hr_department || '',
       })),
     });
+  } catch (err) { next(err); }
+});
+
+// GET /api/attendance/leave/summary — dynamic leave stats for the dashboard cards
+// (Available / Taken / Pending / Approved / Rejected / LOP / This Month / This Year).
+router.get('/summary', async (req, res, next) => {
+  try {
+    const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
+    const now = new Date();
+    const { data } = await d365.getList(ENTITY, {
+      select: 'hr_days,hr_fromdate,hr_status,hr_leavetype',
+      filter: `_hr_hremployee_value eq '${targetId}'`,
+    });
+    const rows = (data || []).map(l => ({
+      days: Number(l.hr_days) || 0,
+      fromDate: String(l.hr_fromdate || '').slice(0, 10),
+      status: toLabel('hr_leave_status', l.hr_status),
+      type: toLabel('hr_leave_type', l.hr_leavetype),
+    }));
+    const entitlement = Number(process.env.ANNUAL_LEAVE_ENTITLEMENT) || 24;
+    res.json(leaveSummary(rows, { year: now.getFullYear(), month: now.getMonth() + 1, entitlement }));
   } catch (err) { next(err); }
 });
 

@@ -485,11 +485,14 @@ function ApplyLeaveModal({ onClose }) {
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">Reason</label>
             <textarea
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 placeholder-gray-400 h-20 resize-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
-              placeholder="Brief reason for leave..."
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 placeholder-gray-400 min-h-[7rem] resize-y focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
+              placeholder="Explain your reason — you can use multiple lines, paragraphs and bullet points…"
+              maxLength={2000}
+              rows={5}
               value={form.reason}
-              onChange={e => setForm(p => ({ ...p, reason: e.target.value }))}
+              onChange={e => setForm(p => ({ ...p, reason: e.target.value.slice(0, 2000) }))}
             />
+            <p className="text-xs text-gray-400 mt-1 text-right tabular-nums">{form.reason.length}/2000</p>
           </div>
 
           {/* Approver (required) */}
@@ -713,7 +716,7 @@ export default function LeavePage() {
 
                       {/* Reason */}
                       {leave.hr_reason && (
-                        <p className="text-sm text-gray-400 mt-2 italic leading-relaxed">"{leave.hr_reason}"</p>
+                        <p className="text-sm text-gray-400 mt-2 italic leading-relaxed whitespace-pre-wrap break-words">"{leave.hr_reason}"</p>
                       )}
 
                       {/* Approval Timeline Stepper */}

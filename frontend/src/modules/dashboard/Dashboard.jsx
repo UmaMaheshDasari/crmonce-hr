@@ -187,6 +187,24 @@ export default function Dashboard() {
   });
   const activityItems = activityData?.data?.data ?? [];
 
+  // Leave summary (dynamic) — Available / Taken / Pending / Approved / Rejected / LOP …
+  const { data: leaveSummaryData } = useQuery({
+    queryKey: ['leave-summary', user?.id],
+    queryFn: () => leaveApi.summary(),
+    enabled: !!user?.id,
+  });
+  const ls = leaveSummaryData?.data;
+  const leaveCards = ls ? [
+    { label: 'Available', value: ls.available, tone: 'text-emerald-700 bg-emerald-50' },
+    { label: 'Leave Taken', value: ls.taken, tone: 'text-indigo-700 bg-indigo-50' },
+    { label: 'Pending', value: ls.pendingCount, tone: 'text-amber-700 bg-amber-50' },
+    { label: 'Approved', value: ls.approvedCount, tone: 'text-emerald-700 bg-emerald-50' },
+    { label: 'Rejected', value: ls.rejectedCount, tone: 'text-red-700 bg-red-50' },
+    { label: 'LOP', value: ls.lop, tone: 'text-rose-700 bg-rose-50' },
+    { label: 'This Month', value: ls.currentMonth, tone: 'text-violet-700 bg-violet-50' },
+    { label: 'This Year', value: ls.currentYear, tone: 'text-slate-700 bg-slate-100' },
+  ] : [];
+
   return (
     <div className="space-y-8">
       {/* Welcome Banner */}
@@ -291,6 +309,24 @@ export default function Dashboard() {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Summary */}
+      {leaveCards.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-100 p-6">
+          <div className="mb-5">
+            <h2 className="text-base font-bold text-gray-900">Leave Summary</h2>
+            <p className="text-xs text-gray-400 mt-0.5">This year · entitlement {ls.entitlement} days</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {leaveCards.map(c => (
+              <div key={c.label} className={`rounded-xl p-4 ${c.tone}`}>
+                <p className="text-2xl font-extrabold tabular-nums">{c.value ?? 0}</p>
+                <p className="text-xs font-semibold mt-0.5 opacity-80">{c.label}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}
