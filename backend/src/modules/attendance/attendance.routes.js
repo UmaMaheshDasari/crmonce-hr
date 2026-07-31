@@ -752,9 +752,9 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
 });
 
 // GET /api/attendance/export — .xlsx with THREE sheets:
-//   1) Attendance Details  — daily attendance (unchanged)
-//   2) Absent Employees    — synthesized absent (employee, working-day) rows (unchanged)
-//   3) Monthly Attendance Summary — one row/employee: Employee ID | Employee Name |
+//   1) Employee Attendance Summary — per-employee summary (original code, restored)
+//   2) Daily Attendance            — daily rows (original code, restored)
+//   3) Monthly Attendance Summary  — one row/employee: Employee ID | Employee Name |
 //      Calendar Days | Working Days | Present Days | Absent Days | Salary Working Days.
 //      CRMONCE ADMIN and UmaMahesh are excluded from sheet 3 only.
 // Reuses buildRangeSummary (no change to attendance/leave calculation).
@@ -768,10 +768,36 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
 
-    const { rc, computed, perEmployee, byEmp } = await buildRangeSummary(from, to, { targetId, department, designation });
+    const { rc, computed, perEmployee } = await buildRangeSummary(from, to, { targetId, department, designation });
+
     const wb = new ExcelJS.Workbook();
 
-    // ── Sheet 1: Attendance Details (daily) ──────────────────────────────────
+    // ── Sheet 1 (default): Employee Attendance Summary ── (restored, original code)
+    const sum = wb.addWorksheet('Employee Attendance Summary');
+    sum.columns = [
+      { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
+      { header: 'Designation', key: 'desig', width: 18 }, { header: 'Total Calendar Days', key: 'cal', width: 17 },
+      { header: 'Working Days', key: 'wd', width: 12 }, { header: 'Present', key: 'present', width: 9 },
+      { header: 'Half Day', key: 'half', width: 9 }, { header: 'Absent', key: 'absent', width: 9 },
+      { header: 'Approved Leave', key: 'leave', width: 14 }, { header: 'Office Holidays', key: 'hol', width: 14 },
+      { header: 'Weekly Off', key: 'woff', width: 11 }, { header: 'Incomplete Days', key: 'incomplete', width: 13 },
+      { header: 'Missing Punch Details', key: 'missing', width: 34 },
+      { header: 'Total Effective Hours', key: 'eff', width: 18 }, { header: 'Total Break Hours', key: 'brk', width: 16 },
+      { header: 'Total Overtime', key: 'ot', width: 14 },
+    ];
+    sum.getRow(1).font = { bold: true };
+    sum.getColumn('missing').alignment = { wrapText: true, vertical: 'top' };
+    for (const { emp: e, leaveDays, working, summary: s } of perEmployee) {
+      sum.addRow({
+        emp: e.hr_hremployee1 || 'Employee', dept: e.hr_department || '', desig: e.hr_designation || '',
+        cal: rc.calendar, wd: working, present: s.present, half: s.half, absent: s.absent,
+        leave: leaveDays, hol: rc.holidays, woff: rc.weeklyOff, incomplete: s.incomplete,
+        missing: s.missingPunchDetails.length ? s.missingPunchDetails.join('\n') : 'None',
+        eff: fmtDur(s.effectiveHours), brk: fmtDur(s.breakHours), ot: fmtDur(s.overtimeHours),
+      });
+    }
+
+    // ── Sheet 2: Daily Attendance (filtered by status / source / view / dept / desig) ── (restored, original code)
     const matchView = (c) => {
       switch (view) {
         case 'present': return c.status === 'present';
@@ -787,7 +813,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
         default: return true;
       }
     };
-    const detail = wb.addWorksheet('Attendance Details');
+    const detail = wb.addWorksheet('Daily Attendance');
     detail.columns = [
       { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
       { header: 'Designation', key: 'desig', width: 18 }, { header: 'Date', key: 'date', width: 12 },
@@ -799,7 +825,6 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       { header: 'Source', key: 'source', width: 12 }, { header: 'Remarks', key: 'remarks', width: 20 },
     ];
     detail.getRow(1).font = { bold: true };
-    detail.views = [{ state: 'frozen', ySplit: 1 }];
     for (const { r, c, emp } of computed) {
       if (department && emp.hr_department !== department) continue;
       if (designation && emp.hr_designation !== designation) continue;
@@ -819,57 +844,9 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       });
     }
 
-    // ── Sheet 2: Absent Employees (synthesized absent working-day rows) ───────
+    // Date bounds for the Monthly Summary (Sheet 3) — future days excluded from Absent.
     const today = time.istDateStr();
     const capTo = to < today ? to : today;
-    const { data: leaveRecs } = await d365.getList(d365.constructor.entities.leave, {
-      select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
-      filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
-    });
-    const onLeave = new Set();
-    (leaveRecs || []).forEach(l => {
-      const lf = String(l.hr_fromdate || '').slice(0, 10);
-      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
-      if (!lf) return;
-      const s = lf < from ? from : lf, e = lt > capTo ? capTo : lt;
-      if (e < s) return;
-      const end = new Date(`${e}T00:00:00Z`);
-      for (let d = new Date(`${s}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-        onLeave.add(`${l._hr_hremployee_value}|${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`);
-      }
-    });
-    const workingDatesFrom = (start) => {
-      const out = [];
-      if (!start || capTo < start) return out;
-      const end = new Date(`${capTo}T00:00:00Z`);
-      for (let d = new Date(`${start}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-        const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-        if (attnCfg.holidays.includes(ds)) continue;
-        if (attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
-        out.push(ds);
-      }
-      return out;
-    };
-    const absentSheet = wb.addWorksheet('Absent Employees');
-    absentSheet.columns = [
-      { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
-      { header: 'Designation', key: 'desig', width: 18 }, { header: 'Date', key: 'date', width: 12 },
-    ];
-    absentSheet.getRow(1).font = { bold: true };
-    absentSheet.views = [{ state: 'frozen', ySplit: 1 }];
-    const absentRows = [];
-    for (const p of perEmployee) {
-      if (!p.firstDate) continue;                                    // no history → never absent
-      const start = p.firstDate > from ? p.firstDate : from;
-      const punchDates = new Set((byEmp[p.emp.hr_hremployeeid] || []).map(s => String(s.date).slice(0, 10)));
-      for (const ds of workingDatesFrom(start)) {
-        if (punchDates.has(ds)) continue;
-        if (onLeave.has(`${p.emp.hr_hremployeeid}|${ds}`)) continue;
-        absentRows.push({ emp: p.emp.hr_hremployee1 || 'Employee', dept: p.emp.hr_department || '', desig: p.emp.hr_designation || '', date: ds });
-      }
-    }
-    absentRows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.emp.localeCompare(b.emp)));
-    absentRows.forEach(r => absentSheet.addRow(r));
 
     // ── Sheet 3: Monthly Attendance Summary ──────────────────────────────────
     // Excluded admin/test accounts (never in the monthly summary).
@@ -924,7 +901,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     });
     ws.views = [{ state: 'frozen', ySplit: 1 }];
 
-    wb.views = [{ activeTab: 0 }];   // open on Attendance Details
+    wb.views = [{ activeTab: 0 }];   // open on Employee Attendance Summary
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename=Attendance_${from}_to_${to}.xlsx`);
     await wb.xlsx.write(res);
