@@ -442,7 +442,7 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
     }
 
     const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-      select: 'hr_days,hr_fromdate,hr_status',
+      select: 'hr_days,hr_fromdate,hr_todate,hr_status',
       filter: `_hr_hremployee_value eq '${targetId}' and hr_status eq ${toValue('hr_leave_status', 'approved')}`,
     });
     // Absent only counts working days that have already occurred (up to today).
@@ -452,7 +452,7 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
         const lf = String(l.hr_fromdate || '').slice(0, 10);
         return lf.slice(0, 7) === `${y}-${mm}` && lf <= today;   // exclude future leave
       })
-      .reduce((s, l) => s + (l.hr_days || 0), 0);
+      .reduce((s, l) => s + resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate), 0);   // blank hr_days → span
 
     const workingDays = countWorkingDays(y, m);                  // full month (display)
     const monthEnd = `${y}-${mm}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
@@ -507,6 +507,7 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
 
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
 const { rangeCounts, summarizeEmployee, effectiveWorking } = require('../../services/attendance-summary.util');
+const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
   const v = Number(h);
@@ -544,7 +545,7 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const capTo = to < today ? to : today;                                  // min(to, today)
 
   const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-    select: 'hr_days,hr_fromdate,_hr_hremployee_value,hr_status',
+    select: 'hr_days,hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
     filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
   });
   const leaveByEmp = {};
@@ -552,7 +553,9 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     const d = String(l.hr_fromdate || '').slice(0, 10);
     if (d < from || d > to) return;
     if (d > today) return;                                                // future leave doesn't offset elapsed Absent
-    leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + (l.hr_days || 0);
+    // resolveDays: use hr_days when set, else the inclusive from→to span, so a
+    // blank hr_days never makes an approved leave count as 0 days.
+    leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate);
   });
 
   const rc = rangeCounts(from, to);
