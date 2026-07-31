@@ -60,13 +60,14 @@ test('Approved leave is not counted as Absent (Working − Present − Leave)', 
   assert.strictEqual(s.absent, 2);      // 26 − 20 − 4
 });
 
-// Salary Working Days = Working − MAX(Leave − 1, 0). First leave is FREE.
-const salaryWorkingDays = (working, leave) => working - Math.max((leave || 0) - 1, 0);
+// Salary Working Days = MAX(0, Working − MAX(Absent − 1, 0)). First absent is FREE.
+const salaryWorkingDays = (working, absent) => Math.max(0, working - Math.max((absent || 0) - 1, 0));
 
-test('Salary Working Days: first leave is free, 2nd+ reduce', () => {
-  assert.strictEqual(salaryWorkingDays(26, 0), 26);   // 0 leave → full
-  assert.strictEqual(salaryWorkingDays(26, 1), 26);   // 1 leave → still full (free)
-  assert.strictEqual(salaryWorkingDays(26, 2), 25);   // 2 leave → −1
-  assert.strictEqual(salaryWorkingDays(26, 3), 24);   // 3 leave → −2
-  assert.strictEqual(salaryWorkingDays(26, 5), 22);   // 5 leave → −4
+test('Salary Working Days: first absent free, 2nd+ reduce, never negative', () => {
+  assert.strictEqual(salaryWorkingDays(23, 0), 23);   // 0 absent → full
+  assert.strictEqual(salaryWorkingDays(23, 1), 23);   // 1 absent → still full (free)
+  assert.strictEqual(salaryWorkingDays(23, 2), 22);   // 2 absent → −1
+  assert.strictEqual(salaryWorkingDays(23, 3), 21);   // 3 absent → −2
+  assert.strictEqual(salaryWorkingDays(23, 5), 19);   // 5 absent → −4
+  assert.strictEqual(salaryWorkingDays(23, 30), 0);   // clamped, never negative
 });

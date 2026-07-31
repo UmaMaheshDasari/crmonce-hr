@@ -890,9 +890,10 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     const summaryRows = perEmployee
       .filter(p => !isExcluded(p.emp))
       .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
-    for (const { emp: e, leaveDays, summary: s } of summaryRows) {
-      // First leave is FREE: Salary Working Days = Working − MAX(Leave − 1, 0).
-      const salary = rc.working - Math.max((leaveDays || 0) - 1, 0);
+    for (const { emp: e, summary: s } of summaryRows) {
+      // First absent day is FREE: from the 2nd absent onward, each reduces one
+      // Salary Working Day. Never negative. (Based on Absent Days, NOT leave.)
+      const salary = Math.max(0, rc.working - Math.max((s.absent || 0) - 1, 0));
       ws.addRow({
         id: e.hr_etimecode || e.hr_hremployeeid || '',
         name: e.hr_hremployee1 || 'Employee',
