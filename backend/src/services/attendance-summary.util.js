@@ -64,6 +64,36 @@ function summarizeEmployee(sessions = [], { working = 0, leaveDays = 0 } = {}) {
 }
 
 /**
+ * Monthly Attendance Summary rows — ONE row per employee, exactly the six columns
+ * the HR summary export needs. Pure: no I/O and no Dataverse field names, so the
+ * caller resolves identity and this stays unit-testable.
+ *
+ * Present Days = days with ANY attendance activity (`attended`). A day counts
+ * ONCE whether it was Present, Late, Early Exit, Overtime, Incomplete or Half
+ * Day — Late/Early Exit/Overtime are flags ON a punched day rather than separate
+ * statuses, so `attended` already collapses all six into a single day. This is
+ * why there is no separate Half Day or Incomplete column.
+ *
+ * Absent Days = summarizeEmployee()'s `absent`, i.e.
+ *   Working − Attended − Approved Leave
+ * where Working already excludes weekends, office holidays, dates before the
+ * employee's first attendance, and future dates (the caller caps `to` at today).
+ *
+ * @param entries [{ employeeId, employeeName, working, summary }]
+ * @param calendar total calendar days in the selected range
+ */
+function monthlySummaryRows(entries = [], { calendar = 0 } = {}) {
+  return entries.map((e) => ({
+    employeeId: e.employeeId || '',
+    employeeName: e.employeeName || 'Employee',
+    calendarDays: calendar,
+    workingDays: e.working || 0,
+    presentDays: (e.summary && e.summary.attended) || 0,
+    absentDays: (e.summary && e.summary.absent) || 0,
+  }));
+}
+
+/**
  * Working days for an employee within [from, capTo], starting at their FIRST
  * attendance date — never before their first punch. Returns 0 when the employee
  * has no attendance history (firstDate falsy) or their first date is after capTo.
