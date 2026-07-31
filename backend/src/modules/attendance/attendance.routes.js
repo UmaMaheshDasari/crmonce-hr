@@ -316,18 +316,17 @@ router.post('/checkout', requirePermission('attendance:read'), async (req, res, 
   } catch (err) { next(err); }
 });
 
-// POST /api/attendance/correction — resolve a forgot-checkout (actual checkout + reason)
-router.post('/correction', requirePermission('attendance:read'), async (req, res, next) => {
+// POST /api/attendance/correction — resolve a forgot-checkout (actual checkout + reason).
+// EDITING attendance is HR / Super Admin only. Employees must NOT edit attendance
+// directly — they submit a Missing Punch request (/attendance-requests) that HR
+// approves. This endpoint is the HR override path.
+router.post('/correction', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
     const { attendanceId, actualCheckout, reason } = req.body;
     if (!attendanceId || !actualCheckout) {
       return res.status(400).json({ error: 'attendanceId and actualCheckout are required' });
     }
     const rec = await d365.getById(ENTITY, attendanceId, { select: PUNCH_SELECT });
-    const isHR = ['super_admin', 'hr_manager'].includes(req.user.role);
-    if (rec._hr_hremployee_value !== req.user.id && !isHR) {
-      return res.status(403).json({ error: 'Not your attendance record' });
-    }
     const punches = punchesFromRecord(rec);
     if (punches.length % 2 === 0) {
       return res.status(400).json({ error: 'This attendance is already complete' });
