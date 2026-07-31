@@ -887,19 +887,28 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       { header: 'Absent Days', key: 'absent', width: 13 },
       { header: 'Salary Working Days', key: 'salary', width: 18 },
     ];
+    // Recompute Sheet 3 from scratch — do NOT reuse the stored summary.absent.
+    // Working Days for the Absent calc excludes FUTURE days (rangeCounts already
+    // excludes Sundays + holidays); for a completed month this equals the full
+    // Working Days column, so Present + Absent + Leave reconcile exactly.
+    const workingForAbsent = rangeCounts(from, capTo).working;   // capTo = min(to, today)
     const summaryRows = perEmployee
       .filter(p => !isExcluded(p.emp))
       .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
-    for (const { emp: e, summary: s } of summaryRows) {
-      // First absent day is FREE: from the 2nd absent onward, each reduces one
-      // Salary Working Day. Never negative. (Based on Absent Days, NOT leave.)
-      const salary = Math.max(0, rc.working - Math.max((s.absent || 0) - 1, 0));
+    console.log(`[monthly-summary] ${from}..${to}  Calendar=${rc.calendar} Working=${rc.working} WorkingElapsed=${workingForAbsent}`);
+    for (const { emp: e, leaveDays, summary: s } of summaryRows) {
+      const present = s.attended;               // Present/Late/Early/OT/Incomplete/Half → ONE present
+      const leave = leaveDays || 0;             // approved leave days (already resolveDays-counted)
+      // Absent = Working − Present − Leave (future excluded, never negative).
+      const absent = Math.max(0, workingForAbsent - present - leave);
+      // First absent day is FREE; 2nd+ each reduce one Salary Working Day.
+      const salary = Math.max(0, rc.working - Math.max(absent - 1, 0));
+      console.log(`[monthly-summary] ${e.hr_hremployee1 || 'Employee'} | Working=${rc.working} Present=${present} Leave=${leave} Absent=${absent} Salary=${salary}`);
       ws.addRow({
         id: e.hr_etimecode || e.hr_hremployeeid || '',
         name: e.hr_hremployee1 || 'Employee',
         cal: rc.calendar, wd: rc.working,
-        present: s.attended,     // Present/Late/Early/OT/Incomplete/Half Day → one Present
-        absent: s.absent, salary,
+        present, absent, salary,
       });
     }
     ws.columns.forEach(col => {
