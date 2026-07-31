@@ -748,16 +748,16 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
   } catch (err) { next(err); }
 });
 
-// GET /api/attendance/export — .xlsx Monthly Attendance Summary (ONE row per employee).
-// Columns: Employee ID | Employee Name | Calendar Days | Working Days | Present Days | Absent Days.
-//   Working Days = Calendar − week-offs − holidays (rangeCounts: weekend logic + Holiday table).
-//   Present Days = any day with attendance activity (Present/Late/Early/Overtime/Incomplete/
-//                  Half Day all count as ONE present) = attended.
-//   Absent Days  = Working − Present − Approved Leave (weekends/holidays/future/leave excluded).
-// Reuses buildRangeSummary — identical to the /stats cards.
+// GET /api/attendance/export — .xlsx with THREE sheets:
+//   1) Attendance Details  — daily attendance (unchanged)
+//   2) Absent Employees    — synthesized absent (employee, working-day) rows (unchanged)
+//   3) Monthly Attendance Summary — one row/employee: Employee ID | Employee Name |
+//      Calendar Days | Working Days | Present Days | Absent Days | Salary Working Days.
+//      CRMONCE ADMIN and UmaMahesh are excluded from sheet 3 only.
+// Reuses buildRangeSummary (no change to attendance/leave calculation).
 router.get('/export', requirePermission('attendance:read'), async (req, res, next) => {
   try {
-    const { employeeId, department, designation } = req.query;
+    const { employeeId, status, department, designation, source, view } = req.query;
     const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
 
     // Date range (defaults to the current calendar month).
@@ -765,9 +765,115 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
 
-    const { rc, perEmployee } = await buildRangeSummary(from, to, { targetId, department, designation });
-
+    const { rc, computed, perEmployee, byEmp } = await buildRangeSummary(from, to, { targetId, department, designation });
     const wb = new ExcelJS.Workbook();
+
+    // ── Sheet 1: Attendance Details (daily) ──────────────────────────────────
+    const matchView = (c) => {
+      switch (view) {
+        case 'present': return c.status === 'present';
+        case 'absent': return c.status === 'absent';
+        case 'half': return c.status === 'half_day';
+        case 'incomplete': return c.status === 'incomplete';
+        case 'late': return c.lateArrivalMin > 0;
+        case 'early': return c.earlyDepartureMin > 0;
+        case 'overtime': return c.overtimeHours > 0;
+        case 'less': return c.effectiveHours < c.requiredHours;
+        case 'more': return c.effectiveHours > c.requiredHours;
+        case 'working': return c.count > 0 && c.effectiveHours > 0;
+        default: return true;
+      }
+    };
+    const detail = wb.addWorksheet('Attendance Details');
+    detail.columns = [
+      { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
+      { header: 'Designation', key: 'desig', width: 18 }, { header: 'Date', key: 'date', width: 12 },
+      { header: 'First Punch', key: 'first', width: 11 }, { header: 'Last Punch', key: 'last', width: 11 },
+      { header: 'Punch Count', key: 'pc', width: 11 }, { header: 'Effective Hours', key: 'eff', width: 14 },
+      { header: 'Break', key: 'brk', width: 10 }, { header: 'Late', key: 'late', width: 10 },
+      { header: 'Early Exit', key: 'early', width: 11 }, { header: 'Overtime', key: 'ot', width: 11 },
+      { header: 'Status', key: 'status', width: 12 }, { header: 'Attendance Issue', key: 'issue', width: 16 },
+      { header: 'Source', key: 'source', width: 12 }, { header: 'Remarks', key: 'remarks', width: 20 },
+    ];
+    detail.getRow(1).font = { bold: true };
+    detail.views = [{ state: 'frozen', ySplit: 1 }];
+    for (const { r, c, emp } of computed) {
+      if (department && emp.hr_department !== department) continue;
+      if (designation && emp.hr_designation !== designation) continue;
+      if (status && c.status !== status) continue;
+      if (source && r.hr_source !== toValue('hr_attendance_source', source)) continue;
+      if (!matchView(c)) continue;
+      detail.addRow({
+        emp: emp.hr_hremployee1 || r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee',
+        dept: emp.hr_department || '', desig: emp.hr_designation || '',
+        date: String(r.hr_date || '').slice(0, 10),
+        first: c.firstPunch || '', last: c.lastPunch || '', pc: c.count,
+        eff: fmtDur(c.effectiveHours), brk: fmtDur(c.breakHours),
+        late: fmtMin(c.lateArrivalMin), early: fmtMin(c.earlyDepartureMin), ot: fmtDur(c.overtimeHours),
+        status: c.status,
+        issue: r.hr_source === toValue('hr_attendance_source', 'manual_correction') ? 'Manual Correction' : (c.attendanceIssue || 'Normal'),
+        source: toLabel('hr_attendance_source', r.hr_source), remarks: '',
+      });
+    }
+
+    // ── Sheet 2: Absent Employees (synthesized absent working-day rows) ───────
+    const today = time.istDateStr();
+    const capTo = to < today ? to : today;
+    const { data: leaveRecs } = await d365.getList(d365.constructor.entities.leave, {
+      select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
+      filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+    });
+    const onLeave = new Set();
+    (leaveRecs || []).forEach(l => {
+      const lf = String(l.hr_fromdate || '').slice(0, 10);
+      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      if (!lf) return;
+      const s = lf < from ? from : lf, e = lt > capTo ? capTo : lt;
+      if (e < s) return;
+      const end = new Date(`${e}T00:00:00Z`);
+      for (let d = new Date(`${s}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+        onLeave.add(`${l._hr_hremployee_value}|${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`);
+      }
+    });
+    const workingDatesFrom = (start) => {
+      const out = [];
+      if (!start || capTo < start) return out;
+      const end = new Date(`${capTo}T00:00:00Z`);
+      for (let d = new Date(`${start}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+        const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+        if (attnCfg.holidays.includes(ds)) continue;
+        if (attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
+        out.push(ds);
+      }
+      return out;
+    };
+    const absentSheet = wb.addWorksheet('Absent Employees');
+    absentSheet.columns = [
+      { header: 'Employee', key: 'emp', width: 22 }, { header: 'Department', key: 'dept', width: 16 },
+      { header: 'Designation', key: 'desig', width: 18 }, { header: 'Date', key: 'date', width: 12 },
+    ];
+    absentSheet.getRow(1).font = { bold: true };
+    absentSheet.views = [{ state: 'frozen', ySplit: 1 }];
+    const absentRows = [];
+    for (const p of perEmployee) {
+      if (!p.firstDate) continue;                                    // no history → never absent
+      const start = p.firstDate > from ? p.firstDate : from;
+      const punchDates = new Set((byEmp[p.emp.hr_hremployeeid] || []).map(s => String(s.date).slice(0, 10)));
+      for (const ds of workingDatesFrom(start)) {
+        if (punchDates.has(ds)) continue;
+        if (onLeave.has(`${p.emp.hr_hremployeeid}|${ds}`)) continue;
+        absentRows.push({ emp: p.emp.hr_hremployee1 || 'Employee', dept: p.emp.hr_department || '', desig: p.emp.hr_designation || '', date: ds });
+      }
+    }
+    absentRows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.emp.localeCompare(b.emp)));
+    absentRows.forEach(r => absentSheet.addRow(r));
+
+    // ── Sheet 3: Monthly Attendance Summary ──────────────────────────────────
+    // Excluded admin/test accounts (never in the monthly summary).
+    const norm = (n) => String(n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const EXCLUDE = ['crmonceadmin', 'umamahesh'];
+    const isExcluded = (e) => EXCLUDE.some(x => norm(e.hr_hremployee1).includes(x));
+
     const ws = wb.addWorksheet('Monthly Attendance Summary');
     ws.columns = [
       { header: 'Employee ID', key: 'id', width: 16 },
@@ -776,40 +882,38 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       { header: 'Working Days', key: 'wd', width: 14 },
       { header: 'Present Days', key: 'present', width: 13 },
       { header: 'Absent Days', key: 'absent', width: 13 },
+      { header: 'Salary Working Days', key: 'salary', width: 18 },
     ];
-
-    // One row per employee (sorted by name). Present = attended; Absent = the
-    // shared buildRangeSummary figure (Working − Present − Leave, future excluded).
-    const sorted = [...perEmployee].sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
-    for (const { emp: e, summary: s } of sorted) {
+    const summaryRows = perEmployee
+      .filter(p => !isExcluded(p.emp))
+      .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
+    for (const { emp: e, leaveDays, summary: s } of summaryRows) {
+      // First leave is FREE: Salary Working Days = Working − MAX(Leave − 1, 0).
+      const salary = rc.working - Math.max((leaveDays || 0) - 1, 0);
       ws.addRow({
         id: e.hr_etimecode || e.hr_hremployeeid || '',
         name: e.hr_hremployee1 || 'Employee',
-        cal: rc.calendar,
-        wd: rc.working,
+        cal: rc.calendar, wd: rc.working,
         present: s.attended,     // Present/Late/Early/OT/Incomplete/Half Day → one Present
-        absent: s.absent,
+        absent: s.absent, salary,
       });
     }
-
-    // Auto-fit each column to its widest cell.
     ws.columns.forEach(col => {
       let max = String(col.header || '').length;
       col.eachCell({ includeEmpty: false }, (cell) => { max = Math.max(max, String(cell.value ?? '').length); });
       col.width = Math.min(Math.max(max + 2, 12), 40);
     });
-    // Center-align the numeric columns.
-    ['cal', 'wd', 'present', 'absent'].forEach(k => { ws.getColumn(k).alignment = { horizontal: 'center' }; });
-    // Header row LAST: bold + light-blue fill + centered (wins over column alignment).
+    ['cal', 'wd', 'present', 'absent', 'salary'].forEach(k => { ws.getColumn(k).alignment = { horizontal: 'center' }; });
     ws.getRow(1).eachCell((cell) => {
       cell.font = { bold: true };
       cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E8FB' } };  // light blue
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E8FB' } };
     });
-    ws.views = [{ state: 'frozen', ySplit: 1 }];   // freeze the header row
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
 
+    wb.views = [{ activeTab: 0 }];   // open on Attendance Details
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=Monthly_Attendance_Summary_${from}_to_${to}.xlsx`);
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_${from}_to_${to}.xlsx`);
     await wb.xlsx.write(res);
     res.end();
   } catch (err) { next(err); }
