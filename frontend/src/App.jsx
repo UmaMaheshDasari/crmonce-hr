@@ -51,7 +51,7 @@ function AppRoutes() {
         <Route path="employees" element={<EmployeesHome />} />
         <Route path="employees/new" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
         <Route path="employees/:id" element={<EmployeeDetail />} />
-        <Route path="employees/:id/edit" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
+        <Route path="employees/:id/edit" element={<EmployeeForm />} />
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
         <Route path="holidays" element={<HolidaysPage />} />

@@ -131,6 +131,9 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     const idv = validateEmployeeIdentity(raw);
     if (!idv.ok) return res.status(400).json({ error: Object.values(idv.errors)[0], fields: idv.errors });
     Object.assign(raw, idv.values);   // upper-cased PAN/IFSC, stripped Aadhaar, etc.
+    // PAN & Aadhaar are MANDATORY.
+    if (!String(raw.hr_pan || '').trim()) return res.status(400).json({ error: 'PAN Number is required.' });
+    if (!String(raw.hr_aadhaar || '').trim()) return res.status(400).json({ error: 'Aadhaar Number is required.' });
     const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
@@ -143,12 +146,31 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
   } catch (err) { next(err); }
 });
 
-// PATCH /api/employees/:id
-router.patch('/:id', requirePermission('employee:write'), async (req, res, next) => {
+// Fields an employee may edit on their OWN record (personal + identity + bank).
+// Never role, status, salary, department, designation, shift, email or password.
+const SELF_EDITABLE = new Set([
+  'hr_phone', 'hr_address', 'hr_emergencycontact', 'hr_emergencyphone', 'hr_bloodgroup',
+  'hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_drivinglicence', 'hr_uan', 'hr_esic', 'hr_pfnumber',
+  'hr_bankname', 'hr_accountholder', 'hr_accountnumber', 'hr_ifsc', 'hr_branch', 'hr_chequeurl',
+]);
+
+// PATCH /api/employees/:id — HR edits anyone; an employee may edit their OWN
+// personal/identity/bank details (self-service).
+router.patch('/:id', async (req, res, next) => {
   try {
+    const isHRWrite = ['super_admin', 'hr_manager'].includes(req.user.role);
+    const isSelf = req.user.id === req.params.id;
+    if (!isHRWrite && !isSelf) return res.status(403).json({ error: 'Access denied' });
+
     const { password, ...raw } = req.body;
-    // If the email is being changed, it must remain a valid company mailbox.
-    if (raw.hr_email !== undefined) {
+
+    // Employees editing themselves: keep only the whitelisted personal fields.
+    if (!isHRWrite) {
+      Object.keys(raw).forEach(k => { if (!SELF_EDITABLE.has(k)) delete raw[k]; });
+    }
+
+    // If HR is changing the email, it must remain a valid company mailbox.
+    if (isHRWrite && raw.hr_email !== undefined) {
       const ev = validateCompanyEmail(raw.hr_email, 'Employee');
       if (!ev.ok) return res.status(400).json({ error: ev.reason });
     }
@@ -156,7 +178,7 @@ router.patch('/:id', requirePermission('employee:write'), async (req, res, next)
     if (!idv.ok) return res.status(400).json({ error: Object.values(idv.errors)[0], fields: idv.errors });
     Object.assign(raw, idv.values);
     const updateData = sanitizeEmployee(raw);
-    if (password) updateData.hr_password = await authService.hashPassword(password);
+    if (password && isHRWrite) updateData.hr_password = await authService.hashPassword(password);
     const emp = await updateStrippingOptionalShift(ENTITY, req.params.id, updateData);
     res.json(emp);
   } catch (err) { next(err); }

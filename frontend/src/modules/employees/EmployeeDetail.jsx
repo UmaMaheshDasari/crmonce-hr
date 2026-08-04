@@ -35,7 +35,9 @@ function getAvatarGradient(name) {
 
 export default function EmployeeDetail() {
   const { id } = useParams();
-  const { isHR } = useAuth();
+  const { isHR, user } = useAuth();
+  const isSelf = user?.id === id;
+  const canEdit = isHR() || isSelf;
 
   const { data, isLoading } = useQuery({ queryKey: ['employee', id], queryFn: () => employeeApi.get(id) });
   const { data: docsData } = useQuery({ queryKey: ['documents', id], queryFn: () => documentApi.list({ employeeId: id }) });
@@ -107,9 +109,9 @@ export default function EmployeeDetail() {
                     </span>
                   </div>
                 </div>
-                {isHR() && (
+                {canEdit && (
                   <Link to={`/employees/${id}/edit`} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg transition-all duration-200">
-                    <PencilIcon className="w-[18px] h-[18px]" /> Edit Employee
+                    <PencilIcon className="w-[18px] h-[18px]" /> {isHR() ? 'Edit Employee' : 'Edit My Details'}
                   </Link>
                 )}
               </div>
@@ -216,6 +218,46 @@ export default function EmployeeDetail() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Identity & Bank */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="bg-white rounded-xl border border-gray-100 p-6 hover:shadow-md transition-shadow duration-300">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 mb-5">Identity</h3>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5">
+            {[
+              ['PAN', emp.hr_pan], ['Aadhaar', emp.hr_aadhaar], ['UAN', emp.hr_uan],
+              ['PF Number', emp.hr_pfnumber], ['ESIC', emp.hr_esic], ['Passport', emp.hr_passport],
+              ['Driving Licence', emp.hr_drivinglicence], ['Blood Group', emp.hr_bloodgroup],
+              ['Emergency Contact', emp.hr_emergencycontact], ['Emergency Phone', emp.hr_emergencyphone],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-xs text-gray-400 font-medium">{label}</dt>
+                <dd className="text-sm text-gray-900 font-medium">{value || <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-100 p-6 hover:shadow-md transition-shadow duration-300">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 mb-5">Bank Details</h3>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5">
+            {[
+              ['Bank Name', emp.hr_bankname], ['Account Holder', emp.hr_accountholder],
+              ['Account Number', emp.hr_accountnumber], ['IFSC', emp.hr_ifsc], ['Branch', emp.hr_branch],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-xs text-gray-400 font-medium">{label}</dt>
+                <dd className="text-sm text-gray-900 font-medium">{value || <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+            ))}
+            {emp.hr_chequeurl && (
+              <div className="col-span-2">
+                <dt className="text-xs text-gray-400 font-medium">Cancelled Cheque</dt>
+                <dd className="text-sm"><a href={emp.hr_chequeurl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:text-indigo-700 font-medium">View uploaded cheque</a></dd>
+              </div>
+            )}
+          </dl>
         </div>
       </div>
 

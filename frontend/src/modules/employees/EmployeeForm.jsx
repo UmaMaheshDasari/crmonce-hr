@@ -6,6 +6,7 @@ import { employeeApi, documentApi } from '../../api/endpoints';
 import { ChevronRightIcon, ArrowUpTrayIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import Button from '../../components/Button';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, esicRule, phoneRule } from '../../utils/validators';
 
 const ROLES = ['employee', 'hr_manager', 'recruiter', 'super_admin'];
@@ -55,6 +56,15 @@ export default function EmployeeForm() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isHR = ['super_admin', 'hr_manager'].includes(user?.role);
+  const isSelf = isEdit && user?.id === id;
+  const selfMode = isEdit && !isHR && isSelf;   // employee editing their own record
+
+  // An employee may only reach the edit screen for their OWN record.
+  useEffect(() => {
+    if (isEdit && !isHR && !isSelf) navigate('/', { replace: true });
+  }, [isEdit, isHR, isSelf, navigate]);
   const { register, handleSubmit, reset, setValue, watch, formState: { errors, isSubmitting } } = useForm({
     defaultValues: { hr_shiftname: 'General Shift', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00' },
   });
@@ -96,9 +106,10 @@ export default function EmployeeForm() {
   const mutation = useMutation({
     mutationFn: (data) => isEdit ? employeeApi.update(id, data) : employeeApi.create(data),
     onSuccess: () => {
-      toast.success(isEdit ? 'Employee updated!' : 'Employee created!');
+      toast.success(selfMode ? 'Your details were saved!' : isEdit ? 'Employee updated!' : 'Employee created!');
       qc.invalidateQueries({ queryKey: ['employees'] });
-      navigate('/employees');
+      qc.invalidateQueries({ queryKey: ['employee', id] });
+      navigate(selfMode ? `/employees/${id}` : '/employees');
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Something went wrong'),
   });
@@ -131,13 +142,13 @@ export default function EmployeeForm() {
       <nav className="flex items-center gap-1.5 text-sm">
         <Link to="/employees" className="text-gray-400 hover:text-indigo-600 transition-colors font-medium">Employees</Link>
         <ChevronRightIcon className="w-3.5 h-3.5 text-gray-300" />
-        <span className="text-gray-700 font-semibold">{isEdit ? 'Edit Employee' : 'New Employee'}</span>
+        <span className="text-gray-700 font-semibold">{selfMode ? 'My Details' : isEdit ? 'Edit Employee' : 'New Employee'}</span>
       </nav>
 
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{isEdit ? 'Edit Employee' : 'Add New Employee'}</h1>
-        <p className="text-gray-400 text-sm mt-1 font-medium">{isEdit ? 'Update the employee information below' : 'Fill in the details to create a new employee record'}</p>
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{selfMode ? 'My Details' : isEdit ? 'Edit Employee' : 'Add New Employee'}</h1>
+        <p className="text-gray-400 text-sm mt-1 font-medium">{selfMode ? 'Add or update your personal, identity and bank details' : isEdit ? 'Update the employee information below' : 'Fill in the details to create a new employee record'}</p>
       </div>
 
       <form onSubmit={handleSubmit(d => mutation.mutate(d))} className="space-y-6">
@@ -148,8 +159,8 @@ export default function EmployeeForm() {
           </div>
           <div className="p-6 space-y-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="Full Name" name="hr_hremployee1" required placeholder="John Smith" register={register} errors={errors} />
-              <Field label="Email Address" name="hr_email" type="email" required placeholder="john@company.com" register={register} errors={errors} />
+              <Field label="Full Name" name="hr_hremployee1" required placeholder="John Smith" register={register} errors={errors} readOnly={selfMode} />
+              <Field label="Email Address" name="hr_email" type="email" required placeholder="john@company.com" register={register} errors={errors} readOnly={selfMode} />
               <Field label="Phone Number" name="hr_phone" placeholder="+91 99999 99999" register={register} errors={errors} />
               <Field label="Joining Date" name="hr_joiningdate" type="date" register={register} errors={errors} />
             </div>
@@ -157,7 +168,8 @@ export default function EmployeeForm() {
           </div>
         </div>
 
-        {/* Employment Information */}
+        {/* Employment Information (HR only) */}
+        {!selfMode && (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-50">
             <h2 className="text-sm font-bold uppercase tracking-wider text-gray-400">Employment Details</h2>
@@ -186,8 +198,10 @@ export default function EmployeeForm() {
             <p className="text-xs text-gray-400 mt-2">Late is measured from Shift Start (+5&nbsp;min grace); Early Exit from Shift End; Overtime beyond 9&nbsp;effective&nbsp;hours.</p>
           </div>
         </div>
+        )}
 
-        {/* Compensation */}
+        {/* Compensation (HR only) */}
+        {!selfMode && (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-50">
             <h2 className="text-sm font-bold uppercase tracking-wider text-gray-400">Compensation & System</h2>
@@ -199,6 +213,7 @@ export default function EmployeeForm() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Identity */}
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
@@ -207,8 +222,8 @@ export default function EmployeeForm() {
           </div>
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="Aadhaar Number" name="hr_aadhaar" rules={aadhaarRule} placeholder="1234 5678 9012" maxLength={12} register={register} errors={errors} />
-              <Field label="PAN Number" name="hr_pan" rules={panRule} placeholder="ABCDE1234F" maxLength={10} onInput={upper} register={register} errors={errors} />
+              <Field label="Aadhaar Number" name="hr_aadhaar" required rules={aadhaarRule} placeholder="1234 5678 9012" maxLength={12} register={register} errors={errors} />
+              <Field label="PAN Number" name="hr_pan" required rules={panRule} placeholder="ABCDE1234F" maxLength={10} onInput={upper} register={register} errors={errors} />
               <Field label="Passport Number" name="hr_passport" placeholder="A1234567" register={register} errors={errors} />
               <Field label="Driving Licence" name="hr_drivinglicence" placeholder="AP01 20200012345" register={register} errors={errors} />
               <Field label="UAN Number" name="hr_uan" rules={uanRule} placeholder="123456789012" maxLength={12} register={register} errors={errors} />
@@ -277,7 +292,7 @@ export default function EmployeeForm() {
 
         {/* Action Buttons - Sticky Footer */}
         <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex gap-3 justify-end rounded-b-xl">
-          <Button type="button" variant="secondary" onClick={() => navigate('/employees')}>Cancel</Button>
+          <Button type="button" variant="secondary" onClick={() => navigate(selfMode ? `/employees/${id}` : '/employees')}>Cancel</Button>
           <Button type="submit" loading={isSubmitting || mutation.isPending}>
             {isEdit ? 'Save Changes' : 'Create Employee'}
           </Button>
