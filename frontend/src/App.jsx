@@ -50,11 +50,12 @@ function AppRoutes() {
       <Route path="/" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
         <Route path="profile" element={<ProfilePage />} />
-        <Route path="employees/:id/profile" element={<ProfilePage />} />
-        <Route path="employees" element={<EmployeesHome />} />
+        {/* Employees = HR/Admin management only. Employees use My Profile (ESS). */}
+        <Route path="employees" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeesHome /></ProtectedRoute>} />
         <Route path="employees/new" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
-        <Route path="employees/:id" element={<EmployeeDetail />} />
-        <Route path="employees/:id/edit" element={<EmployeeForm />} />
+        <Route path="employees/:id" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeDetail /></ProtectedRoute>} />
+        <Route path="employees/:id/edit" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
+        <Route path="employees/:id/profile" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ProfilePage /></ProtectedRoute>} />
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
         <Route path="holidays" element={<HolidaysPage />} />

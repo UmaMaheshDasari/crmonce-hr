@@ -15,7 +15,7 @@ import {
 const NAV = [
   { to: '/',            label: 'Dashboard',    icon: HomeIcon,            exact: true },
   { to: '/profile',     label: 'My Profile',   icon: UserCircleIcon },
-  { to: '/employees',   label: 'Employees',    icon: UsersIcon },
+  { to: '/employees',   label: 'Employees',    icon: UsersIcon, roles: ['super_admin', 'hr_manager'] },
   { to: '/attendance',  label: 'Attendance',    icon: ClockIcon },
   { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
   { to: '/leave',       label: 'Leave',        icon: CalendarDaysIcon },

@@ -37,28 +37,38 @@ function withShiftDefaults(e) {
   return e;
 }
 
-// create/update that retry WITHOUT the optional columns (shift + identity + bank)
-// if Dataverse rejects them as unknown — so a not-yet-provisioned field never
-// blocks create/edit.
-const stripOptional = (data) => {
-  const rest = { ...data };
-  for (const f of OPTIONAL_WRITE_FIELDS) delete rest[f];
-  return rest;
-};
-async function createStrippingOptionalShift(entity, data) {
-  try { return await d365.create(entity, data); }
-  catch (err) {
-    if (!d365._isMissingProperty(err)) throw err;
-    return d365.create(entity, stripOptional(data));
+const { ensureEmployeeColumns } = require('../../services/provision-employee-columns');
+
+// Robust write: if Dataverse rejects a not-yet-provisioned column, PROVISION the
+// employee columns once and retry the FULL payload; if a column still can't be
+// created (e.g. app lacks customization rights), strip ONLY that named column and
+// retry — so existing columns always persist and we never silently drop everything.
+async function robustWrite(op, entity, id, data) {
+  let payload = { ...data };
+  let provisioned = false;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      return op === 'create' ? await d365.create(entity, payload) : await d365.update(entity, id, payload);
+    } catch (err) {
+      if (!d365._isMissingProperty(err)) throw err;
+      if (!provisioned) {
+        provisioned = true;
+        try { await ensureEmployeeColumns(global.logger || console); continue; } catch { /* fall through to stripping */ }
+      }
+      const prop = d365._missingPropertyName(err);
+      if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) {
+        global.logger?.warn?.(`[employee] column '${prop}' unavailable — saved without it`);
+        delete payload[prop];
+        if (Object.keys(payload).length) continue;
+        return op === 'create' ? {} : d365.getById(entity, id);
+      }
+      throw err;   // missing property we can't name/strip — surface it
+    }
   }
+  throw new Error('employee write failed after provisioning retries');
 }
-async function updateStrippingOptionalShift(entity, id, data) {
-  try { return await d365.update(entity, id, data); }
-  catch (err) {
-    if (!d365._isMissingProperty(err)) throw err;
-    return d365.update(entity, id, stripOptional(data));
-  }
-}
+const createStrippingOptionalShift = (entity, data) => robustWrite('create', entity, null, data);
+const updateStrippingOptionalShift = (entity, id, data) => robustWrite('update', entity, id, data);
 
 // GET /api/employees
 router.get('/', requirePermission('employee:read'), async (req, res, next) => {

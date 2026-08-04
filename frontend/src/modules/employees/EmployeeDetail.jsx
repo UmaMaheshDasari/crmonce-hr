@@ -4,6 +4,8 @@ import { employeeApi, attendanceApi, documentApi } from '../../api/endpoints';
 import { PencilIcon, ChevronRightIcon, EnvelopeIcon, PhoneIcon, MapPinIcon, CalendarIcon, BuildingOfficeIcon, BriefcaseIcon, IdentificationIcon, ClockIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { formatDuration } from '../../utils/formatDuration';
+import { fmtTime, fmtVal, fmtDate } from '../../utils/format';
+import StatusBadge from '../../components/StatusBadge';
 import { format } from 'date-fns';
 
 const STATUS_STYLES = {
@@ -103,10 +105,7 @@ export default function EmployeeDetail() {
                       <BuildingOfficeIcon className="w-3.5 h-3.5" />
                       {emp.hr_department || 'No department'}
                     </span>
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full ring-1 ring-inset ${STATUS_STYLES[emp.hr_status] || 'bg-gray-100 text-gray-600 ring-gray-500/10'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[emp.hr_status] || 'bg-gray-400'}`} />
-                      {emp.hr_status?.replace('_',' ')}
-                    </span>
+                    <StatusBadge status={emp.hr_status} />
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -198,7 +197,7 @@ export default function EmployeeDetail() {
               </div>
               <div>
                 <p className="text-xs text-gray-400 font-medium">Joining Date</p>
-                <p className="text-sm text-gray-900 font-medium">{emp.hr_joiningdate ? format(new Date(emp.hr_joiningdate), 'dd MMM yyyy') : <span className="text-gray-300">&mdash;</span>}</p>
+                <p className="text-sm text-gray-900 font-medium">{fmtDate(emp.hr_joiningdate)}</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -285,9 +284,9 @@ export default function EmployeeDetail() {
             <tbody>
               {attData?.data?.data?.map(a => (
                 <tr key={a.hr_hrattendanceid} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                  <td className="px-6 py-4 text-sm text-gray-700 font-medium tabular-nums">{a.hr_date}</td>
-                  <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{a.hr_intime || <span className="text-gray-300">&mdash;</span>}</td>
-                  <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{a.hr_outtime || <span className="text-gray-300">&mdash;</span>}</td>
+                  <td className="px-6 py-4 text-sm text-gray-700 font-medium tabular-nums">{fmtVal(a.hr_date)}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{fmtTime(a.hr_intime)}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{fmtTime(a.hr_outtime)}</td>
                   <td className="px-6 py-4 text-sm text-gray-600 tabular-nums">{a.hr_workedhours != null ? formatDuration(a.hr_workedhours) : <span className="text-gray-300">&mdash;</span>}</td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${

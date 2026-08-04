@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { employeeApi } from '../../api/endpoints';
 import { MagnifyingGlassIcon, PlusIcon, EyeIcon, PencilSquareIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
+import StatusBadge from '../../components/StatusBadge';
 import { format } from 'date-fns';
 
 const AVATAR_GRADIENTS = [
@@ -179,10 +180,7 @@ export default function EmployeeList() {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_LABEL[emp.hr_status] || 'text-gray-600 bg-gray-100'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[emp.hr_status] || 'bg-gray-400'}`} />
-                        {emp.hr_status?.replace('_', ' ')}
-                      </span>
+                      <StatusBadge status={emp.hr_status} />
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-1">

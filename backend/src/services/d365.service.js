@@ -123,6 +123,15 @@ class D365Service {
       /Could not find a property named|does not exist|property named '/i.test(m);
   }
 
+  // The exact column name Dataverse says is missing (from the 400 message), so a
+  // writer can strip ONLY that field and retry — never dropping columns that exist.
+  _missingPropertyName(err) {
+    const m = err?.response?.data?.error?.message || '';
+    const mm = m.match(/property named '([^']+)'/i) || m.match(/property '([^']+)'/i) ||
+      m.match(/'([a-z0-9_]+)'\s+(?:does not exist|was not found)/i);
+    return mm ? mm[1] : null;
+  }
+
   // getList that RETRIES without the optional columns if Dataverse doesn't have
   // them yet — so a not-yet-created field never breaks the whole query.
   async getListOptional(entity, { select, optionalSelect, ...rest }) {
