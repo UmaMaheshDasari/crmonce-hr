@@ -6,10 +6,12 @@ import toast from 'react-hot-toast';
 import {
   CheckCircleIcon, XCircleIcon, ClockIcon, CalendarDaysIcon, BriefcaseIcon,
   CurrencyDollarIcon, SunIcon, ArrowRightOnRectangleIcon,
-  ArrowLeftOnRectangleIcon, DocumentCheckIcon,
+  ArrowLeftOnRectangleIcon, DocumentCheckIcon, BellAlertIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import { dashboardApi, attendanceApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
+import Button from '../../components/Button';
+import MissingPunchModal from '../attendance/MissingPunchModal';
 import ActivityFeed from '../../components/ActivityFeed';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
 
@@ -95,6 +97,8 @@ export default function EmployeeDashboard() {
   });
   const d = data?.data;
   const t = d?.today, m = d?.month, lv = d?.leave;
+  const alerts = d?.alerts || [];
+  const [correctionModal, setCorrectionModal] = useState({ open: false, date: '', type: '' });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
@@ -165,6 +169,36 @@ export default function EmployeeDashboard() {
         {isLoading && !d
           ? Array.from({ length: 8 }).map((_, i) => <div key={i} className="bg-gray-50 rounded-xl h-[62px] animate-pulse" />)
           : kpis.map(k => <Kpi key={k.label} {...k} />)}
+      </div>
+
+      {/* ── Attendance Alerts (auto-detected exceptions) ──────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <BellAlertIcon className="w-5 h-5 text-amber-500" />
+          <h2 className="text-base font-bold text-gray-900">Attendance Alerts</h2>
+          {alerts.length > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">{alerts.length}</span>}
+        </div>
+        {alerts.length === 0 ? (
+          <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
+            <CheckCircleIcon className="w-5 h-5 text-emerald-500" /> No attendance issues detected.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {alerts.map(a => (
+              <div key={a.date + a.code} className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/50 px-4 py-3 flex-wrap">
+                <div className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 ${a.priority === 'high' ? 'bg-red-100' : 'bg-amber-100'}`}>
+                  <ExclamationTriangleIcon className={`w-5 h-5 ${a.priority === 'high' ? 'text-red-600' : 'text-amber-600'}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-gray-800">{a.label}</p>
+                  <p className="text-xs text-gray-500">{fmtDay(a.date)}{a.punches?.length ? ` · Recorded: ${a.punches.join(', ')}` : ''}</p>
+                </div>
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700">Action Required</span>
+                <Button variant="secondary" onClick={() => setCorrectionModal({ open: true, date: a.date, type: a.code })}>Raise Request</Button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Attendance widget + Leave Summary ─────────────────────────────── */}
@@ -261,6 +295,14 @@ export default function EmployeeDashboard() {
         </div>
         <ActivityFeed items={d?.activity ?? []} loading={isLoading && !d} emptyText="No recent activity yet." />
       </div>
+
+      {/* One-click: opens the correction form pre-filled from the detected exception. */}
+      <MissingPunchModal
+        open={correctionModal.open}
+        defaultDate={correctionModal.date}
+        defaultType={correctionModal.type}
+        onClose={() => setCorrectionModal({ open: false, date: '', type: '' })}
+      />
     </div>
   );
 }

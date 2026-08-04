@@ -239,10 +239,39 @@ function reminder(d) {
   return { subject, html: layout({ title: subject, preheader: 'Action still required', content }) };
 }
 
+/**
+ * Attendance Exception notification (auto-detected missing punch). Doubles as the
+ * reminder + escalation email via the `reminder` / `escalation` flags.
+ * d: { employeeName, date, issueLabel, punches:[…], raiseUrl, reminder, escalation, ccNote }
+ */
+function attendanceException(d) {
+  const punchList = (d.punches && d.punches.length) ? d.punches.map(p => esc(p)).join(' &nbsp;·&nbsp; ') : '—';
+  const lead = d.escalation
+    ? `This attendance exception has been open and no correction request has been submitted. It is now being escalated.`
+    : d.reminder
+      ? `This is a reminder — our attendance system detected an incomplete attendance record that still needs your action.`
+      : `Our attendance system detected an incomplete attendance record that needs your action.`;
+  const content =
+    greet(d.employeeName) +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">${esc(lead)}</p>` +
+    summaryCard('Attendance Exception', [
+      ['Attendance Date', esc(d.date)],
+      ['Issue', statusBadge(d.issueLabel)],
+      ['Recorded Punches', punchList],
+    ]) +
+    banner('Please submit an Attendance Correction Request so HR can review and update your attendance.', d.escalation ? 'warn' : 'info') +
+    (d.ccNote ? `<p style="margin:0 0 6px;font-size:12px;color:#6b7280;">${esc(d.ccNote)}</p>` : '') +
+    `<div style="text-align:center;margin:22px 0 6px;">${button('Raise Attendance Correction', d.raiseUrl)}</div>`;
+  const subject = d.escalation
+    ? 'Attendance Correction Pending – Escalation'
+    : 'Action Required – Attendance Correction Needed';
+  return { subject, html: layout({ title: subject, preheader: `${d.issueLabel} on ${d.date} — action needed`, content }) };
+}
+
 module.exports = {
   // components (exported for tests/reuse)
   statusBadge, button, profileCard, summaryCard, banner, layout,
   // builders
-  newRequestApprover, newRequestCc, acknowledgement, decision, reminder,
+  newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
   _esc: esc, _longText: longText,
 };

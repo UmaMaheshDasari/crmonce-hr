@@ -18,14 +18,18 @@ const CORRECTION_TYPES = [
 
 // Employees submit an Attendance Correction here to fix a PAST attendance record.
 // It never affects their ability to punch (check in/out) going forward.
-export default function MissingPunchModal({ open, onClose, defaultDate }) {
+export default function MissingPunchModal({ open, onClose, defaultDate, defaultType }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [form, setForm] = useState({ attendanceDate: '', punchType: 'missing_check_out', requestedTime: '', reason: '' });
 
   useEffect(() => {
-    if (open) setForm(f => ({ ...f, attendanceDate: defaultDate || f.attendanceDate || new Date().toISOString().slice(0, 10) }));
-  }, [open, defaultDate]);
+    if (open) setForm(f => ({
+      ...f,
+      attendanceDate: defaultDate || f.attendanceDate || new Date().toISOString().slice(0, 10),
+      punchType: defaultType || f.punchType,   // pre-filled from the detected exception
+    }));
+  }, [open, defaultDate, defaultType]);
 
   const submit = useMutation({
     mutationFn: () => attendanceRequestApi.submit(form),

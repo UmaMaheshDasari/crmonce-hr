@@ -8,6 +8,7 @@ const { rangeCounts, effectiveWorking } = require('../../services/attendance-sum
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
 const { earliestAttendanceDate } = require('../../services/attendance-range.util');
 const holidayService = require('../../services/holiday.service');
+const attendanceExceptions = require('../../services/attendance-exception.service');
 const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
 
@@ -62,7 +63,7 @@ router.get('/summary', async (req, res, next) => {
     const approvedVal = toValue('hr_leave_status', 'approved');
 
     // ── Parallel Dataverse reads (one round trip each; the client makes ONE call) ──
-    const [emp, monthRecsRes, allLeavesRes, firstDate, openPrior, activityItems, holidays] = await Promise.all([
+    const [emp, monthRecsRes, allLeavesRes, firstDate, openPrior, activityItems, holidays, alerts] = await Promise.all([
       d365.getByIdOptional(EMP, empId, {
         select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
         optionalSelect: `${SHIFT_COLS},hr_joiningdate,hr_salary`,
@@ -80,6 +81,7 @@ router.get('/summary', async (req, res, next) => {
       openPriorRecord(empId, today),
       activity.recent(6).catch(() => []),
       holidayService.listHolidays().catch(() => []),
+      attendanceExceptions.openExceptionsForEmployee(empId).catch(() => []),
     ]);
 
     const shift = attnCfg.resolveEmployeeShift(emp.hr_shiftname, emp.hr_shiftstarttime, emp.hr_shiftendtime);
@@ -191,6 +193,7 @@ router.get('/summary', async (req, res, next) => {
       leave,
       nextPayday,
       upcomingHoliday,
+      alerts: alerts || [],          // auto-detected attendance exceptions (Attendance Alerts card)
       activity: activityItems,
     });
   } catch (err) { next(err); }
