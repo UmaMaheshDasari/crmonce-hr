@@ -72,10 +72,11 @@ export default function AttendancePage() {
   const startDate = firstDateData?.data?.firstDate || null;   // 'YYYY-MM-DD' or null
   const clampFrom = (d) => (startDate && d && d < startDate ? startDate : d);
 
-  // When the start date resolves (or the selected employee changes), pull From up
-  // so the range never begins before the employee's Attendance Start Date.
+  // Default the From date to the employee's Attendance Start Date (the "Available
+  // from" date) once it resolves / the selected employee changes — so the view
+  // opens showing all attendance from the first punch, not just this month.
   useEffect(() => {
-    if (startDate && from < startDate) setFrom(startDate);
+    if (startDate) { setFrom(startDate); setRange('custom'); setPage(1); }
   }, [startDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const guardDate = (v) => {
