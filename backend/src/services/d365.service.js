@@ -21,6 +21,9 @@ class D365Service {
     this.baseUrl = `${process.env.D365_BASE_URL}/api/data/v${process.env.D365_API_VERSION}`;
     this.tokenCache = null;
     this.tokenExpiry = null;
+    // Maps a guessed entity-set name → the REAL EntitySetName from Dataverse
+    // metadata. Populated lazily the first time a guess 404s (segment not found).
+    this._setAlias = {};
 
     this.msalClient = new ConfidentialClientApplication({
       auth: {
@@ -59,7 +62,6 @@ class D365Service {
   // ── Generic CRUD ──────────────────────────────────────────────
 
   async getList(entity, params = {}) {
-    const headers = await this.getHeaders();
     const { select, filter, expand, orderby, top, skip } = params;
     const query = new URLSearchParams();
     if (select) query.set('$select', select);
@@ -70,13 +72,16 @@ class D365Service {
     if (skip) query.set('$skip', skip);
     query.set('$count', 'true');
 
-    const url = `${this.baseUrl}/${entity}?${query.toString()}`;
-    let res;
-    try { res = await axios.get(url, { headers }); }
-    catch (err) { throw this._enrich(err, `getList ${entity}`); }
-    // Dataverse pages via @odata.nextLink (a skiptoken cursor) — it does NOT
-    // support $skip. Expose nextLink so callers can page correctly.
-    return { data: res.data.value, count: res.data['@odata.count'], nextLink: res.data['@odata.nextLink'] };
+    return this._withSet(entity, async (seg) => {
+      const headers = await this.getHeaders();
+      const url = `${this.baseUrl}/${seg}?${query.toString()}`;
+      let res;
+      try { res = await axios.get(url, { headers }); }
+      catch (err) { throw this._enrich(err, `getList ${seg}`); }
+      // Dataverse pages via @odata.nextLink (a skiptoken cursor) — it does NOT
+      // support $skip. Expose nextLink so callers can page correctly.
+      return { data: res.data.value, count: res.data['@odata.count'], nextLink: res.data['@odata.nextLink'] };
+    });
   }
 
   // Follow @odata.nextLink cursors to retrieve ALL matching rows (up to cap).
@@ -96,16 +101,18 @@ class D365Service {
   }
 
   async getById(entity, id, params = {}) {
-    const headers = await this.getHeaders();
     const { select, expand } = params;
     const query = new URLSearchParams();
     if (select) query.set('$select', select);
     if (expand) query.set('$expand', expand);
-    const url = `${this.baseUrl}/${entity}(${id})?${query.toString()}`;
-    try {
-      const res = await axios.get(url, { headers });
-      return res.data;
-    } catch (err) { throw this._enrich(err, `getById ${entity}`); }
+    return this._withSet(entity, async (seg) => {
+      const headers = await this.getHeaders();
+      const url = `${this.baseUrl}/${seg}(${id})?${query.toString()}`;
+      try {
+        const res = await axios.get(url, { headers });
+        return res.data;
+      } catch (err) { throw this._enrich(err, `getById ${seg}`); }
+    });
   }
 
   // True when Dataverse rejected the query because a $select column doesn't exist
@@ -153,26 +160,84 @@ class D365Service {
     return err;
   }
 
-  async create(entity, data) {
-    const headers = await this.getHeaders({ Prefer: 'return=representation' });
+  // True when Dataverse 404'd because the URL's entity-set segment doesn't exist
+  // (wrong collection name) — e.g. 0x80060888 "Resource not found for the segment".
+  _isBadSegment(err) {
+    const code = err?.response?.data?.error?.code;
+    const msg = err?.response?.data?.error?.message || '';
+    return err?.response?.status === 404 &&
+      (code === '0x80060888' || /Resource not found for the segment/i.test(msg));
+  }
+
+  // Ask Dataverse metadata for the authoritative EntitySetName. We only have a
+  // (wrong) plural guess like 'hr_hrgoals', so derive candidate LOGICAL names and
+  // look them up. Returns the real set name, or null if nothing matches.
+  async _resolveEntitySet(entity) {
+    const cands = new Set();
+    const base = entity.replace(/s$/, '');          // hr_hrgoals → hr_hrgoal
+    cands.add(base);
+    cands.add(base.replace(/e$/, ''));              // ...ses → ...s
+    cands.add(entity.replace(/ies$/, 'y'));         // categories → category
+    cands.add(base.replace(/^hr_hr/, 'hr_'));       // hr_hrgoal → hr_goal
+    const filter = [...cands].filter(Boolean)
+      .map((n) => `LogicalName eq '${n}'`).join(' or ');
     try {
-      const res = await axios.post(`${this.baseUrl}/${entity}`, data, { headers });
-      return res.data;
-    } catch (err) { throw this._enrich(err, `create ${entity}`); }
+      const headers = await this.getHeaders();
+      const url = `${this.baseUrl}/EntityDefinitions?$select=EntitySetName,LogicalName&$filter=${encodeURIComponent(filter)}`;
+      const res = await axios.get(url, { headers });
+      const rows = res.data.value || [];
+      if (rows.length) return rows[0].EntitySetName;
+    } catch (e) {
+      global.logger?.error?.(`D365 metadata lookup for '${entity}' failed: ${e.message}`);
+    }
+    return null;
+  }
+
+  // Run a CRUD closure against the entity set. If the guessed set name 404s as a
+  // bad segment, resolve the REAL name from metadata once, cache it, and retry.
+  async _withSet(entity, run) {
+    const seg = this._setAlias[entity] || entity;
+    try {
+      return await run(seg);
+    } catch (err) {
+      if (this._isBadSegment(err) && !this._setAlias[entity]) {
+        const real = await this._resolveEntitySet(entity);
+        if (real && real !== seg) {
+          this._setAlias[entity] = real;
+          global.logger?.warn?.(`D365 entity-set '${entity}' not found — resolved to '${real}' via metadata; retrying.`);
+          return await run(real);
+        }
+      }
+      throw err;
+    }
+  }
+
+  async create(entity, data) {
+    return this._withSet(entity, async (seg) => {
+      const headers = await this.getHeaders({ Prefer: 'return=representation' });
+      try {
+        const res = await axios.post(`${this.baseUrl}/${seg}`, data, { headers });
+        return res.data;
+      } catch (err) { throw this._enrich(err, `create ${seg}`); }
+    });
   }
 
   async update(entity, id, data) {
-    const headers = await this.getHeaders();
-    try {
-      await axios.patch(`${this.baseUrl}/${entity}(${id})`, data, { headers });
-    } catch (err) { throw this._enrich(err, `update ${entity}`); }
+    await this._withSet(entity, async (seg) => {
+      const headers = await this.getHeaders();
+      try {
+        await axios.patch(`${this.baseUrl}/${seg}(${id})`, data, { headers });
+      } catch (err) { throw this._enrich(err, `update ${seg}`); }
+    });
     return this.getById(entity, id);
   }
 
   async delete(entity, id) {
-    const headers = await this.getHeaders();
-    await axios.delete(`${this.baseUrl}/${entity}(${id})`, { headers });
-    return { deleted: true };
+    return this._withSet(entity, async (seg) => {
+      const headers = await this.getHeaders();
+      await axios.delete(`${this.baseUrl}/${seg}(${id})`, { headers });
+      return { deleted: true };
+    });
   }
 
   async executeFetchXml(entity, fetchXml) {
