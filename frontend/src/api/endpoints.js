@@ -76,8 +76,12 @@ export const holidayApi = {
 // ── Payroll ──────────────────────────────────────────────────────
 export const payrollApi = {
   list: (params) => api.get('/payroll', { params }),
-  process: (data) => api.post('/payroll/process', data),
+  generate: (data) => api.post('/payroll/generate', data),
+  process: (data) => api.post('/payroll/process', data),   // alias (backward-compat)
+  approve: (id) => api.patch(`/payroll/${id}/approve`),
+  release: (id) => api.patch(`/payroll/${id}/release`),
   downloadPayslip: (id) => api.get(`/payroll/${id}/payslip`, { responseType: 'blob' }),
+  report: (type, params) => api.get(`/payroll/reports/${type}`, { params, responseType: 'blob' }),
 };
 
 // ── Recruitment ──────────────────────────────────────────────────

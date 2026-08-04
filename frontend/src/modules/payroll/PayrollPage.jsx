@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { payrollApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
-import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -16,13 +16,13 @@ function ProcessPayrollModal({ onClose }) {
   const [confirmed, setConfirmed] = useState(false);
 
   const mutation = useMutation({
-    mutationFn: () => payrollApi.process({ month, year }),
+    mutationFn: () => payrollApi.generate({ month, year }),
     onSuccess: (res) => {
-      toast.success(`Payroll processed for ${res.data.count} employees`);
+      toast.success(res.data?.message || `Payroll generated for ${res.data.count} employees`);
       qc.invalidateQueries({ queryKey: ['payroll'] });
       onClose();
     },
-    onError: () => toast.error('Payroll processing failed'),
+    onError: (err) => toast.error(err.response?.data?.error || 'Payroll generation failed'),
   });
 
   return (
@@ -35,8 +35,8 @@ function ProcessPayrollModal({ onClose }) {
               <BanknotesIcon className="w-5 h-5 text-emerald-600" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900">Process Payroll</h2>
-              <p className="text-xs text-gray-500 mt-0.5">Select period to process</p>
+              <h2 className="text-lg font-bold text-gray-900">Generate Payroll</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Select period to generate drafts</p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
@@ -76,7 +76,7 @@ function ProcessPayrollModal({ onClose }) {
                   {confirmed ? 'Ready to process!' : 'Please confirm this action'}
                 </p>
                 <p className={`text-xs mt-1 ${confirmed ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  This will process payroll for all active employees for {MONTHS[month-1]} {year}.
+                  This will generate draft payroll for all active employees for {MONTHS[month-1]} {year}.
                 </p>
                 {!confirmed && (
                   <button
@@ -103,7 +103,7 @@ function ProcessPayrollModal({ onClose }) {
           >
             {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             <PlayIcon className="w-4 h-4" />
-            Process
+            Generate
           </button>
         </div>
       </div>
@@ -128,6 +128,40 @@ export default function PayrollPage() {
   const records = data?.data?.data || [];
   const total = data?.data?.count || 0;
   const totalPages = Math.ceil(total / limit);
+
+  const approveMutation = useMutation({
+    mutationFn: (id) => payrollApi.approve(id),
+    onSuccess: (res) => { toast.success(res.data?.message || 'Payroll approved'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Approve failed'),
+  });
+  const releaseMutation = useMutation({
+    mutationFn: (id) => payrollApi.release(id),
+    onSuccess: () => { toast.success('Payroll released'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Release failed'),
+  });
+
+  const downloadBlob = (blob, filename) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    window.URL.revokeObjectURL(url);
+  };
+  const REPORTS = [
+    { type: 'payroll-register', label: 'Payroll Register' },
+    { type: 'salary-register', label: 'Salary Register' },
+    { type: 'attendance-register', label: 'Attendance Register' },
+    { type: 'employee-master', label: 'Employee Master' },
+    { type: 'bank-transfer', label: 'Bank Transfer' },
+  ];
+  const [downloadingReport, setDownloadingReport] = useState('');
+  const runReport = async (type, label) => {
+    setDownloadingReport(type);
+    try {
+      const res = await payrollApi.report(type, { year: filterYear });
+      downloadBlob(new Blob([res.data]), `${label.replace(/\s+/g, '_')}_${filterYear}.xlsx`);
+      toast.success(`${label} downloaded`);
+    } catch { toast.error(`Failed to generate ${label}`); }
+    finally { setDownloadingReport(''); }
+  };
 
   const totalNet = records.reduce((s, r) => s + (r.hr_netpay || 0), 0);
 
@@ -177,10 +211,26 @@ export default function PayrollPage() {
             onClick={() => setShowModal(true)}
             className="inline-flex items-center gap-2.5 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200"
           >
-            <PlayIcon className="w-4.5 h-4.5" /> Process Payroll
+            <PlayIcon className="w-4.5 h-4.5" /> Generate Payroll
           </button>
         )}
       </div>
+
+      {/* Reports (HR only) */}
+      {isHR() && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider mr-1">Reports</span>
+            {REPORTS.map(rep => (
+              <button key={rep.type} onClick={() => runReport(rep.type, rep.label)} disabled={downloadingReport === rep.type}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 disabled:opacity-50 transition-colors">
+                <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+                {downloadingReport === rep.type ? 'Generating…' : rep.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary Cards (HR only) */}
       {isHR() && records.length > 0 && (
@@ -235,7 +285,7 @@ export default function PayrollPage() {
                 <th className="px-5 py-3.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Net Pay</th>
                 <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Processed On</th>
-                <th className="px-5 py-3.5 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Payslip</th>
+                <th className="px-5 py-3.5 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100/70">
@@ -285,37 +335,50 @@ export default function PayrollPage() {
                       <span className="text-sm font-bold text-gray-900 tabular-nums">₹{r.hr_netpay?.toLocaleString('en-IN') || '—'}</span>
                     </td>
                     <td className="px-5 py-4">
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
-                        <span className={`w-2 h-2 rounded-full ${r.hr_status === 'processed' ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-                        <span className={r.hr_status === 'processed' ? 'text-emerald-700' : 'text-amber-700'}>
-                          {r.hr_status?.charAt(0).toUpperCase() + r.hr_status?.slice(1)}
-                        </span>
-                      </span>
+                      {(() => {
+                        const cfg = r.hr_status === 'paid' ? { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Released' }
+                          : r.hr_status === 'processed' ? { dot: 'bg-blue-500', text: 'text-blue-700', label: 'Approved' }
+                          : { dot: 'bg-amber-400', text: 'text-amber-700', label: 'Draft' };
+                        return (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
+                            <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                            <span className={cfg.text}>{cfg.label}</span>
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-5 py-4 text-sm text-gray-500">
                       {r.hr_processeddate ? format(new Date(r.hr_processeddate), 'dd MMM yyyy') : '\u2014'}
                     </td>
-                    <td className="px-5 py-4 text-center">
-                      {r.hr_status === 'processed' && (
-                        <button
-                          onClick={async () => {
-                            try {
-                              const res = await payrollApi.downloadPayslip(r.hr_hrpayrollid);
-                              const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = `Payslip_${MONTHS[(r.hr_month||1)-1]}_${r.hr_year}.pdf`;
-                              a.click();
-                              window.URL.revokeObjectURL(url);
-                              toast.success('Payslip downloaded');
-                            } catch { toast.error('Failed to download payslip'); }
-                          }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
-                        >
-                          <ArrowDownTrayIcon className="w-3.5 h-3.5" />
-                          PDF
-                        </button>
-                      )}
+                    <td className="px-5 py-4">
+                      <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                        {isHR() && r.hr_status === 'draft' && (
+                          <button onClick={() => approveMutation.mutate(r.hr_hrpayrollid)} disabled={approveMutation.isPending}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors">
+                            <CheckCircleIcon className="w-3.5 h-3.5" /> Approve
+                          </button>
+                        )}
+                        {isHR() && r.hr_status === 'processed' && (
+                          <button onClick={() => releaseMutation.mutate(r.hr_hrpayrollid)} disabled={releaseMutation.isPending}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 disabled:opacity-50 transition-colors">
+                            <BanknotesIcon className="w-3.5 h-3.5" /> Release
+                          </button>
+                        )}
+                        {(r.hr_status === 'processed' || r.hr_status === 'paid') && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const res = await payrollApi.downloadPayslip(r.hr_hrpayrollid);
+                                downloadBlob(new Blob([res.data], { type: 'application/pdf' }), `Payslip_${MONTHS[(r.hr_month||1)-1]}_${r.hr_year}.pdf`);
+                                toast.success('Payslip downloaded');
+                              } catch { toast.error('Failed to download payslip'); }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+                          >
+                            <ArrowDownTrayIcon className="w-3.5 h-3.5" /> PDF
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
