@@ -22,6 +22,7 @@ import GoalsPage from './modules/performance/GoalsPage';
 import ApprovalAction from './modules/attendance/ApprovalAction';
 import ActivitiesPage from './modules/activity/ActivitiesPage';
 import CompanySettingsPage from './modules/company/CompanySettingsPage';
+import ProfilePage from './modules/employees/ProfilePage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 300000, refetchOnWindowFocus: false } },
@@ -48,6 +49,8 @@ function AppRoutes() {
       <Route path="/approve" element={<ApprovalAction />} />
       <Route path="/" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
+        <Route path="profile" element={<ProfilePage />} />
+        <Route path="employees/:id/profile" element={<ProfilePage />} />
         <Route path="employees" element={<EmployeesHome />} />
         <Route path="employees/new" element={<ProtectedRoute roles={['super_admin','hr_manager']}><EmployeeForm /></ProtectedRoute>} />
         <Route path="employees/:id" element={<EmployeeDetail />} />

@@ -9,11 +9,12 @@ import {
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
-  BuildingOffice2Icon,
+  BuildingOffice2Icon, UserCircleIcon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
   { to: '/',            label: 'Dashboard',    icon: HomeIcon,            exact: true },
+  { to: '/profile',     label: 'My Profile',   icon: UserCircleIcon },
   { to: '/employees',   label: 'Employees',    icon: UsersIcon },
   { to: '/attendance',  label: 'Attendance',    icon: ClockIcon },
   { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
@@ -30,6 +31,7 @@ const NAV = [
 
 const LABEL_MAP = {
   '/':            'Dashboard',
+  '/profile':     'My Profile',
   '/employees':   'Employees',
   '/attendance':  'Attendance',
   '/attendance-requests': 'Attendance Requests',

@@ -1,0 +1,340 @@
+import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { employeeApi, documentApi } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
+import toast from 'react-hot-toast';
+import {
+  UserIcon, IdentificationIcon, MapPinIcon, BuildingLibraryIcon, PhoneIcon, DocumentTextIcon,
+  CheckBadgeIcon, ClockIcon, PencilIcon, ArrowUpTrayIcon, CameraIcon,
+  CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon,
+} from '@heroicons/react/24/outline';
+import {
+  BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, esicRule, phoneRule,
+} from '../../utils/validators';
+
+const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say'];
+const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
+const DOC_TYPES = ['Aadhaar Card', 'PAN Card', 'Passport', 'Driving Licence', 'Cancelled Cheque', 'Passbook', 'Photo'];
+
+const TABS = [
+  { key: 'general', label: 'General', icon: UserIcon, fields: [
+    { name: 'hr_phone', label: 'Mobile Number', rules: phoneRule },
+    { name: 'hr_altphone', label: 'Alternate Mobile', rules: phoneRule },
+    { name: 'hr_personalemail', label: 'Personal Email', type: 'email' },
+    { name: 'hr_dob', label: 'Date of Birth', type: 'date' },
+    { name: 'hr_gender', label: 'Gender', type: 'select', options: GENDERS },
+    { name: 'hr_maritalstatus', label: 'Marital Status', type: 'select', options: MARITAL },
+    { name: 'hr_nationality', label: 'Nationality' },
+    { name: 'hr_bloodgroup', label: 'Blood Group', type: 'select', options: BLOOD_GROUPS },
+  ] },
+  { key: 'identity', label: 'Identity', icon: IdentificationIcon, verify: true, fields: [
+    { name: 'hr_aadhaar', label: 'Aadhaar Number', rules: aadhaarRule, required: true, maxLength: 12 },
+    { name: 'hr_pan', label: 'PAN Number', rules: panRule, required: true, maxLength: 10, upper: true },
+    { name: 'hr_passport', label: 'Passport Number' },
+    { name: 'hr_drivinglicence', label: 'Driving Licence' },
+    { name: 'hr_uan', label: 'UAN Number', rules: uanRule, maxLength: 12 },
+    { name: 'hr_pfnumber', label: 'PF Number' },
+    { name: 'hr_esic', label: 'ESIC Number', rules: esicRule },
+  ] },
+  { key: 'address', label: 'Address', icon: MapPinIcon, verify: true, fields: [
+    { name: 'hr_address', label: 'Current Address', textarea: true },
+    { name: 'hr_permaddress', label: 'Permanent Address', textarea: true },
+    { name: 'hr_city', label: 'City' },
+    { name: 'hr_state', label: 'State' },
+    { name: 'hr_country', label: 'Country' },
+    { name: 'hr_pincode', label: 'PIN Code', maxLength: 6 },
+  ] },
+  { key: 'bank', label: 'Bank', icon: BuildingLibraryIcon, verify: true, fields: [
+    { name: 'hr_bankname', label: 'Bank Name' },
+    { name: 'hr_accountholder', label: 'Account Holder Name' },
+    { name: 'hr_accountnumber', label: 'Account Number', rules: accountRule, maxLength: 18 },
+    { name: 'hr_ifsc', label: 'IFSC Code', rules: ifscRule, maxLength: 11, upper: true },
+    { name: 'hr_branch', label: 'Branch Name' },
+  ] },
+  { key: 'emergency', label: 'Emergency', icon: PhoneIcon, fields: [
+    { name: 'hr_emergencycontact', label: 'Contact Name' },
+    { name: 'hr_emergencyrelation', label: 'Relationship' },
+    { name: 'hr_emergencyphone', label: 'Mobile Number', rules: phoneRule },
+  ] },
+  { key: 'documents', label: 'Documents', icon: DocumentTextIcon },
+];
+
+const VERIFY_BADGE = {
+  verified: { icon: CheckBadgeIcon, text: 'Verified', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' },
+  pending: { icon: ClockIcon, text: 'Pending HR Verification', cls: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
+  changes: { icon: ExclamationTriangleIcon, text: 'Changes Requested', cls: 'bg-orange-50 text-orange-700 ring-orange-600/20' },
+  rejected: { icon: XCircleIcon, text: 'Rejected', cls: 'bg-red-50 text-red-700 ring-red-600/20' },
+};
+
+function ProgressRing({ value }) {
+  const r = 26, c = 2 * Math.PI * r, off = c - (value / 100) * c;
+  return (
+    <svg width="64" height="64" className="-rotate-90">
+      <circle cx="32" cy="32" r={r} fill="none" stroke="#e5e7eb" strokeWidth="6" />
+      <circle cx="32" cy="32" r={r} fill="none" stroke="url(#pg)" strokeWidth="6" strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" className="transition-all duration-700" />
+      <defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#a855f7" /></linearGradient></defs>
+    </svg>
+  );
+}
+
+export default function ProfilePage() {
+  const { id: paramId } = useParams();
+  const { user, isHR } = useAuth();
+  const qc = useQueryClient();
+  const id = paramId || user?.id;
+  const isSelf = user?.id === id;
+  const hrView = isHR();
+  const canEdit = isSelf || hrView;
+
+  const [tab, setTab] = useState('general');
+  const [editing, setEditing] = useState(null);          // tab key currently in edit mode
+  const [uploading, setUploading] = useState('');
+
+  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm({ shouldUnregister: true });
+
+  const { data, isLoading } = useQuery({ queryKey: ['employee', id], queryFn: () => employeeApi.get(id), enabled: !!id });
+  const emp = data?.data;
+  const { data: docsData } = useQuery({ queryKey: ['documents', id], queryFn: () => documentApi.list({ employeeId: id }), enabled: !!id });
+  const docs = docsData?.data?.data || [];
+
+  useEffect(() => { if (emp) reset(emp); }, [emp, reset]);
+
+  const completion = emp?._completion || { percent: 0, missing: [] };
+  const status = emp?._verifystatus || emp?.hr_verifystatus || 'verified';
+  const badge = VERIFY_BADGE[status] || VERIFY_BADGE.verified;
+  const managerName = emp?.['_hr_manager_value@OData.Community.Display.V1.FormattedValue'] || '—';
+  const initials = emp?.hr_hremployee1?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+
+  const saveMutation = useMutation({
+    mutationFn: (values) => employeeApi.update(id, values),
+    onSuccess: (res) => {
+      toast.success(res.data?._pendingVerification ? 'Saved — sent to HR for verification' : 'Profile updated successfully');
+      qc.invalidateQueries({ queryKey: ['employee', id] });
+      setEditing(null);
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to save'),
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: ({ action, note }) => employeeApi.verify(id, { action, note }),
+    onSuccess: (_r, vars) => {
+      toast.success(vars.action === 'approve' ? 'Profile approved' : vars.action === 'reject' ? 'Profile rejected' : 'Changes requested');
+      qc.invalidateQueries({ queryKey: ['employee', id] });
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'Verification failed'),
+  });
+
+  const uploadDoc = async (docType, file) => {
+    if (!file) return;
+    setUploading(docType);
+    try {
+      const fd = new FormData();
+      fd.append('file', file); fd.append('employeeId', id);
+      fd.append('type', docType === 'Photo' ? 'Other' : 'ID Proof'); fd.append('name', docType);
+      const res = await documentApi.upload(fd);
+      if (docType === 'Photo' && res.data?.hr_fileurl) {
+        await employeeApi.update(id, { hr_photourl: res.data.hr_fileurl });
+        qc.invalidateQueries({ queryKey: ['employee', id] });
+      }
+      qc.invalidateQueries({ queryKey: ['documents', id] });
+      toast.success(`${docType} uploaded`);
+    } catch (err) { toast.error(err.response?.data?.error || 'Upload failed'); }
+    finally { setUploading(''); }
+  };
+
+  if (isLoading) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400">Loading profile…</div></div>;
+  if (!emp) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-500">Profile not found.</div></div>;
+
+  const activeTab = TABS.find(t => t.key === tab);
+  const isEditing = editing === tab;
+  const readOnly = (name) => !isEditing;
+
+  const Field = (f) => {
+    const err = errors[f.name];
+    const base = `w-full ${f.textarea ? 'px-4 py-2.5' : 'h-11 px-4'} border rounded-xl text-sm text-gray-900 transition-all outline-none ${err ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} ${readOnly(f.name) ? 'bg-gray-50/60 text-gray-600' : 'bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400'}`;
+    const reg = register(f.name, { ...(f.required ? { required: `${f.label} is required` } : {}), ...(f.rules || {}) });
+    return (
+      <div key={f.name} className={`space-y-1.5 ${f.textarea ? 'sm:col-span-2' : ''}`}>
+        <label className="block text-sm font-semibold text-gray-700">{f.label}{f.required && <span className="text-red-500 ml-0.5">*</span>}</label>
+        {f.textarea ? (
+          <textarea rows={2} className={`${base} resize-none`} readOnly={readOnly(f.name)} {...reg} />
+        ) : f.type === 'select' ? (
+          <select className={`${base} ${readOnly(f.name) ? 'pointer-events-none' : ''}`} disabled={readOnly(f.name)} {...reg}>
+            <option value="">Select</option>
+            {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : (
+          <input type={f.type || 'text'} maxLength={f.maxLength} readOnly={readOnly(f.name)}
+            onInput={f.upper ? upper : undefined} className={base} {...reg} />
+        )}
+        {err && <p className="text-xs text-red-500 font-medium">{err.message}</p>}
+      </div>
+    );
+  };
+
+  const roLabel = (label, value) => (
+    <div>
+      <p className="text-xs text-gray-400 font-medium">{label}</p>
+      <p className="text-sm text-gray-900 font-medium">{value || <span className="text-gray-300">—</span>}</p>
+    </div>
+  );
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* ── Profile header ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="h-24 bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-500" />
+        <div className="px-6 sm:px-8 pb-6">
+          <div className="flex flex-col sm:flex-row sm:items-end gap-5 -mt-12">
+            <div className="relative">
+              <div className="w-24 h-24 rounded-2xl ring-4 ring-white shadow-lg bg-gray-100 overflow-hidden flex items-center justify-center">
+                {emp.hr_photourl
+                  ? <img src={emp.hr_photourl} alt={emp.hr_hremployee1} className="w-full h-full object-cover" />
+                  : <span className="text-2xl font-bold text-indigo-500">{initials}</span>}
+              </div>
+              {canEdit && (
+                <label className="absolute -bottom-1 -right-1 w-8 h-8 bg-white rounded-full shadow ring-1 ring-gray-200 flex items-center justify-center cursor-pointer hover:bg-gray-50">
+                  <CameraIcon className="w-4 h-4 text-gray-500" />
+                  <input type="file" accept=".jpg,.jpeg,.png" className="hidden" onChange={e => uploadDoc('Photo', e.target.files?.[0])} />
+                </label>
+              )}
+            </div>
+            <div className="flex-1 pt-2">
+              <div className="flex items-start justify-between flex-wrap gap-3">
+                <div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h1 className="text-2xl font-bold text-gray-900">{emp.hr_hremployee1}</h1>
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${badge.cls}`}>
+                      <badge.icon className="w-3.5 h-3.5" /> {badge.text}
+                    </span>
+                  </div>
+                  <p className="text-gray-500 text-sm mt-0.5 font-medium">{emp.hr_designation || '—'} · {emp.hr_department || '—'}</p>
+                  <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-xs text-gray-500">
+                    <span>ID: <b className="text-gray-700">{(emp.hr_hremployeeid || '').slice(0, 8)}</b></span>
+                    <span>Code: <b className="text-gray-700">{emp.hr_etimecode || '—'}</b></span>
+                    <span>Manager: <b className="text-gray-700">{managerName}</b></span>
+                  </div>
+                </div>
+                {/* Completion */}
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <ProgressRing value={completion.percent} />
+                    <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-gray-800">{completion.percent}%</span>
+                  </div>
+                  <div className="max-w-[180px]">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Profile Completion</p>
+                    {completion.missing?.length
+                      ? <p className="text-xs text-gray-400 mt-0.5">Missing: {completion.missing.join(', ')}</p>
+                      : <p className="text-xs text-emerald-500 mt-0.5 font-medium">All set 🎉</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* HR verification actions (when pending) */}
+          {hrView && status === 'pending' && (
+            <div className="mt-5 flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+              <ExclamationTriangleIcon className="w-5 h-5 text-amber-600" />
+              <span className="text-sm font-medium text-amber-800 flex-1">This profile has changes awaiting verification.</span>
+              <button onClick={() => verifyMutation.mutate({ action: 'approve' })} disabled={verifyMutation.isPending}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50"><CheckCircleIcon className="w-4 h-4" /> Approve</button>
+              <button onClick={() => { const note = window.prompt('What needs changing?') || ''; verifyMutation.mutate({ action: 'request_changes', note }); }} disabled={verifyMutation.isPending}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-orange-700 bg-orange-100 rounded-lg hover:bg-orange-200 disabled:opacity-50">Request Changes</button>
+              <button onClick={() => { const note = window.prompt('Reason for rejection?') || ''; verifyMutation.mutate({ action: 'reject', note }); }} disabled={verifyMutation.isPending}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-red-700 bg-red-100 rounded-lg hover:bg-red-200 disabled:opacity-50"><XCircleIcon className="w-4 h-4" /> Reject</button>
+            </div>
+          )}
+          {status !== 'verified' && status !== 'pending' && emp.hr_verifynote && (
+            <div className="mt-5 bg-orange-50 border border-orange-100 rounded-xl px-4 py-3 text-sm text-orange-800">
+              <b>HR note:</b> {emp.hr_verifynote}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Tabs ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="flex overflow-x-auto border-b border-gray-100">
+          {TABS.map(t => (
+            <button key={t.key} onClick={() => { setTab(t.key); setEditing(null); }}
+              className={`inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              <t.icon className="w-4 h-4" /> {t.label}
+              {t.verify && status === 'verified' && <CheckBadgeIcon className="w-4 h-4 text-emerald-500" />}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-6">
+          {tab === 'documents' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-500 mb-4">Upload your documents (PDF, JPG or PNG).</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {DOC_TYPES.map(dt => {
+                  const existing = docs.find(d => d.hr_name === dt);
+                  return (
+                    <div key={dt} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-800">{dt}</p>
+                        {existing
+                          ? <a href={existing.hr_fileurl} target="_blank" rel="noreferrer" className="text-xs text-emerald-600 font-medium inline-flex items-center gap-1"><CheckCircleIcon className="w-3.5 h-3.5" /> Uploaded — view</a>
+                          : <p className="text-xs text-gray-400">Not uploaded</p>}
+                      </div>
+                      {canEdit && (
+                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 rounded-lg cursor-pointer hover:bg-indigo-100">
+                          <ArrowUpTrayIcon className="w-3.5 h-3.5" /> {uploading === dt ? 'Uploading…' : (existing ? 'Replace' : 'Upload')}
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={e => uploadDoc(dt, e.target.files?.[0])} />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit(v => saveMutation.mutate(v))}>
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-gray-400">{activeTab.label} Details</h2>
+                {canEdit && (isEditing ? (
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { reset(emp); setEditing(null); }} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800">Cancel</button>
+                    <button type="submit" disabled={saveMutation.isPending} className="px-5 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50">{saveMutation.isPending ? 'Saving…' : 'Save'}</button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setEditing(tab)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100"><PencilIcon className="w-4 h-4" /> Edit</button>
+                ))}
+              </div>
+              {activeTab.verify && isEditing && (
+                <div className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                  Editing {activeTab.label} details will require HR verification before the verified badge returns.
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                {activeTab.fields.map(Field)}
+              </div>
+
+              {/* Read-only HR-managed block on the General tab */}
+              {tab === 'general' && (
+                <div className="mt-8 pt-6 border-t border-gray-100">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Employment (HR-managed · read only)</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+                    {roLabel('Work Email', emp.hr_email)}
+                    {roLabel('Department', emp.hr_department)}
+                    {roLabel('Designation', emp.hr_designation)}
+                    {roLabel('Reporting Manager', managerName)}
+                    {roLabel('Role', emp.hr_role?.replace('_', ' '))}
+                    {roLabel('Shift', emp.hr_shiftname)}
+                    {roLabel('Joining Date', (emp.hr_joiningdate || '').slice(0, 10))}
+                    {roLabel('Status', emp.hr_status?.replace('_', ' '))}
+                  </div>
+                </div>
+              )}
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

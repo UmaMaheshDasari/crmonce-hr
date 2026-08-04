@@ -109,11 +109,16 @@ export default function EmployeeDetail() {
                     </span>
                   </div>
                 </div>
-                {canEdit && (
-                  <Link to={`/employees/${id}/edit`} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg transition-all duration-200">
-                    <PencilIcon className="w-[18px] h-[18px]" /> {isHR() ? 'Edit Employee' : 'Edit My Details'}
+                <div className="flex items-center gap-2">
+                  <Link to={isSelf ? '/profile' : `/employees/${id}/profile`} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-4 bg-white text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-200">
+                    <IdentificationIcon className="w-[18px] h-[18px]" /> {isSelf ? 'My Profile' : 'Full Profile'}
                   </Link>
-                )}
+                  {isHR() && (
+                    <Link to={`/employees/${id}/edit`} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg transition-all duration-200">
+                      <PencilIcon className="w-[18px] h-[18px]" /> Edit Employee
+                    </Link>
+                  )}
+                </div>
               </div>
             </div>
           </div>

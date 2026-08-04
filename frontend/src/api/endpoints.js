@@ -18,6 +18,8 @@ export const employeeApi = {
   update: (id, data) => api.patch(`/employees/${id}`, data),
   delete: (id) => api.delete(`/employees/${id}`),
   departments: () => api.get('/employees/meta/departments'),
+  verify: (id, data) => api.patch(`/employees/${id}/verify`, data),   // HR: approve/reject/request_changes
+  profileAudit: (id) => api.get(`/employees/${id}/profile-audit`),
 };
 
 // ── Attendance ───────────────────────────────────────────────────

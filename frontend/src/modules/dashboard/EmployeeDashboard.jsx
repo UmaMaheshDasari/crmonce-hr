@@ -8,7 +8,7 @@ import {
   CurrencyDollarIcon, SunIcon, ArrowRightOnRectangleIcon,
   ArrowLeftOnRectangleIcon, DocumentCheckIcon, BellAlertIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import { dashboardApi, attendanceApi } from '../../api/endpoints';
+import { dashboardApi, attendanceApi, employeeApi, documentApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import MissingPunchModal from '../attendance/MissingPunchModal';
@@ -98,6 +98,18 @@ export default function EmployeeDashboard() {
   const d = data?.data;
   const t = d?.today, m = d?.month, lv = d?.leave;
   const alerts = d?.alerts || [];
+
+  // ESS profile snapshot (completion %, verification, missing docs).
+  const { data: profileRes } = useQuery({ queryKey: ['employee', user?.id], queryFn: () => employeeApi.get(user.id), enabled: !!user?.id });
+  const prof = profileRes?.data;
+  const completion = prof?._completion || { percent: 0, missing: [] };
+  const vstatus = prof?._verifystatus || prof?.hr_verifystatus || 'verified';
+  const { data: myDocsRes } = useQuery({ queryKey: ['documents', user?.id], queryFn: () => documentApi.list({ employeeId: user.id }), enabled: !!user?.id });
+  const REQUIRED_DOCS = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
+  const uploadedNames = new Set((myDocsRes?.data?.data || []).map(x => x.hr_name));
+  const missingDocs = REQUIRED_DOCS.filter(n => !uploadedNames.has(n));
+  const V_TONE = { verified: 'bg-emerald-50 text-emerald-700', pending: 'bg-amber-50 text-amber-700', changes: 'bg-orange-50 text-orange-700', rejected: 'bg-red-50 text-red-700' };
+  const V_TEXT = { verified: 'Verified', pending: 'Pending HR Verification', changes: 'Changes Requested', rejected: 'Rejected' };
   const [correctionModal, setCorrectionModal] = useState({ open: false, date: '', type: '' });
 
   const invalidate = () => {
@@ -163,6 +175,31 @@ export default function EmployeeDashboard() {
           </div>
         </div>
       </div>
+
+      {/* ── Profile completion / verification / documents ─────────────────── */}
+      {(completion.percent < 100 || vstatus !== 'verified' || missingDocs.length > 0) && (
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-3 flex-1 min-w-[200px]">
+            <div className="relative w-12 h-12 flex-shrink-0">
+              <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
+                <circle cx="18" cy="18" r="15.5" fill="none" stroke="#e5e7eb" strokeWidth="4" />
+                <circle cx="18" cy="18" r="15.5" fill="none" stroke="#6366f1" strokeWidth="4" strokeLinecap="round"
+                  strokeDasharray={2 * Math.PI * 15.5} strokeDashoffset={(1 - completion.percent / 100) * 2 * Math.PI * 15.5} />
+              </svg>
+              <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-800">{completion.percent}%</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Profile Completion</p>
+              <p className="text-xs text-gray-400 truncate">{completion.missing?.length ? `Missing: ${completion.missing.join(', ')}` : 'Your profile is complete'}</p>
+            </div>
+          </div>
+          <span className={`text-xs font-semibold px-3 py-1.5 rounded-lg ${V_TONE[vstatus] || V_TONE.verified}`}>{V_TEXT[vstatus] || 'Verified'}</span>
+          {missingDocs.length > 0 && (
+            <span className="text-xs font-medium text-gray-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-lg">Missing docs: {missingDocs.join(', ')}</span>
+          )}
+          <Link to="/profile" className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-colors">Complete Profile</Link>
+        </div>
+      )}
 
       {/* ── Top KPI cards ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
