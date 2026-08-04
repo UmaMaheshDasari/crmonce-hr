@@ -120,12 +120,22 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     try {
       goal = await d365.create(ENTITY, body);
     } catch (err) {
-      // Table not provisioned yet → create it on demand, then retry once.
+      // Table not provisioned yet → create it on demand (single attempt — never
+      // block the request), then retry the create once.
       if (tableMissing(err)) {
         console.warn('[goals/create] table missing — provisioning hr_hrgoals then retrying');
-        const prov = await ensureGoalTable(global.logger || console);
+        const prov = await ensureGoalTable(global.logger || console);   // retry:false
+        if (prov.status === 'locked') {
+          // Dataverse is mid-publish. The startup provisioner keeps retrying in the
+          // background; tell the user to try again shortly.
+          return res.status(503).json({ error: prov.message });
+        }
+        if (prov.status === 'forbidden') {
+          // Missing security role — a config problem, reported distinctly from a lock.
+          return res.status(503).json({ error: prov.message });
+        }
         if (prov.status === 'unavailable') {
-          return res.status(503).json({ error: `Goal table could not be created: ${prov.reason}. Grant the D365 app the System Customizer role.` });
+          return res.status(503).json({ error: `Goal table could not be created: ${prov.reason}` });
         }
         goal = await d365.create(ENTITY, body);
       } else {

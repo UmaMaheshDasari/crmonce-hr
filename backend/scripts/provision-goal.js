@@ -29,7 +29,16 @@ const DRY = !process.argv.includes('--apply');
     return;
   }
   const { ensureGoalTable } = require('../src/services/provision-goal');
-  const result = await ensureGoalTable(console);
-  console.log(`\nResult: ${result.status}${result.reason ? ` — ${result.reason}` : ''}\n`);
-  if (result.status === 'unavailable') process.exit(1);
+  // retry on a customization lock every 30s for up to 10 min (same as startup).
+  const result = await ensureGoalTable(console, { retry: true });
+  console.log(`\nResult: ${result.status}${result.reason ? ` — ${result.reason}` : ''}`);
+  if (result.message) console.log(result.message);
+  console.log('');
+  if (result.status === 'forbidden') {
+    console.error('→ Assign the "System Administrator" or "System Customizer" Dataverse role to the ' +
+      'app registration (Power Platform admin → Environment → Settings → Users + permissions → ' +
+      'Application users), then re-run.');
+    process.exit(2);
+  }
+  if (result.status === 'locked' || result.status === 'unavailable') process.exit(1);
 })().catch(e => { console.error(e.message); process.exit(1); });

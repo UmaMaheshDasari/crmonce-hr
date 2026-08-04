@@ -142,7 +142,9 @@ server.listen(PORT, () => {
       .ensureHolidayTable(logger)
       .catch(err => logger.warn(`[provision] holiday setup skipped: ${err.message}`));
     require('./services/provision-goal')
-      .ensureGoalTable(logger)
+      // retry in the background if Dataverse is mid-customization (locked): every
+      // 30s for up to 10 min. Non-blocking — the server keeps serving meanwhile.
+      .ensureGoalTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] goal setup skipped: ${err.message}`));
   }
 
