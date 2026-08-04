@@ -141,6 +141,9 @@ server.listen(PORT, () => {
     require('./services/provision-holiday')
       .ensureHolidayTable(logger)
       .catch(err => logger.warn(`[provision] holiday setup skipped: ${err.message}`));
+    require('./services/provision-goal')
+      .ensureGoalTable(logger)
+      .catch(err => logger.warn(`[provision] goal setup skipped: ${err.message}`));
   }
 
   // Load the HR holiday calendar into attendance.config so holidays are excluded
