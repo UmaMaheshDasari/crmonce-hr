@@ -107,6 +107,7 @@ app.use('/api/activity',    authenticateToken, activityRoutes);
 app.use('/api/dashboard',   authenticateToken, dashboardRoutes);
 app.use('/api/attendance-requests', authenticateToken, attendanceRequestRoutes);
 app.use('/api/holidays',    authenticateToken, holidayRoutes);
+app.use('/api/company',     authenticateToken, require('./modules/company/company.routes'));
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));
@@ -146,6 +147,12 @@ server.listen(PORT, () => {
       // 30s for up to 10 min. Non-blocking — the server keeps serving meanwhile.
       .ensureGoalTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] goal setup skipped: ${err.message}`));
+    require('./services/provision-company')
+      .ensureCompanyTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] company setup skipped: ${err.message}`));
+    require('./services/provision-employee-columns')
+      .ensureEmployeeColumns(logger)
+      .catch(err => logger.warn(`[provision] employee identity/bank columns skipped: ${err.message}`));
   }
 
   // Load the HR holiday calendar into attendance.config so holidays are excluded

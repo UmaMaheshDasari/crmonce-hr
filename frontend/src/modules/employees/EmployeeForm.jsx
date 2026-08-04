@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { employeeApi } from '../../api/endpoints';
-import { ChevronRightIcon } from '@heroicons/react/24/outline';
+import { employeeApi, documentApi } from '../../api/endpoints';
+import { ChevronRightIcon, ArrowUpTrayIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import Button from '../../components/Button';
 import toast from 'react-hot-toast';
+import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, esicRule, phoneRule } from '../../utils/validators';
 
 const ROLES = ['employee', 'hr_manager', 'recruiter', 'super_admin'];
 const SHIFTS = ['Morning Shift', 'General Shift', 'Noon Shift', 'Evening Shift'];
@@ -16,7 +17,8 @@ const SHIFTS = ['Morning Shift', 'General Shift', 'Noon Shift', 'Evening Shift']
 // reset() triggers, react-hook-form repoints its ref to a fresh, empty DOM
 // node without re-applying the stored value — so the Edit form appeared empty
 // even though the API returned data. Stable components keep the inputs mounted.
-function Field({ label, name, type = 'text', required, register, errors, ...props }) {
+function Field({ label, name, type = 'text', required, register, errors, rules, ...props }) {
+  const registerOpts = { ...(required ? { required: `${label} is required` } : {}), ...(rules || {}) };
   return (
     <div className="space-y-1.5">
       <label className="block text-sm font-semibold text-gray-700">
@@ -26,7 +28,7 @@ function Field({ label, name, type = 'text', required, register, errors, ...prop
       <input
         type={type}
         className={`w-full h-11 px-4 bg-gray-50 border ${errors[name] ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all duration-200`}
-        {...register(name, required ? { required: `${label} is required` } : {})}
+        {...register(name, registerOpts)}
         {...props}
       />
       {errors[name] && <p className="text-xs text-red-500 font-medium">{errors[name].message}</p>}
@@ -53,9 +55,11 @@ export default function EmployeeForm() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm({
+  const { register, handleSubmit, reset, setValue, watch, formState: { errors, isSubmitting } } = useForm({
     defaultValues: { hr_shiftname: 'General Shift', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00' },
   });
+  const [uploadingCheque, setUploadingCheque] = useState(false);
+  const chequeUrl = watch('hr_chequeurl');
 
   const { data: empData } = useQuery({
     queryKey: ['employee', id],
@@ -76,7 +80,16 @@ export default function EmployeeForm() {
         hr_role: e.hr_role, hr_salary: e.hr_salary, hr_joiningdate: e.hr_joiningdate?.split('T')[0],
         hr_status: e.hr_status, hr_address: e.hr_address, hr_etimecode: e.hr_etimecode,
         hr_shiftname: e.hr_shiftname || 'General Shift', hr_shiftstarttime: e.hr_shiftstarttime || '09:00',
-        hr_shiftendtime: e.hr_shiftendtime || '18:00' });
+        hr_shiftendtime: e.hr_shiftendtime || '18:00',
+        // Identity
+        hr_aadhaar: e.hr_aadhaar, hr_pan: e.hr_pan, hr_passport: e.hr_passport,
+        hr_drivinglicence: e.hr_drivinglicence, hr_uan: e.hr_uan, hr_esic: e.hr_esic,
+        hr_pfnumber: e.hr_pfnumber, hr_bloodgroup: e.hr_bloodgroup,
+        hr_emergencycontact: e.hr_emergencycontact, hr_emergencyphone: e.hr_emergencyphone,
+        // Bank
+        hr_bankname: e.hr_bankname, hr_accountholder: e.hr_accountholder,
+        hr_accountnumber: e.hr_accountnumber, hr_ifsc: e.hr_ifsc, hr_branch: e.hr_branch,
+        hr_chequeurl: e.hr_chequeurl });
     }
   }, [empData, reset]);
 
@@ -89,6 +102,28 @@ export default function EmployeeForm() {
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Something went wrong'),
   });
+
+  // Cancelled-cheque upload (edit mode only — needs an employee id to attach to).
+  // Reuses the existing document upload; stores the returned URL on hr_chequeurl.
+  const onChequeUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingCheque(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('employeeId', id);
+      fd.append('type', 'Other');
+      fd.append('name', 'Cancelled Cheque');
+      const res = await documentApi.upload(fd);
+      const url = res.data?.hr_fileurl;
+      if (url) { setValue('hr_chequeurl', url, { shouldDirty: true }); toast.success('Cancelled cheque uploaded'); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Cheque upload failed');
+    } finally {
+      setUploadingCheque(false);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -161,6 +196,67 @@ export default function EmployeeForm() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               <Field label="Basic Salary" name="hr_salary" type="number" placeholder="50000" register={register} errors={errors} />
               <Field label="eTime Office Code" name="hr_etimecode" placeholder="EMP001" register={register} errors={errors} />
+            </div>
+          </div>
+        </div>
+
+        {/* Identity */}
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-50">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-gray-400">Identity</h2>
+          </div>
+          <div className="p-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <Field label="Aadhaar Number" name="hr_aadhaar" rules={aadhaarRule} placeholder="1234 5678 9012" maxLength={12} register={register} errors={errors} />
+              <Field label="PAN Number" name="hr_pan" rules={panRule} placeholder="ABCDE1234F" maxLength={10} onInput={upper} register={register} errors={errors} />
+              <Field label="Passport Number" name="hr_passport" placeholder="A1234567" register={register} errors={errors} />
+              <Field label="Driving Licence" name="hr_drivinglicence" placeholder="AP01 20200012345" register={register} errors={errors} />
+              <Field label="UAN Number" name="hr_uan" rules={uanRule} placeholder="123456789012" maxLength={12} register={register} errors={errors} />
+              <Field label="ESIC Number" name="hr_esic" rules={esicRule} placeholder="10 or 17 digits" register={register} errors={errors} />
+              <Field label="PF Number" name="hr_pfnumber" placeholder="AP/HYD/1234567/000/0001234" register={register} errors={errors} />
+              <SelectField label="Blood Group" name="hr_bloodgroup" register={register}>
+                <option value="">Select</option>
+                {BLOOD_GROUPS.map(b => <option key={b} value={b}>{b}</option>)}
+              </SelectField>
+              <Field label="Emergency Contact" name="hr_emergencycontact" placeholder="Contact name" register={register} errors={errors} />
+              <Field label="Emergency Phone" name="hr_emergencyphone" rules={phoneRule} placeholder="+91 99999 99999" register={register} errors={errors} />
+            </div>
+          </div>
+        </div>
+
+        {/* Bank Details */}
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-50">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-gray-400">Bank Details</h2>
+          </div>
+          <div className="p-6 space-y-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <Field label="Bank Name" name="hr_bankname" placeholder="State Bank of India" register={register} errors={errors} />
+              <Field label="Account Holder Name" name="hr_accountholder" placeholder="As per bank records" register={register} errors={errors} />
+              <Field label="Account Number" name="hr_accountnumber" rules={accountRule} placeholder="9-18 digits" maxLength={18} register={register} errors={errors} />
+              <Field label="IFSC Code" name="hr_ifsc" rules={ifscRule} placeholder="SBIN0001234" maxLength={11} onInput={upper} register={register} errors={errors} />
+              <Field label="Branch" name="hr_branch" placeholder="Branch name" register={register} errors={errors} />
+            </div>
+            {/* Cancelled Cheque upload */}
+            <div className="space-y-1.5">
+              <label className="block text-sm font-semibold text-gray-700">Cancelled Cheque</label>
+              {isEdit ? (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="inline-flex items-center gap-2 h-11 px-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-600 cursor-pointer hover:bg-gray-100 transition-colors">
+                    <ArrowUpTrayIcon className="w-4 h-4" />
+                    {uploadingCheque ? 'Uploading…' : 'Upload cheque (PDF/JPG/PNG)'}
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={onChequeUpload} disabled={uploadingCheque} />
+                  </label>
+                  {chequeUrl && (
+                    <a href={chequeUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600 hover:text-emerald-700">
+                      <CheckCircleIcon className="w-4 h-4" /> View uploaded cheque
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400">Create the employee first, then upload the cancelled cheque from the edit screen.</p>
+              )}
+              <input type="hidden" {...register('hr_chequeurl')} />
             </div>
           </div>
         </div>

@@ -124,6 +124,12 @@ export const dashboardApi = {
   adminSummary: (params) => api.get('/dashboard/admin-summary', { params }), // HR / admin
 };
 
+// ── Company Settings ─────────────────────────────────────────────
+export const companyApi = {
+  get: () => api.get('/company'),
+  update: (data) => api.patch('/company', data),
+};
+
 // ── Documents ────────────────────────────────────────────────────
 export const documentApi = {
   list: (params) => api.get('/documents', { params }),

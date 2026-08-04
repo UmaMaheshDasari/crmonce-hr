@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
+import { companyApi } from '../api/endpoints';
 import NotificationBell from '../components/NotificationBell';
 import {
   HomeIcon, UsersIcon, ClockIcon, CurrencyDollarIcon,
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
+  BuildingOffice2Icon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
@@ -22,6 +25,7 @@ const NAV = [
   { to: '/performance', label: 'Performance',  icon: ChartBarIcon },
   { to: '/goals',       label: 'Goals',        icon: FlagIcon },
   { to: '/documents',   label: 'Documents',    icon: DocumentTextIcon },
+  { to: '/company-settings', label: 'Company Settings', icon: BuildingOffice2Icon, roles: ['super_admin'] },
 ];
 
 const LABEL_MAP = {
@@ -37,6 +41,7 @@ const LABEL_MAP = {
   '/performance': 'Performance',
   '/goals':       'Goals',
   '/documents':   'Documents',
+  '/company-settings': 'Company Settings',
 };
 
 function NavItem({ item, collapsed, onClick }) {
@@ -80,6 +85,12 @@ export default function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Company identity comes from Company Settings — never hardcoded.
+  const { data: companyRes } = useQuery({ queryKey: ['company'], queryFn: companyApi.get, staleTime: 600000 });
+  const company = companyRes?.data;
+  const companyName = company?.hr_name || 'CRMONCE (OPC) PRIVATE LIMITED';
+  const companyLogo = company?.hr_logourl || '/crmonce-logo.png';
+
   const visibleNav = NAV.filter(item => !item.roles || hasRole(...item.roles));
 
   const handleLogout = async () => {
@@ -102,13 +113,14 @@ export default function AppShell() {
     >
       {/* Company header */}
       <div className={`flex items-center h-16 flex-shrink-0 ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'}`}>
-        <div className="w-10 h-10 flex-shrink-0 rounded-xl bg-gradient-to-br from-[#E84C88] to-[#D81B60] flex items-center justify-center" style={{ boxShadow: '0 4px 12px rgba(232, 76, 136, 0.3)' }}>
-          <span className="text-white text-base font-bold tracking-tight">C</span>
+        <div className="w-10 h-10 flex-shrink-0 rounded-xl bg-white flex items-center justify-center overflow-hidden" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+          <img src={companyLogo} alt={companyName} className="w-full h-full object-contain p-0.5"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         </div>
         {!isCollapsed && (
           <div className="min-w-0 leading-tight">
-            <span className="block font-semibold text-white text-[16px] tracking-tight truncate">CRMONCE</span>
-            <span className="block text-[11px] text-slate-400 font-medium tracking-wide uppercase truncate">(OPC) LTD</span>
+            <span className="block font-semibold text-white text-[15px] tracking-tight truncate">{companyName.split('(')[0].trim()}</span>
+            <span className="block text-[11px] text-slate-400 font-medium tracking-wide uppercase truncate">HR System</span>
           </div>
         )}
         {mobile && (

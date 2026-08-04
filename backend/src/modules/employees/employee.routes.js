@@ -5,8 +5,20 @@ const authService = require('../../services/auth.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
 const { validateCompanyEmail } = require('../../services/email/sender');
+const { validateEmployeeIdentity } = require('../../services/validators');
 
 const ENTITY = d365.constructor.entities.employee;
+
+// Identity + Bank columns (provisioned by provision-employee-columns.js). Selected
+// as OPTIONAL so the module keeps working before the columns exist.
+const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_drivinglicence,hr_uan,hr_esic,hr_pfnumber,hr_bloodgroup,hr_emergencyphone';
+const BANK_FIELDS = 'hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch,hr_chequeurl';
+// Every optional column that may not exist yet — stripped on a missing-property
+// error so a not-yet-provisioned field never blocks create/edit.
+const OPTIONAL_WRITE_FIELDS = [
+  'hr_shiftname', 'hr_shiftstarttime', 'hr_shiftendtime',
+  ...IDENTITY_FIELDS.split(','), ...BANK_FIELDS.split(','),
+];
 
 // Apply default shift when the (optional) columns are absent or empty, so the
 // Employee module works before the Dataverse columns exist / migration runs.
@@ -19,22 +31,26 @@ function withShiftDefaults(e) {
   return e;
 }
 
-// create/update that retry WITHOUT the shift columns if Dataverse rejects them
-// as unknown — so a not-yet-created field never blocks create/edit.
+// create/update that retry WITHOUT the optional columns (shift + identity + bank)
+// if Dataverse rejects them as unknown — so a not-yet-provisioned field never
+// blocks create/edit.
+const stripOptional = (data) => {
+  const rest = { ...data };
+  for (const f of OPTIONAL_WRITE_FIELDS) delete rest[f];
+  return rest;
+};
 async function createStrippingOptionalShift(entity, data) {
   try { return await d365.create(entity, data); }
   catch (err) {
     if (!d365._isMissingProperty(err)) throw err;
-    const { hr_shiftname, hr_shiftstarttime, hr_shiftendtime, ...rest } = data;
-    return d365.create(entity, rest);
+    return d365.create(entity, stripOptional(data));
   }
 }
 async function updateStrippingOptionalShift(entity, id, data) {
   try { return await d365.update(entity, id, data); }
   catch (err) {
     if (!d365._isMissingProperty(err)) throw err;
-    const { hr_shiftname, hr_shiftstarttime, hr_shiftendtime, ...rest } = data;
-    return d365.update(entity, id, rest);
+    return d365.update(entity, id, stripOptional(data));
   }
 }
 
@@ -80,7 +96,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     }
     const emp = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,_hr_manager_value',
-      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime',
+      optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,${IDENTITY_FIELDS},${BANK_FIELDS}`,
     });
     res.json(labelsForEntity(ENTITY, withShiftDefaults(emp)));
   } catch (err) { next(err); }
@@ -111,6 +127,10 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     // own leave requests (external providers like gmail are rejected).
     const ev = validateCompanyEmail(raw.hr_email, 'Employee');
     if (!ev.ok) return res.status(400).json({ error: ev.reason });
+    // Validate + normalise identity/bank fields (PAN, Aadhaar, IFSC, account, …).
+    const idv = validateEmployeeIdentity(raw);
+    if (!idv.ok) return res.status(400).json({ error: Object.values(idv.errors)[0], fields: idv.errors });
+    Object.assign(raw, idv.values);   // upper-cased PAN/IFSC, stripped Aadhaar, etc.
     const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
@@ -132,6 +152,9 @@ router.patch('/:id', requirePermission('employee:write'), async (req, res, next)
       const ev = validateCompanyEmail(raw.hr_email, 'Employee');
       if (!ev.ok) return res.status(400).json({ error: ev.reason });
     }
+    const idv = validateEmployeeIdentity(raw);
+    if (!idv.ok) return res.status(400).json({ error: Object.values(idv.errors)[0], fields: idv.errors });
+    Object.assign(raw, idv.values);
     const updateData = sanitizeEmployee(raw);
     if (password) updateData.hr_password = await authService.hashPassword(password);
     const emp = await updateStrippingOptionalShift(ENTITY, req.params.id, updateData);

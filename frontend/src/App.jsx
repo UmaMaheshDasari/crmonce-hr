@@ -21,6 +21,7 @@ import TaxDeclarationPage from './modules/payroll/TaxDeclarationPage';
 import GoalsPage from './modules/performance/GoalsPage';
 import ApprovalAction from './modules/attendance/ApprovalAction';
 import ActivitiesPage from './modules/activity/ActivitiesPage';
+import CompanySettingsPage from './modules/company/CompanySettingsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 300000, refetchOnWindowFocus: false } },
@@ -62,6 +63,7 @@ function AppRoutes() {
         <Route path="tax-declarations" element={<TaxDeclarationPage />} />
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="activities" element={<ActivitiesPage />} />
+        <Route path="company-settings" element={<ProtectedRoute roles={['super_admin']}><CompanySettingsPage /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
