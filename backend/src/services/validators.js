@@ -109,8 +109,8 @@ function validateEmail(v) {
 }
 
 // ── Enum helpers (Gender, Marital Status) ──
-const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say'];
-const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
+const GENDERS = ['Male', 'Female'];
+const MARITAL = ['Single', 'Married'];
 const enumValidator = (allowed, label) => (v) => {
   if (empty(v)) return { ok: true, value: '' };
   const s = String(v).trim();

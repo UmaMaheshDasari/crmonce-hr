@@ -14,8 +14,8 @@ import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRu
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
 
-const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say'];
-const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
+const GENDERS = ['Male', 'Female'];
+const MARITAL = ['Single', 'Married'];
 const DOC_TYPES = ['Aadhaar Card', 'PAN Card', 'Passport', 'Driving Licence', 'Cancelled Cheque', 'Passbook', 'Photo'];
 
 const FORM_TABS = [
