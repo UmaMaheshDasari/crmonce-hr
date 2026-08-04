@@ -128,7 +128,10 @@ function AssignGoalModal({ onClose }) {
   const mutation = useMutation({
     mutationFn: () => goalsApi.create(form),
     onSuccess: () => { toast.success('Goal assigned successfully!'); qc.invalidateQueries({ queryKey: ['goals'] }); onClose(); },
-    onError: () => toast.error('Failed to assign goal'),
+    // Surface the ACTUAL backend error (e.g. "Please select an employee.",
+    // "Weightage must be 0–100", or the exact Dataverse rejection) — never a
+    // generic message.
+    onError: (e) => toast.error(e.response?.data?.error || e.message || 'Failed to assign goal'),
   });
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
