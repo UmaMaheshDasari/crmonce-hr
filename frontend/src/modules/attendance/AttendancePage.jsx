@@ -340,7 +340,6 @@ export default function AttendancePage() {
               <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
               <input type="date" min={startDate || undefined} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={from} onChange={e => { setFrom(guardDate(e.target.value)); setRange('custom'); setPage(1); }} />
             </div>
-            {startDate && <p className="text-[10px] text-gray-400 mt-1">Available from {startDate}</p>}
           </div>
           <div className="flex-1 min-w-[160px]">
             <label className="block text-xs font-medium text-gray-500 mb-1.5">To Date</label>
