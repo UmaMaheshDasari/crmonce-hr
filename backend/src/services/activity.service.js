@@ -90,6 +90,23 @@ async function fromLeaves() {
   } catch (_) { return []; }
 }
 
+// Recently assigned performance goals → "Goal Assigned" activity.
+async function fromGoals() {
+  try {
+    const { data } = await d365.getListOptional(E.goal, {
+      select: 'hr_hrgoalid,hr_hrgoal1,createdon',
+      optionalSelect: 'hr_assignedby,hr_employeename',
+      orderby: 'createdon desc', top: 6,
+    });
+    return (data || []).map(r => ({
+      id: 'goal-' + r.hr_hrgoalid, category: 'Performance', type: 'goal_assigned',
+      title: 'Goal Assigned', name: r.hr_assignedby || 'HR',
+      meta: `${r.hr_assignedby || 'HR'} assigned a new goal to ${r.hr_employeename || 'an employee'}`,
+      time: r.createdon,
+    }));
+  } catch (_) { return []; }
+}
+
 async function fromEmployees() {
   try {
     const { data } = await d365.getList(E.employee, {
@@ -124,7 +141,7 @@ let cache = null, cacheAt = 0;
 async function recent(limit = 20) {
   const now = Date.now();
   if (!cache || now - cacheAt >= 15000) {                              // short TTL (30s polling)
-    const parts = await Promise.all([fromAttendance(), fromLeaves(), fromEmployees(), fromPayroll(), fromDocuments(), fromHolidays()]);
+    const parts = await Promise.all([fromAttendance(), fromLeaves(), fromEmployees(), fromPayroll(), fromDocuments(), fromHolidays(), fromGoals()]);
     cache = [...runtime(), ...parts.flat()]
       .filter(a => a.time)
       .sort((a, b) => new Date(b.time) - new Date(a.time));

@@ -268,10 +268,39 @@ function attendanceException(d) {
   return { subject, html: layout({ title: subject, preheader: `${d.issueLabel} on ${d.date} — action needed`, content }) };
 }
 
+/**
+ * New performance goal assigned → email to the employee.
+ * d: { employeeName, goalTitle, description, quarter, financialYear, priority,
+ *      weightage, dueDate, assignedBy, assignedOn, viewUrl }
+ */
+function goalAssigned(d) {
+  const subject = 'New Performance Goal Assigned';
+  const rows = [
+    ['Employee', esc(d.employeeName)],
+    ['Goal Title', `<strong>${esc(d.goalTitle)}</strong>`],
+    ['Description', longText(d.description || '—')],
+    ['Quarter', esc(d.quarter)],
+    ['Financial Year', esc(d.financialYear)],
+    ['Priority', statusBadge(d.priority)],
+    ['Weightage', `${esc(d.weightage)}%`],
+    ['Due Date', esc(d.dueDate || '—')],
+    ['Assigned By', esc(d.assignedBy)],
+    ['Assigned On', esc(d.assignedOn)],
+  ];
+  const content =
+    `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Hello ${esc(d.employeeName)},</p>` +
+    `<p style="margin:0 0 4px;color:#374151;">A new performance goal has been assigned to you.</p>` +
+    summaryCard('Goal Details', rows) +
+    banner('Please log in to the HR Portal to review and update your progress.') +
+    `<div style="text-align:center;margin:22px 0 6px;">${button('View Goal', d.viewUrl)}</div>`;
+  return { subject, html: layout({ title: subject, preheader: `New goal assigned: ${d.goalTitle}`, content }) };
+}
+
 module.exports = {
   // components (exported for tests/reuse)
   statusBadge, button, profileCard, summaryCard, banner, layout,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
+  goalAssigned,
   _esc: esc, _longText: longText,
 };

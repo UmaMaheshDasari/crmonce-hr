@@ -3,6 +3,7 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
 const { ensureGoalTable } = require('../../services/provision-goal');
+const { notifyGoalAssigned } = require('../../services/goal-notify.service');
 
 // hr_hrgoals — a TEXT-column table (see services/provision-goal.js). Quarter /
 // Priority / Status are stored as their plain string codes ('Q1', 'medium',
@@ -11,13 +12,15 @@ const { ensureGoalTable } = require('../../services/provision-goal');
 // and lets the frontend read the codes back verbatim (STATUS_CONFIG[goal.hr_status]).
 const ENTITY = d365.constructor.entities.goal;   // 'hr_hrgoals'
 const HR_ROLES = ['super_admin', 'hr_manager'];
-const SELECT_FIELDS = [
+const CORE_FIELDS = [
   'hr_hrgoalid', 'hr_hrgoal1', 'hr_description', 'hr_quarter', 'hr_financialyear',
   'hr_status', 'hr_priority', 'hr_progress', 'hr_weightage', 'hr_selfrating',
   'hr_managerrating', 'hr_selfcomments', 'hr_managercomments', 'hr_duedate',
   'hr_keyresults', 'hr_employeeid', 'hr_employeename', 'hr_assignedby',
   'hr_assigneddate', 'createdon', 'modifiedon',
 ].join(',');
+// Notification-audit columns — optional so a table missing them still returns goals.
+const AUDIT_FIELDS = 'hr_emailsent,hr_emailsenttime,hr_notificationcreated';
 
 // Quote a value for an OData string-column filter (escape single quotes).
 const q = (v) => `'${String(v).replace(/'/g, "''")}'`;
@@ -41,8 +44,9 @@ router.get('/', async (req, res, next) => {
     if (year) filters.push(`hr_financialyear eq ${q(year)}`);
     if (status) filters.push(`hr_status eq ${q(status)}`);
 
-    const result = await d365.getList(ENTITY, {
-      select: SELECT_FIELDS,
+    const result = await d365.getListOptional(ENTITY, {
+      select: CORE_FIELDS,
+      optionalSelect: AUDIT_FIELDS,   // dropped automatically if not yet provisioned
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
     });
@@ -60,7 +64,7 @@ router.get('/', async (req, res, next) => {
 // GET /:id  — get single goal
 router.get('/:id', async (req, res, next) => {
   try {
-    const goal = await d365.getById(ENTITY, req.params.id, { select: SELECT_FIELDS });
+    const goal = await d365.getByIdOptional(ENTITY, req.params.id, { select: CORE_FIELDS, optionalSelect: AUDIT_FIELDS });
     const isHR = HR_ROLES.includes(req.user.role);
     if (!isHR && goal.hr_employeeid !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
@@ -142,7 +146,17 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
         throw err;
       }
     }
-    res.status(201).json(goal);
+
+    // Goal is now safely in Dataverse. Fire the assignment notifications (email +
+    // in-app + activity). Best-effort: a notification failure NEVER fails or rolls
+    // back the goal — it stays assigned. Audit is returned for transparency.
+    const notification = await notifyGoalAssigned({
+      goal,
+      assigner: { name: req.user?.name, email: req.user?.email },
+      employeeId,
+    });
+
+    res.status(201).json({ ...goal, _notification: notification });
   } catch (err) {
     console.error('[goals/create] FAILED:', err.message);
     return res.status(err.status || 400).json({ error: err.message || 'Failed to create goal' });

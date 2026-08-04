@@ -76,6 +76,10 @@ const COLUMNS = [
   str('hr_EmployeeName', 'Employee Name', 200),
   str('hr_AssignedBy', 'Assigned By', 200),
   str('hr_AssignedDate', 'Assigned Date', 30),
+  // Notification audit trail (written after the assignment email/notification).
+  str('hr_EmailSent', 'Email Sent', 10),              // 'sent' | 'failed'
+  str('hr_EmailSentTime', 'Email Sent Time', 30),     // ISO timestamp
+  str('hr_NotificationCreated', 'Notification Created', 10),  // 'true' | 'false'
 ];
 
 const ENTITY_BODY = {
