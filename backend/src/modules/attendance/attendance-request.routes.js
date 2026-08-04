@@ -120,17 +120,28 @@ router.post('/setup', requireRole('super_admin'), async (req, res, next) => {
 router.post('/', requirePermission('attendance:read'), async (req, res, next) => {
   try {
     const { attendanceDate, punchType, requestedTime, reason, remarks, attachmentUrl } = req.body;
+    const dateOnly = String(attendanceDate || '').slice(0, 10);
     if (!attendanceDate || !punchType || !requestedTime) {
-      return res.status(400).json({ error: 'Attendance date, punch type and requested time are required' });
+      return res.status(400).json({ error: 'Attendance date, correction type and correct time are required' });
     }
-    if (!PUNCH_TYPES[punchType]) return res.status(400).json({ error: 'Invalid punch type' });
-    if (!/^\d{1,2}:\d{2}$/.test(requestedTime)) return res.status(400).json({ error: 'Requested time must be HH:MM' });
-    if (attendanceDate > time.istDateStr()) return res.status(400).json({ error: 'Cannot request a correction for a future date' });
+    if (!PUNCH_TYPES[punchType]) return res.status(400).json({ error: 'Invalid correction type' });
+    if (!/^\d{1,2}:\d{2}$/.test(requestedTime)) return res.status(400).json({ error: 'Correct time must be HH:MM' });
+    if (!String(reason || '').trim()) return res.status(400).json({ error: 'Reason is required' });   // #8
+    if (dateOnly > time.istDateStr()) return res.status(400).json({ error: 'Cannot request a correction for a future date' });
+
+    // #8: no duplicate — block a second PENDING request for the same day.
+    try {
+      const { data: dupes } = await d365.getList(REQ, {
+        filter: `hr_employeeid eq '${req.user.id}' and hr_attendancedate eq '${dateOnly}' and hr_status eq 'pending'`,
+        top: 1,
+      });
+      if (dupes && dupes.length) return res.status(409).json({ error: 'A correction request for this date is already pending approval.' });
+    } catch (_) { /* table not provisioned yet — robustCreateRequest handles that */ }
 
     // Every value is a STRING — hr_punchtype and hr_status are Edm.String (Text)
     // columns in Dataverse, so we store the string code, never an option-set int.
     const body = {
-      hr_name: `Missing Punch — ${req.user.name} — ${attendanceDate}`,
+      hr_name: `Attendance Correction — ${req.user.name} — ${dateOnly}`,
       hr_employeeid: req.user.id, hr_employeename: req.user.name, hr_employeeemail: req.user.email || '',
       hr_attendancedate: String(attendanceDate).slice(0, 10),
       hr_punchtype: String(punchType),          // 'lunch_out' | 'missing_check_out' | …  (Text)
@@ -148,8 +159,8 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     const created = await robustCreateRequest(body);
 
     // Activity + emails (best-effort, never block the response).
-    activity.record({ category: 'Attendance', type: 'correction_submitted', title: 'Missing Punch Request',
-      name: req.user.name, meta: `${PUNCH_TYPES[punchType]} @ ${requestedTime} on ${attendanceDate}` });
+    activity.record({ category: 'Attendance', type: 'correction_submitted', title: 'Attendance Correction Request',
+      name: req.user.name, meta: `${PUNCH_TYPES[punchType]} @ ${requestedTime} on ${dateOnly}` });
     requestNotify.emailApplyAcknowledgement({ type: 'missing_punch', toEmail: req.user.email, employeeName: req.user.name, approverName: 'HR' });
     (async () => {
       try {

@@ -260,16 +260,9 @@ router.post('/checkin', requirePermission('attendance:read'), async (req, res, n
     const shift = await getEmployeeShift(employeeId);
     const { today, record } = await findTodayRecord(employeeId);
 
-    // Forgot-checkout: never silently start a new session over an open prior day.
-    const openPrior = await findOpenPriorRecord(employeeId, today);
-    if (openPrior && !record) {
-      return res.status(409).json({
-        error: 'Previous attendance is incomplete',
-        code: 'FORGOT_CHECKOUT',
-        incompletePrevious: labelsForEntity('hr_hrattendances', openPrior),
-      });
-    }
-
+    // NOTE: an incomplete PRIOR day never blocks today's punch. Employees can always
+    // check in/out; a forgotten checkout is fixed separately via an Attendance
+    // Correction request (which only edits that past record on approval).
     if (!record) {
       const c = computeSession([{ t: nowHHMM(), d: 'in' }], shift);
       const created = await d365.create(ENTITY, {

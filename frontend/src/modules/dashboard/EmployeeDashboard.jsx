@@ -5,7 +5,7 @@ import { format, startOfMonth, endOfMonth, subMonths, startOfYear, endOfYear, su
 import toast from 'react-hot-toast';
 import {
   CheckCircleIcon, XCircleIcon, ClockIcon, CalendarDaysIcon, BriefcaseIcon,
-  CurrencyDollarIcon, SunIcon, ExclamationTriangleIcon, ArrowRightOnRectangleIcon,
+  CurrencyDollarIcon, SunIcon, ArrowRightOnRectangleIcon,
   ArrowLeftOnRectangleIcon, DocumentCheckIcon,
 } from '@heroicons/react/24/outline';
 import { dashboardApi, attendanceApi } from '../../api/endpoints';
@@ -186,16 +186,6 @@ export default function EmployeeDashboard() {
               {now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
             </p>
           </div>
-
-          {t?.missingCheckout && (
-            <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-              <ExclamationTriangleIcon className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-amber-800">
-                Missing check-out on <span className="font-semibold">{fmtDay(t.missingCheckout.date)}</span>.{' '}
-                <Link to="/attendance" className="font-semibold underline">Submit a correction →</Link>
-              </p>
-            </div>
-          )}
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             <Stat label="First Punch" value={t?.firstPunch || '—'} />

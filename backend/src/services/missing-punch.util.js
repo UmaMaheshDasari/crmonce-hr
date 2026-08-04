@@ -11,11 +11,19 @@ const { normalizePunches } = require('./attendance.util');
 
 const toMin = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 
+// Attendance Correction types. The "Correct Time" is inserted into the day's
+// punches on approval; the type is descriptive (drives the request label/reason).
 const PUNCH_TYPES = {
   missing_check_in: 'Missing Check In',
   missing_check_out: 'Missing Check Out',
-  lunch_out: 'Lunch Out',
-  lunch_in: 'Lunch In',
+  missed_break_out: 'Missed Break Out',
+  missed_break_in: 'Missed Break In',
+  device_failure: 'Device Failure',
+  web_checkin_issue: 'Web Check-in Issue',
+  other: 'Other',
+  // legacy values kept for backward compatibility with existing records:
+  lunch_out: 'Missed Break Out',
+  lunch_in: 'Missed Break In',
 };
 
 /**

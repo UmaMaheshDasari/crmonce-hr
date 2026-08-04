@@ -5,8 +5,15 @@
  */
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { detectMissingPunches, insertPunchTime } = require('../src/services/missing-punch.util');
+const { detectMissingPunches, insertPunchTime, PUNCH_TYPES } = require('../src/services/missing-punch.util');
 const { computeSession } = require('../src/services/attendance.util');
+
+// ── Attendance Correction types (redesigned form) ────────────────────────────
+test('All redesigned Correction Types are recognised', () => {
+  for (const t of ['missing_check_in', 'missing_check_out', 'missed_break_out', 'missed_break_in', 'device_failure', 'web_checkin_issue', 'other']) {
+    assert.ok(PUNCH_TYPES[t], `correction type "${t}" is valid`);
+  }
+});
 
 // ── Detection ────────────────────────────────────────────────────────────────
 test('Missing Lunch OUT — 09:00 IN, 14:15 IN, 19:00 OUT → odd count flagged', () => {

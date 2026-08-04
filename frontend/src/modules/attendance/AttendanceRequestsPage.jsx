@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { CheckIcon, XMarkIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, XMarkIcon, ClockIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { attendanceRequestApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
+import MissingPunchModal from './MissingPunchModal';
 
 const STATUS_STYLE = {
   pending: 'bg-amber-50 text-amber-700', approved: 'bg-emerald-50 text-emerald-700', rejected: 'bg-red-50 text-red-700',
@@ -15,6 +16,7 @@ export default function AttendanceRequestsPage() {
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [comment, setComment] = useState({});   // per-request comment
+  const [modalOpen, setModalOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['attendance-requests', statusFilter],
@@ -35,15 +37,18 @@ export default function AttendanceRequestsPage() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Attendance Requests</h1>
-          <p className="text-sm text-gray-400">Missing Punch corrections {isHR() ? '— review & approve' : '— your submitted requests'}</p>
+          <p className="text-sm text-gray-400">Attendance corrections {isHR() ? '— review & approve' : '— your submitted requests'}</p>
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
-          <option value="">All Status</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button icon={PlusIcon} onClick={() => setModalOpen(true)}>Request Attendance Correction</Button>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
@@ -99,6 +104,8 @@ export default function AttendanceRequestsPage() {
           </table>
         </div>
       </div>
+
+      <MissingPunchModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );
 }
