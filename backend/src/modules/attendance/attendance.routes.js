@@ -541,14 +541,24 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     select: 'hr_days,hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
     filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
   });
+  // Leave offsets Absent by WORKING days only (weekends/holidays inside a leave
+  // are never "would-be-absent" days). Count per-date over [from, capTo] so the
+  // Absent CARD matches the /absentees ROWS exactly (both exclude working leave
+  // days). Calendar-day counting (resolveDays) over-subtracts and made them differ.
   const leaveByEmp = {};
   (leaves || []).forEach(l => {
-    const d = String(l.hr_fromdate || '').slice(0, 10);
-    if (d < from || d > to) return;
-    if (d > today) return;                                                // future leave doesn't offset elapsed Absent
-    // resolveDays: use hr_days when set, else the inclusive from→to span, so a
-    // blank hr_days never makes an approved leave count as 0 days.
-    leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate);
+    const lf = String(l.hr_fromdate || '').slice(0, 10);
+    const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+    if (!lf) return;
+    const start = lf < from ? from : lf;
+    const stop = lt > capTo ? capTo : lt;                                 // elapsed window only
+    if (stop < start) return;
+    const end = new Date(`${stop}T00:00:00Z`);
+    for (let dt = new Date(`${start}T00:00:00Z`); dt <= end; dt.setUTCDate(dt.getUTCDate() + 1)) {
+      const ds = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+      if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(dt.getUTCDay())) continue;   // working days only
+      leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + 1;
+    }
   });
 
   const rc = rangeCounts(from, to);
