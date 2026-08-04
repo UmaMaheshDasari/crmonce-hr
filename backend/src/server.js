@@ -156,6 +156,9 @@ server.listen(PORT, () => {
     require('./services/provision-payroll-columns')
       .ensurePayrollColumns(logger)
       .catch(err => logger.warn(`[provision] payroll columns skipped: ${err.message}`));
+    require('./services/provision-profile-audit')
+      .ensureProfileAuditTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] profile-audit table skipped: ${err.message}`));
   }
 
   // Load the HR holiday calendar into attendance.config so holidays are excluded

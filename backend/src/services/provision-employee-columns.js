@@ -18,6 +18,10 @@ const str = (schema, display, maxLength = 200) => ({
   '@odata.type': 'Microsoft.Dynamics.CRM.StringAttributeMetadata',
   SchemaName: schema, MaxLength: maxLength, FormatName: { Value: 'Text' }, RequiredLevel: req(), DisplayName: label(display), Description: label(display),
 });
+const memo = (schema, display, maxLength = 2000) => ({
+  '@odata.type': 'Microsoft.Dynamics.CRM.MemoAttributeMetadata',
+  SchemaName: schema, MaxLength: maxLength, Format: 'Text', RequiredLevel: req(), DisplayName: label(display), Description: label(display),
+});
 
 // SchemaName → logical name (lower-cased) must match employee.routes select fields.
 const COLUMNS = [
@@ -30,7 +34,28 @@ const COLUMNS = [
   str('hr_ESIC', 'ESIC Number', 20),
   str('hr_PFNumber', 'PF Number', 30),
   str('hr_BloodGroup', 'Blood Group', 5),
+  // Personal
+  str('hr_AltPhone', 'Alternate Mobile', 20),
+  str('hr_PersonalEmail', 'Personal Email', 120),
+  str('hr_DOB', 'Date of Birth', 20),
+  str('hr_Gender', 'Gender', 20),
+  str('hr_MaritalStatus', 'Marital Status', 20),
+  str('hr_Nationality', 'Nationality', 60),
+  str('hr_PhotoUrl', 'Photo', 500),
+  // Address
+  memo('hr_PermAddress', 'Permanent Address'),
+  str('hr_City', 'City', 60),
+  str('hr_State', 'State', 60),
+  str('hr_Country', 'Country', 60),
+  str('hr_Pincode', 'PIN Code', 10),
+  // Emergency
   str('hr_EmergencyPhone', 'Emergency Phone', 20),
+  str('hr_EmergencyRelation', 'Emergency Relationship', 40),
+  // Verification workflow
+  str('hr_VerifyStatus', 'Verification Status', 20),   // verified | pending | rejected | changes
+  str('hr_VerifiedBy', 'Verified By', 200),
+  str('hr_VerifiedDate', 'Verified Date', 30),
+  memo('hr_VerifyNote', 'Verification Note'),
   // Bank
   str('hr_BankName', 'Bank Name', 120),
   str('hr_AccountHolder', 'Account Holder Name', 120),

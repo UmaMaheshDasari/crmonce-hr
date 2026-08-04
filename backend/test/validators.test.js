@@ -6,7 +6,6 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const v = require('../src/services/validators');
 
-// A Verhoeff-valid 12-digit Aadhaar (2-9 start). 234123412346 has checksum digit 6.
 const VALID_AADHAAR = '234123412346';
 
 test('PAN: valid is upper-cased; invalid rejected', () => {
@@ -16,12 +15,13 @@ test('PAN: valid is upper-cased; invalid rejected', () => {
   assert.deepStrictEqual(v.validatePAN(''), { ok: true, value: '' });  // optional
 });
 
-test('Aadhaar: Verhoeff checksum enforced', () => {
-  assert.strictEqual(v.verhoeffValid(VALID_AADHAAR), true);
+test('Aadhaar: exactly 12 digits', () => {
   assert.strictEqual(v.validateAadhaar(VALID_AADHAAR).ok, true);
-  assert.strictEqual(v.validateAadhaar('234123412345').ok, false);  // wrong check digit
-  assert.strictEqual(v.validateAadhaar('123456789012').ok, false);  // starts with 1
+  assert.strictEqual(v.validateAadhaar('123456789012').ok, true);   // any 12 digits
+  assert.strictEqual(v.validateAadhaar('1234 5678 9012').value, '123456789012');  // spaces stripped
   assert.strictEqual(v.validateAadhaar('12345').ok, false);         // too short
+  assert.strictEqual(v.validateAadhaar('1234567890123').ok, false); // too long
+  assert.strictEqual(v.validateAadhaar('12345678901a').ok, false);  // non-digit
 });
 
 test('IFSC: 4 letters + 0 + 6 alnum, upper-cased', () => {

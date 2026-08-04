@@ -6,18 +6,24 @@ const { requireRole, requirePermission } = require('../../middleware/auth.middle
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
 const { validateCompanyEmail } = require('../../services/email/sender');
 const { validateEmployeeIdentity } = require('../../services/validators');
+const profile = require('../../services/profile.service');
 
 const ENTITY = d365.constructor.entities.employee;
 
-// Identity + Bank columns (provisioned by provision-employee-columns.js). Selected
-// as OPTIONAL so the module keeps working before the columns exist.
-const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_drivinglicence,hr_uan,hr_esic,hr_pfnumber,hr_bloodgroup,hr_emergencyphone';
+// ESS columns (provisioned by provision-employee-columns.js). Selected as OPTIONAL
+// so the module keeps working before the columns exist.
+const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_drivinglicence,hr_uan,hr_esic,hr_pfnumber,hr_bloodgroup';
+const PERSONAL_FIELDS = 'hr_altphone,hr_personalemail,hr_dob,hr_gender,hr_maritalstatus,hr_nationality,hr_photourl';
+const ADDRESS_FIELDS = 'hr_permaddress,hr_city,hr_state,hr_country,hr_pincode';
+const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
+const VERIFY_FIELDS = 'hr_verifystatus,hr_verifiedby,hr_verifieddate,hr_verifynote';
 const BANK_FIELDS = 'hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch,hr_chequeurl';
+const ESS_OPTIONAL_SELECT = [IDENTITY_FIELDS, PERSONAL_FIELDS, ADDRESS_FIELDS, EMERGENCY_FIELDS, VERIFY_FIELDS, BANK_FIELDS].join(',');
 // Every optional column that may not exist yet — stripped on a missing-property
 // error so a not-yet-provisioned field never blocks create/edit.
 const OPTIONAL_WRITE_FIELDS = [
   'hr_shiftname', 'hr_shiftstarttime', 'hr_shiftendtime',
-  ...IDENTITY_FIELDS.split(','), ...BANK_FIELDS.split(','),
+  ...ESS_OPTIONAL_SELECT.split(','),
 ];
 
 // Apply default shift when the (optional) columns are absent or empty, so the
@@ -96,9 +102,12 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     }
     const emp = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,_hr_manager_value',
-      optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,${IDENTITY_FIELDS},${BANK_FIELDS}`,
+      optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,${ESS_OPTIONAL_SELECT}`,
     });
-    res.json(labelsForEntity(ENTITY, withShiftDefaults(emp)));
+    const out = labelsForEntity(ENTITY, withShiftDefaults(emp));
+    out._completion = profile.computeCompletion(out);          // { percent, missing, … }
+    out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
+    res.json(out);
   } catch (err) { next(err); }
 });
 
@@ -146,16 +155,11 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
   } catch (err) { next(err); }
 });
 
-// Fields an employee may edit on their OWN record (personal + identity + bank).
-// Never role, status, salary, department, designation, shift, email or password.
-const SELF_EDITABLE = new Set([
-  'hr_phone', 'hr_address', 'hr_emergencycontact', 'hr_emergencyphone', 'hr_bloodgroup',
-  'hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_drivinglicence', 'hr_uan', 'hr_esic', 'hr_pfnumber',
-  'hr_bankname', 'hr_accountholder', 'hr_accountnumber', 'hr_ifsc', 'hr_branch', 'hr_chequeurl',
-]);
-
-// PATCH /api/employees/:id — HR edits anyone; an employee may edit their OWN
-// personal/identity/bank details (self-service).
+// PATCH /api/employees/:id — HR edits anyone; an employee may edit ONLY their OWN
+// personal/identity/address/emergency/bank details (ESS self-service). The backend
+// whitelist (profile.SELF_EDITABLE) is the security boundary — a hand-crafted
+// request cannot touch restricted fields (ID/code/email/dept/designation/manager/
+// salary/role/shift/employment-type/joining-date/status).
 router.patch('/:id', async (req, res, next) => {
   try {
     const isHRWrite = ['super_admin', 'hr_manager'].includes(req.user.role);
@@ -164,12 +168,12 @@ router.patch('/:id', async (req, res, next) => {
 
     const { password, ...raw } = req.body;
 
-    // Employees editing themselves: keep only the whitelisted personal fields.
+    // Employees editing themselves: keep ONLY the whitelisted fields.
     if (!isHRWrite) {
-      Object.keys(raw).forEach(k => { if (!SELF_EDITABLE.has(k)) delete raw[k]; });
+      Object.keys(raw).forEach(k => { if (!profile.SELF_EDITABLE.has(k)) delete raw[k]; });
     }
 
-    // If HR is changing the email, it must remain a valid company mailbox.
+    // If HR is changing the WORK email, it must remain a valid company mailbox.
     if (isHRWrite && raw.hr_email !== undefined) {
       const ev = validateCompanyEmail(raw.hr_email, 'Employee');
       if (!ev.ok) return res.status(400).json({ error: ev.reason });
@@ -177,10 +181,66 @@ router.patch('/:id', async (req, res, next) => {
     const idv = validateEmployeeIdentity(raw);
     if (!idv.ok) return res.status(400).json({ error: Object.values(idv.errors)[0], fields: idv.errors });
     Object.assign(raw, idv.values);
+
+    // Diff against the current record (for audit + verification decisions).
+    let current = {};
+    try { current = await d365.getByIdOptional(ENTITY, req.params.id, { select: 'hr_hremployee1', optionalSelect: ESS_OPTIONAL_SELECT }); } catch { /* best-effort */ }
+    const changes = profile.diffChanges(current, raw);
+
+    // A self-service change to PAN / Aadhaar / Bank / Address requires HR re-verification.
+    const needsVerify = !isHRWrite && profile.requiresVerification(changes);
+    if (needsVerify) {
+      raw.hr_verifystatus = 'pending';
+      raw.hr_verifynote = '';
+    }
+
     const updateData = sanitizeEmployee(raw);
     if (password && isHRWrite) updateData.hr_password = await authService.hashPassword(password);
     const emp = await updateStrippingOptionalShift(ENTITY, req.params.id, updateData);
-    res.json(emp);
+
+    // Audit every changed field + notify (best-effort; never fails the save).
+    const empName = current.hr_hremployee1 || req.user.name || 'Employee';
+    if (changes.length) {
+      profile.writeAudit({ employeeId: req.params.id, employeeName: empName, changes, updatedBy: req.user.name || req.user.email, action: 'updated' }).catch(() => {});
+    }
+    profile.notifyUser(req.params.id, 'profile:updated', { verification: needsVerify });
+    if (needsVerify) profile.notifyHRVerification({ id: req.params.id, name: empName }).catch(() => {});
+
+    res.json({ ...emp, _verifystatus: needsVerify ? 'pending' : (raw.hr_verifystatus || current.hr_verifystatus || 'verified'), _pendingVerification: needsVerify });
+  } catch (err) { next(err); }
+});
+
+// PATCH /api/employees/:id/verify — HR approves / rejects / requests changes.
+router.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { action, note } = req.body;   // approve | reject | request_changes
+    const map = { approve: 'verified', reject: 'rejected', request_changes: 'changes' };
+    const status = map[action];
+    if (!status) return res.status(400).json({ error: 'action must be approve, reject or request_changes.' });
+
+    const emp = await updateStrippingOptionalShift(ENTITY, req.params.id, {
+      hr_verifystatus: status,
+      hr_verifiedby: req.user.name || req.user.email || 'HR',
+      hr_verifieddate: new Date().toISOString(),
+      hr_verifynote: note || '',
+    });
+    let name = 'Employee';
+    try { const e = await d365.getById(ENTITY, req.params.id, { select: 'hr_hremployee1' }); name = e.hr_hremployee1 || name; } catch {}
+    profile.writeAudit({ employeeId: req.params.id, employeeName: name, changes: [{ field: 'hr_verifystatus', label: 'Verification', oldValue: 'pending', newValue: status }], updatedBy: req.user.name || req.user.email, action: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'changes_requested', approvedBy: req.user.name || req.user.email, note }).catch(() => {});
+    profile.notifyUser(req.params.id, 'profile:verified', { status, note: note || '' });
+    res.json({ ...emp, _verifystatus: status });
+  } catch (err) {
+    console.error('[profile/verify] FAILED:', err.message);
+    res.status(err.status || 400).json({ error: err.message || 'Failed to update verification' });
+  }
+});
+
+// GET /api/employees/:id/profile-audit — change history (self or HR)
+router.get('/:id/profile-audit', async (req, res, next) => {
+  try {
+    const isHR = ['super_admin', 'hr_manager'].includes(req.user.role);
+    if (!isHR && req.user.id !== req.params.id) return res.status(403).json({ error: 'Access denied' });
+    res.json({ data: await profile.readAudit(req.params.id) });
   } catch (err) { next(err); }
 });
 

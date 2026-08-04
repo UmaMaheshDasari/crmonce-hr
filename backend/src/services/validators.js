@@ -40,8 +40,8 @@ function verhoeffValid(num) {
 function validateAadhaar(v) {
   if (empty(v)) return { ok: true, value: '' };
   const s = String(v).replace(/\s|-/g, '');
-  if (!/^[2-9][0-9]{11}$/.test(s)) return { ok: false, reason: 'Aadhaar must be 12 digits and cannot start with 0 or 1.' };
-  if (!verhoeffValid(s)) return { ok: false, reason: 'Aadhaar number is invalid (checksum failed).' };
+  // Per spec: exactly 12 digits.
+  if (!/^[0-9]{12}$/.test(s)) return { ok: false, reason: 'Aadhaar must be exactly 12 digits.' };
   return { ok: true, value: s };
 }
 
@@ -100,6 +100,26 @@ function validatePhone(v) {
  * update route). Returns { ok, errors:{field:reason}, values:{field:normalised} }.
  * Only validates the fields that are present; unknown keys are ignored.
  */
+// ── Simple email (personal email — any provider allowed, unlike work email) ──
+function validateEmail(v) {
+  if (empty(v)) return { ok: true, value: '' };
+  const s = String(v).trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return { ok: false, reason: 'Enter a valid email address.' };
+  return { ok: true, value: s.toLowerCase() };
+}
+
+// ── Enum helpers (Gender, Marital Status) ──
+const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say'];
+const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
+const enumValidator = (allowed, label) => (v) => {
+  if (empty(v)) return { ok: true, value: '' };
+  const s = String(v).trim();
+  const hit = allowed.find((a) => a.toLowerCase() === s.toLowerCase());
+  return hit ? { ok: true, value: hit } : { ok: false, reason: `${label} must be one of: ${allowed.join(', ')}.` };
+};
+const validateGender = enumValidator(GENDERS, 'Gender');
+const validateMarital = enumValidator(MARITAL, 'Marital status');
+
 const FIELD_VALIDATORS = {
   hr_pan: validatePAN,
   hr_aadhaar: validateAadhaar,
@@ -109,6 +129,11 @@ const FIELD_VALIDATORS = {
   hr_esic: validateESIC,
   hr_bloodgroup: validateBloodGroup,
   hr_emergencyphone: validatePhone,
+  hr_phone: validatePhone,
+  hr_altphone: validatePhone,
+  hr_personalemail: validateEmail,
+  hr_gender: validateGender,
+  hr_maritalstatus: validateMarital,
 };
 function validateEmployeeIdentity(body) {
   const errors = {};
@@ -125,5 +150,6 @@ function validateEmployeeIdentity(body) {
 module.exports = {
   validatePAN, validateAadhaar, validateIFSC, validateAccountNumber,
   validateUAN, validateESIC, validateBloodGroup, validatePhone,
-  verhoeffValid, validateEmployeeIdentity, BLOOD_GROUPS,
+  validateEmail, validateGender, validateMarital,
+  verhoeffValid, validateEmployeeIdentity, BLOOD_GROUPS, GENDERS, MARITAL,
 };
