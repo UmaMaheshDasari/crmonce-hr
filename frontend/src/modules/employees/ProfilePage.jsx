@@ -59,6 +59,8 @@ const FORM_TABS = [
   ] },
 ];
 const TABS = [...FORM_TABS, { key: 'documents', label: 'Documents', icon: DocumentTextIcon }];
+// Missing-item section label → profile tab key (so "Missing" pills jump to the tab).
+const TAB_KEY = { General: 'general', Identity: 'identity', Address: 'address', Bank: 'bank', Emergency: 'emergency', Documents: 'documents' };
 const EDITABLE_FIELDS = FORM_TABS.flatMap(t => t.fields.map(f => f.name));
 const FIELD_TAB = Object.fromEntries(FORM_TABS.flatMap(t => t.fields.map(f => [f.name, t.key])));
 
@@ -250,10 +252,21 @@ export default function ProfilePage() {
                 <div className="relative"><ProgressRing value={completion.percent} /><span className="absolute inset-0 flex items-center justify-center text-base font-bold text-gray-800">{completion.percent}%</span></div>
                 <p className="text-sm font-semibold text-gray-800 mt-2">Profile Complete</p>
                 {completion.missing?.length ? (
-                  <div className="mt-3 w-full">
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Missing</p>
-                    <div className="flex flex-wrap gap-1.5 justify-center">
-                      {completion.missing.map(m => <span key={m} className="text-[11px] font-medium text-[#F59E0B] bg-amber-50 px-2 py-0.5 rounded-full">{m}</span>)}
+                  <div className="mt-3 w-full text-left">
+                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2 text-center">Missing</p>
+                    <div className="space-y-2.5">
+                      {(completion.missingGrouped || [{ tab: '', items: completion.missing }]).map(g => (
+                        <div key={g.tab || 'all'}>
+                          {g.tab && (
+                            <button type="button" onClick={() => setTab(TAB_KEY[g.tab] || 'general')} className="text-[10px] font-bold text-gray-500 uppercase tracking-wide hover:text-blue-600">
+                              {g.tab} ›
+                            </button>
+                          )}
+                          <div className="flex flex-wrap gap-1.5 mt-0.5">
+                            {g.items.map(m => <span key={m} className="text-[11px] font-medium text-[#F59E0B] bg-amber-50 px-2 py-0.5 rounded-full">{m}</span>)}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ) : <p className="text-xs text-[#10B981] font-medium mt-2">All set 🎉</p>}

@@ -59,13 +59,14 @@ const COMPLETION_FIELDS = [
   'hr_emergencycontact', 'hr_emergencyphone',
   'hr_bankname', 'hr_accountnumber', 'hr_ifsc',
 ];
+// tab = the profile tab where the employee fixes it (general/identity/address/bank/emergency/documents).
 const MISSING_GROUPS = [
-  { label: 'PAN', fields: ['hr_pan'] },
-  { label: 'Aadhaar', fields: ['hr_aadhaar'] },
-  { label: 'Personal Info', fields: ['hr_phone', 'hr_dob', 'hr_gender'] },
-  { label: 'Address', fields: ['hr_address', 'hr_city', 'hr_state', 'hr_pincode'] },
-  { label: 'Emergency Contact', fields: ['hr_emergencycontact', 'hr_emergencyphone'] },
-  { label: 'Bank Details', fields: ['hr_bankname', 'hr_accountnumber', 'hr_ifsc'] },
+  { label: 'PAN', tab: 'Identity', fields: ['hr_pan'] },
+  { label: 'Aadhaar', tab: 'Identity', fields: ['hr_aadhaar'] },
+  { label: 'Personal Info', tab: 'General', fields: ['hr_phone', 'hr_dob', 'hr_gender'] },
+  { label: 'Address', tab: 'Address', fields: ['hr_address', 'hr_city', 'hr_state', 'hr_pincode'] },
+  { label: 'Emergency Contact', tab: 'Emergency', fields: ['hr_emergencycontact', 'hr_emergencyphone'] },
+  { label: 'Bank Details', tab: 'Bank', fields: ['hr_bankname', 'hr_accountnumber', 'hr_ifsc'] },
 ];
 
 // Field → section (used to label "Changed Section" in HR Verification).
@@ -116,9 +117,12 @@ function computeCompletion(emp = {}, opts = {}) {
   const doneDocs = requiredDocs.length - missingDocs.length;
   const percent = total ? Math.round(((doneFields + doneDocs) / total) * 100) : 0;
 
-  const missing = MISSING_GROUPS.filter((g) => g.fields.some((f) => !filled(emp[f]))).map((g) => g.label);
-  for (const md of missingDocs) missing.push(md);   // list each missing required doc
-  return { percent, filled: doneFields + doneDocs, total, missing };
+  const missing = [];
+  const grouped = [];   // [{ tab, items:[...] }] so the UI can point to the right tab
+  const push = (tab, item) => { let g = grouped.find((x) => x.tab === tab); if (!g) { g = { tab, items: [] }; grouped.push(g); } g.items.push(item); missing.push(item); };
+  MISSING_GROUPS.filter((g) => g.fields.some((f) => !filled(emp[f]))).forEach((g) => push(g.tab, g.label));
+  for (const md of missingDocs) push('Documents', md);   // list each missing required doc
+  return { percent, filled: doneFields + doneDocs, total, missing, missingGrouped: grouped };
 }
 
 /** Which whitelisted fields actually changed vs the current record. */
