@@ -104,7 +104,7 @@ export default function EmployeeForm() {
         // Master
         managerId: e._hr_manager_value || '', hr_employmenttype: e.hr_employmenttype,
         hr_worklocation: e.hr_worklocation, hr_confirmationdate: e.hr_confirmationdate?.split('T')[0],
-        hr_relievingdate: e.hr_relievingdate?.split('T')[0], hr_employeecode: e.hr_employeecode || e.hr_etimecode,
+        hr_relievingdate: e.hr_relievingdate?.split('T')[0],
         // Identity
         hr_aadhaar: e.hr_aadhaar, hr_pan: e.hr_pan, hr_passport: e.hr_passport,
         hr_drivinglicence: e.hr_drivinglicence, hr_uan: e.hr_uan, hr_esic: e.hr_esic,
@@ -190,7 +190,7 @@ export default function EmployeeForm() {
           </div>
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="Employee ID" name="hr_employeecode" placeholder="Auto (EMP0001)" register={register} errors={errors} />
+              <Field label="Employee ID" name="hr_etimecode" placeholder="EMP1044 (eTime code)" register={register} errors={errors} />
               <SelectField label="Reporting Manager" name="managerId" register={register}>
                 <option value="">— None —</option>
                 {managers.map(m => <option key={m.hr_hremployeeid} value={m.hr_hremployeeid}>{m.hr_hremployee1}</option>)}
@@ -238,7 +238,6 @@ export default function EmployeeForm() {
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               <Field label="Basic Salary" name="hr_salary" type="number" placeholder="50000" register={register} errors={errors} />
-              <Field label="eTime Office Code" name="hr_etimecode" placeholder="EMP001" register={register} errors={errors} />
             </div>
           </div>
         </div>

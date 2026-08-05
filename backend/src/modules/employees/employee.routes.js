@@ -115,7 +115,7 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     });
     const pageData = (result.data || []).slice((pageNum - 1) * lim);
     pageData.forEach(withShiftDefaults);
-    pageData.forEach(e => { e._employeeid = e.hr_employeecode || e.hr_etimecode || ''; });
+    pageData.forEach(e => { e._employeeid = e.hr_etimecode || e.hr_employeecode || ''; });
     res.json(labelsForList(ENTITY, { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
@@ -140,7 +140,9 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     } catch { /* documents optional */ }
     out._completion = profile.computeCompletion(out, { documents });
     out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
-    out._employeeid = out.hr_employeecode || out.hr_etimecode || '';   // human Employee ID (never GUID)
+    // Employee ID = the eTime device code (EMP1039) — the authoritative business ID.
+    // The generated hr_employeecode is only a fallback for employees not on the device.
+    out._employeeid = out.hr_etimecode || out.hr_employeecode || '';   // never the GUID
     res.json(out);
   } catch (err) { next(err); }
 });
@@ -210,8 +212,9 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
-    // Auto-assign an independent Employee Code (EMP0001) unless one was provided.
-    if (!employeeData.hr_employeecode) employeeData.hr_employeecode = await nextEmployeeCode();
+    // Auto-assign an Employee ID (continues the EMP#### sequence) when HR didn't
+    // enter one. It lives in hr_etimecode — the same field the device uses.
+    if (!employeeData.hr_etimecode) employeeData.hr_etimecode = await nextEmployeeCode();
     bindManager(employeeData, managerId);
     // Default shift so attendance math always has a start time (same as migration).
     if (!employeeData.hr_shiftname) employeeData.hr_shiftname = 'General Shift';
@@ -354,7 +357,7 @@ router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), a
     const rows = await Promise.all(pending.map(async (e) => {
       const pc = await profile.readPendingChanges(e.hr_hremployeeid);
       return {
-        id: e.hr_hremployeeid, code: e.hr_employeecode || e.hr_etimecode || '', name: e.hr_hremployee1,
+        id: e.hr_hremployeeid, code: e.hr_etimecode || e.hr_employeecode || '', name: e.hr_hremployee1,
         department: e.hr_department || '', status: 'pending',
         sections: pc.sections, changes: pc.changes, submittedOn: pc.submittedOn,
       };
@@ -363,9 +366,8 @@ router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), a
   } catch (err) { next(err); }
 });
 
-// POST /api/employees/meta/backfill-codes — set Employee ID for employees missing
-// one. Reuses their existing eTime EMP code when present (so EMP1020 stays EMP1020);
-// otherwise assigns the next number in the sequence.
+// POST /api/employees/meta/backfill-codes — assign an Employee ID (into hr_etimecode)
+// to employees who don't have one, continuing the EMP#### sequence.
 router.post('/meta/backfill-codes', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
     const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,hr_etimecode,createdon', optionalSelect: 'hr_employeecode', top: 5000, orderby: 'createdon asc' });
@@ -373,15 +375,12 @@ router.post('/meta/backfill-codes', requireRole('super_admin', 'hr_manager'), as
     for (const e of data || []) { for (const v of [e.hr_employeecode, e.hr_etimecode]) { const m = EMP_CODE_RE.exec(v || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); } }
     let assigned = 0;
     for (const e of data || []) {
-      if (e.hr_employeecode) continue;
-      let code;
-      const et = String(e.hr_etimecode || '').trim();
-      if (/^EMP\d+$/i.test(et)) code = et.toUpperCase();     // reuse existing eTime EMP code
-      else { max += 1; code = 'EMP' + String(max).padStart(4, '0'); }
-      await updateStrippingOptionalShift(ENTITY, e.hr_hremployeeid, { hr_employeecode: code });
+      if (String(e.hr_etimecode || '').trim()) continue;   // already has an Employee ID
+      max += 1;
+      await updateStrippingOptionalShift(ENTITY, e.hr_hremployeeid, { hr_etimecode: 'EMP' + String(max).padStart(4, '0') });
       assigned += 1;
     }
-    res.json({ message: `Assigned ${assigned} employee code(s)`, assigned });
+    res.json({ message: `Assigned ${assigned} Employee ID(s)`, assigned });
   } catch (err) { next(err); }
 });
 

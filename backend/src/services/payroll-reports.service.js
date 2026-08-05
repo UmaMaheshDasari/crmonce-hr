@@ -37,8 +37,8 @@ async function titledSheet(wb, name, company, subtitle) {
   return ws;
 }
 
-// Employee ID (EMP####) — never the GUID, never the internal numeric code.
-const empId = (e) => e?.hr_employeecode || e?.hr_etimecode || '';
+// Employee ID (EMP####) = the eTime device code — never the GUID.
+const empId = (e) => e?.hr_etimecode || e?.hr_employeecode || '';
 
 async function fetchEmployees() {
   const res = await d365.getListOptional(E.employee, {

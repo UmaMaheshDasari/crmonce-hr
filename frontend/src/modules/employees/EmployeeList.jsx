@@ -166,7 +166,7 @@ export default function EmployeeList() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-sm font-semibold text-gray-800 tabular-nums">{emp._employeeid || emp.hr_employeecode || emp.hr_etimecode || <span className="text-gray-300 font-normal">&mdash;</span>}</span>
+                      <span className="text-sm font-semibold text-gray-800 tabular-nums">{emp._employeeid || emp.hr_etimecode || emp.hr_employeecode || <span className="text-gray-300 font-normal">&mdash;</span>}</span>
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-600">{emp.hr_department || <span className="text-gray-300">&mdash;</span>}</span>
