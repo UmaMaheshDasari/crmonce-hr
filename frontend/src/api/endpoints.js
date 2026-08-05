@@ -22,6 +22,7 @@ export const employeeApi = {
   profileAudit: (id) => api.get(`/employees/${id}/profile-audit`),
   pendingVerifications: () => api.get('/employees/verifications/pending'),
   backfillCodes: () => api.post('/employees/meta/backfill-codes'),
+  syncEtime: (employees) => api.post('/employees/meta/sync-etime', { employees }),
 };
 
 // ── Attendance ───────────────────────────────────────────────────

@@ -1,11 +1,80 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { employeeApi } from '../../api/endpoints';
-import { MagnifyingGlassIcon, PlusIcon, EyeIcon, PencilSquareIcon, UserGroupIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, PlusIcon, EyeIcon, PencilSquareIcon, UserGroupIcon, ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import StatusBadge from '../../components/StatusBadge';
+import toast from 'react-hot-toast';
 import { format } from 'date-fns';
+
+// Parse pasted eTime rows (TSV from Excel, or CSV): Employee ID, Name, Empcode,
+// [Department], [Designation], [Shift], [Status]. Order-flexible via a header row.
+function parseEtime(text) {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const split = (l) => l.split(/\t|,/).map(s => s.trim());
+  let cols = null;
+  const first = split(lines[0]).map(s => s.toLowerCase());
+  const looksHeader = first.some(c => /employee id|empid|empcode|employee code|name|department/.test(c));
+  const idx = { employeeId: 0, name: 1, empcode: 2, department: -1, designation: -1, shift: -1, status: -1 };
+  let start = 0;
+  if (looksHeader) {
+    cols = first; start = 1;
+    const find = (re) => cols.findIndex(c => re.test(c));
+    idx.employeeId = find(/employee id|empid|^id$/); idx.name = find(/name/);
+    idx.empcode = find(/empcode|employee code|code/); idx.department = find(/department|dept/);
+    idx.designation = find(/designation/); idx.shift = find(/shift/); idx.status = find(/status/);
+  }
+  const at = (arr, i) => (i >= 0 && i < arr.length ? arr[i] : '');
+  const out = [];
+  for (let i = start; i < lines.length; i++) {
+    const a = split(lines[i]);
+    const row = {
+      employeeId: at(a, idx.employeeId), name: at(a, idx.name), empcode: at(a, idx.empcode),
+      department: at(a, idx.department), designation: at(a, idx.designation), shift: at(a, idx.shift), status: at(a, idx.status),
+    };
+    if (row.employeeId || row.empcode) out.push(row);
+  }
+  return out;
+}
+
+function SyncEtimeModal({ onClose }) {
+  const qc = useQueryClient();
+  const [text, setText] = useState('');
+  const rows = parseEtime(text);
+  const mutation = useMutation({
+    mutationFn: () => employeeApi.syncEtime(rows),
+    onSuccess: (res) => { toast.success(res.data?.message || 'eTime sync complete'); qc.invalidateQueries({ queryKey: ['employees'] }); onClose(); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Sync failed'),
+  });
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Sync Employees from eTime</h2>
+            <p className="text-sm text-gray-400 mt-0.5">Paste the eTime export (Employee ID, Name, Empcode …). Matched by Employee ID or Empcode — never duplicated.</p>
+          </div>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl"><XMarkIcon className="w-5 h-5" /></button>
+        </div>
+        <div className="px-6 py-5 overflow-y-auto">
+          <textarea rows={10} value={text} onChange={e => setText(e.target.value)}
+            placeholder={'Employee ID\tName\tEmpcode\nEMP1039\tBoina Vishwesh\t40\nEMP1040\tShaik Samrin\t41'}
+            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm font-mono text-gray-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none resize-y" />
+          <p className="text-xs text-gray-500 mt-2">{rows.length} row{rows.length === 1 ? '' : 's'} detected (copy the columns straight from the eTime Excel).</p>
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800">Cancel</button>
+          <button onClick={() => mutation.mutate()} disabled={!rows.length || mutation.isPending}
+            className="px-5 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50">
+            {mutation.isPending ? 'Syncing…' : `Sync ${rows.length || ''} Employee${rows.length === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const AVATAR_GRADIENTS = [
   'from-indigo-500 to-purple-500',
@@ -42,6 +111,7 @@ export default function EmployeeList() {
   const [dept, setDept] = useState('');
   const [status, setStatus] = useState('active');
   const [page, setPage] = useState(1);
+  const [showSync, setShowSync] = useState(false);
   const limit = 15;
 
   const { data, isLoading } = useQuery({
@@ -68,11 +138,17 @@ export default function EmployeeList() {
           <p className="text-gray-400 text-sm mt-1 font-medium">{total} total employees</p>
         </div>
         {isHR() && (
-          <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
-            <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
-          </Link>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowSync(true)} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-4 bg-white text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-200">
+              <ArrowPathIcon className="w-[18px] h-[18px]" /> Sync from eTime
+            </button>
+            <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
+              <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
+            </Link>
+          </div>
         )}
       </div>
+      {showSync && <SyncEtimeModal onClose={() => setShowSync(false)} />}
 
       {/* Search & Filters */}
       <div className="bg-white rounded-xl border border-gray-100 p-4">
@@ -166,7 +242,7 @@ export default function EmployeeList() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-sm font-semibold text-gray-800 tabular-nums">{emp._employeeid || emp.hr_etimecode || emp.hr_employeecode || <span className="text-gray-300 font-normal">&mdash;</span>}</span>
+                      <span className="text-sm font-semibold text-gray-800 tabular-nums">{emp._employeeid || emp.hr_employeeid || <span className="text-gray-300 font-normal">&mdash;</span>}</span>
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-600">{emp.hr_department || <span className="text-gray-300">&mdash;</span>}</span>

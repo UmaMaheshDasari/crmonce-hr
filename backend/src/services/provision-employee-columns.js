@@ -35,7 +35,8 @@ const COLUMNS = [
   str('hr_PFNumber', 'PF Number', 30),
   str('hr_BloodGroup', 'Blood Group', 5),
   // Employee master
-  str('hr_EmployeeCode', 'Employee Code', 20),        // EMP0001 (independent of GUID)
+  str('hr_EmployeeId', 'Employee ID', 20),            // EMP1039 — eTime business ID (primary, shown everywhere)
+  str('hr_EmployeeCode', 'Employee Code', 20),        // legacy generated code (fallback)
   str('hr_ConfirmationDate', 'Confirmation Date', 20),
   str('hr_RelievingDate', 'Relieving Date', 20),
   str('hr_EmploymentType', 'Employment Type', 30),    // Full-time | Part-time | Contract | Intern

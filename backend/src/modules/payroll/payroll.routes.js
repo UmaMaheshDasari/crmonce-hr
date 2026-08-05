@@ -156,7 +156,7 @@ payrollRouter.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), as
     const empId = payroll._hr_hremployee_value;
     const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
-      optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode',
+      optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode,hr_employeeid',
     }) : {};
 
     // Email the payslip (best-effort — never blocks approval).
@@ -214,7 +214,7 @@ payrollRouter.get('/:id/payslip', requirePermission('payroll:read'), async (req,
     const empId = payroll._hr_hremployee_value;
     const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
-      optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode',
+      optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode,hr_employeeid',
     }) : {};
 
     const pdf = await buildPayslipPdf({ payroll, employee });

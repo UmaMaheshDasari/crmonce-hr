@@ -102,7 +102,8 @@ export default function EmployeeForm() {
         hr_shiftname: e.hr_shiftname || 'General Shift', hr_shiftstarttime: e.hr_shiftstarttime || '09:00',
         hr_shiftendtime: e.hr_shiftendtime || '18:00',
         // Master
-        managerId: e._hr_manager_value || '', hr_employmenttype: e.hr_employmenttype,
+        managerId: e._hr_manager_value || '', hr_employeeid: e.hr_employeeid, hr_etimecode: e.hr_etimecode,
+        hr_employmenttype: e.hr_employmenttype,
         hr_worklocation: e.hr_worklocation, hr_confirmationdate: e.hr_confirmationdate?.split('T')[0],
         hr_relievingdate: e.hr_relievingdate?.split('T')[0],
         // Identity
@@ -190,7 +191,8 @@ export default function EmployeeForm() {
           </div>
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="Employee ID" name="hr_etimecode" placeholder="EMP1044 (eTime code)" register={register} errors={errors} />
+              <Field label="Employee ID" name="hr_employeeid" placeholder="EMP1039 (from eTime)" register={register} errors={errors} />
+              <Field label="Employee Code (eTime device)" name="hr_etimecode" placeholder="40" register={register} errors={errors} />
               <SelectField label="Reporting Manager" name="managerId" register={register}>
                 <option value="">— None —</option>
                 {managers.map(m => <option key={m.hr_hremployeeid} value={m.hr_hremployeeid}>{m.hr_hremployee1}</option>)}

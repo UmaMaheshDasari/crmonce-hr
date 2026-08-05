@@ -20,8 +20,11 @@ const ADDRESS_FIELDS = 'hr_permaddress,hr_city,hr_state,hr_country,hr_pincode';
 const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
 const VERIFY_FIELDS = 'hr_verifystatus,hr_verifiedby,hr_verifieddate,hr_verifynote';
 const BANK_FIELDS = 'hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch,hr_chequeurl';
-// Employee-master fields (HR-managed): code + employment metadata.
-const MASTER_FIELDS = 'hr_employeecode,hr_confirmationdate,hr_relievingdate,hr_employmenttype,hr_worklocation';
+// Employee-master fields (HR-managed): Employee ID + code + employment metadata.
+const MASTER_FIELDS = 'hr_employeeid,hr_employeecode,hr_confirmationdate,hr_relievingdate,hr_employmenttype,hr_worklocation';
+// The business Employee ID (EMP1039) with graceful fallbacks. hr_etimecode is the
+// device Empcode (40) — used only as a last resort so nothing renders blank.
+const employeeIdOf = (e) => e.hr_employeeid || e.hr_employeecode || e.hr_etimecode || '';
 const ESS_OPTIONAL_SELECT = [MASTER_FIELDS, IDENTITY_FIELDS, PERSONAL_FIELDS, ADDRESS_FIELDS, EMERGENCY_FIELDS, VERIFY_FIELDS, BANK_FIELDS].join(',');
 // Every optional column that may not exist yet — stripped on a missing-property
 // error so a not-yet-provisioned field never blocks create/edit.
@@ -108,14 +111,14 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     // empty the whole list). Defaults are then applied below.
     const result = await d365.getListOptional(ENTITY, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,_hr_manager_value',
-      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeecode,hr_etimecode',
+      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeeid,hr_employeecode,hr_etimecode',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_hremployee1 asc',
       top: pageNum * lim,
     });
     const pageData = (result.data || []).slice((pageNum - 1) * lim);
     pageData.forEach(withShiftDefaults);
-    pageData.forEach(e => { e._employeeid = e.hr_etimecode || e.hr_employeecode || ''; });
+    pageData.forEach(e => { e._employeeid = employeeIdOf(e); e._empcode = e.hr_etimecode || ''; });
     res.json(labelsForList(ENTITY, { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
@@ -140,9 +143,8 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     } catch { /* documents optional */ }
     out._completion = profile.computeCompletion(out, { documents });
     out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
-    // Employee ID = the eTime device code (EMP1039) — the authoritative business ID.
-    // The generated hr_employeecode is only a fallback for employees not on the device.
-    out._employeeid = out.hr_etimecode || out.hr_employeecode || '';   // never the GUID
+    out._employeeid = employeeIdOf(out);        // EMP1039 (business ID) — never the GUID
+    out._empcode = out.hr_etimecode || '';      // device Empcode (40) — HR/internal only
     res.json(out);
   } catch (err) { next(err); }
 });
@@ -172,9 +174,9 @@ const EMP_CODE_RE = /EMP0*(\d+)/i;
 async function maxEmployeeCodeNumber() {
   let max = 0;
   try {
-    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,hr_etimecode', optionalSelect: 'hr_employeecode', top: 5000 });
+    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid', optionalSelect: 'hr_employeeid,hr_employeecode', top: 5000 });
     for (const e of data || []) {
-      for (const v of [e.hr_employeecode, e.hr_etimecode]) {
+      for (const v of [e.hr_employeeid, e.hr_employeecode]) {
         const m = EMP_CODE_RE.exec(v || '');
         if (m) max = Math.max(max, parseInt(m[1], 10));
       }
@@ -182,7 +184,8 @@ async function maxEmployeeCodeNumber() {
   } catch { /* columns may not exist yet → start at 1 */ }
   return max;
 }
-async function nextEmployeeCode() {
+// EMP1001+ — used only when eTime hasn't already provided an Employee ID.
+async function nextEmployeeId() {
   return 'EMP' + String((await maxEmployeeCodeNumber()) + 1).padStart(4, '0');
 }
 
@@ -212,9 +215,9 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
-    // Auto-assign an Employee ID (continues the EMP#### sequence) when HR didn't
-    // enter one. It lives in hr_etimecode — the same field the device uses.
-    if (!employeeData.hr_etimecode) employeeData.hr_etimecode = await nextEmployeeCode();
+    // Employee ID comes from eTime. Only generate one (EMP1001+) if none was
+    // provided — NEVER overwrite an eTime-supplied Employee ID.
+    if (!employeeData.hr_employeeid) employeeData.hr_employeeid = await nextEmployeeId();
     bindManager(employeeData, managerId);
     // Default shift so attendance math always has a start time (same as migration).
     if (!employeeData.hr_shiftname) employeeData.hr_shiftname = 'General Shift';
@@ -357,7 +360,7 @@ router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), a
     const rows = await Promise.all(pending.map(async (e) => {
       const pc = await profile.readPendingChanges(e.hr_hremployeeid);
       return {
-        id: e.hr_hremployeeid, code: e.hr_etimecode || e.hr_employeecode || '', name: e.hr_hremployee1,
+        id: e.hr_hremployeeid, code: employeeIdOf(e), name: e.hr_hremployee1,
         department: e.hr_department || '', status: 'pending',
         sections: pc.sections, changes: pc.changes, submittedOn: pc.submittedOn,
       };
@@ -366,21 +369,79 @@ router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), a
   } catch (err) { next(err); }
 });
 
-// POST /api/employees/meta/backfill-codes — assign an Employee ID (into hr_etimecode)
-// to employees who don't have one, continuing the EMP#### sequence.
+// POST /api/employees/meta/backfill-codes — assign an Employee ID (EMP1001+) to
+// employees who don't have one, continuing the sequence. Never overwrites.
 router.post('/meta/backfill-codes', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
-    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,hr_etimecode,createdon', optionalSelect: 'hr_employeecode', top: 5000, orderby: 'createdon asc' });
+    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,createdon', optionalSelect: 'hr_employeeid,hr_employeecode', top: 5000, orderby: 'createdon asc' });
     let max = 0;
-    for (const e of data || []) { for (const v of [e.hr_employeecode, e.hr_etimecode]) { const m = EMP_CODE_RE.exec(v || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); } }
+    for (const e of data || []) { for (const v of [e.hr_employeeid, e.hr_employeecode]) { const m = EMP_CODE_RE.exec(v || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); } }
     let assigned = 0;
     for (const e of data || []) {
-      if (String(e.hr_etimecode || '').trim()) continue;   // already has an Employee ID
+      if (String(e.hr_employeeid || '').trim()) continue;   // already has an Employee ID
       max += 1;
-      await updateStrippingOptionalShift(ENTITY, e.hr_hremployeeid, { hr_etimecode: 'EMP' + String(max).padStart(4, '0') });
+      await updateStrippingOptionalShift(ENTITY, e.hr_hremployeeid, { hr_employeeid: 'EMP' + String(max).padStart(4, '0') });
       assigned += 1;
     }
     res.json({ message: `Assigned ${assigned} Employee ID(s)`, assigned });
+  } catch (err) { next(err); }
+});
+
+// Find an employee by eTime Employee ID (EMP1039) or Empcode (device code). Each
+// lookup is guarded so a not-yet-provisioned column degrades instead of throwing.
+async function findByEtime(employeeId, empcode) {
+  if (employeeId) {
+    try {
+      const { data } = await d365.getList(ENTITY, { select: 'hr_hremployeeid', filter: `hr_employeeid eq '${employeeId}'`, top: 1 });
+      if (data?.[0]) return data[0];
+    } catch { /* column may not exist yet */ }
+  }
+  if (empcode) {
+    try {
+      const { data } = await d365.getList(ENTITY, { select: 'hr_hremployeeid', filter: `hr_etimecode eq '${empcode}'`, top: 1 });
+      if (data?.[0]) return data[0];
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+// POST /api/employees/meta/sync-etime — sync employees FROM eTime. Body:
+// { employees: [{ employeeId:'EMP1039', empcode:'40', name, department, designation,
+//   shift, status }] }. Stores BOTH Employee ID + Empcode. Matches an existing
+// employee by Employee ID then Empcode → NEVER duplicates. eTime is authoritative:
+// a provided Employee ID is never overwritten with a generated one.
+router.post('/meta/sync-etime', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const rows = Array.isArray(req.body?.employees) ? req.body.employees : (Array.isArray(req.body) ? req.body : []);
+    if (!rows.length) return res.status(400).json({ error: 'Provide an "employees" array from the eTime export.' });
+    let created = 0, updated = 0, skipped = 0; const errors = [];
+    for (const r of rows) {
+      const employeeId = String(r.employeeId ?? r.employeeid ?? r.empid ?? '').trim();
+      const empcode = String(r.empcode ?? r.employeecode ?? r.code ?? '').trim();
+      const name = String(r.name ?? r.employeename ?? '').trim();
+      if (!employeeId && !empcode) { skipped++; continue; }
+      try {
+        const existing = await findByEtime(employeeId, empcode);
+        const payload = {};
+        if (employeeId) payload.hr_employeeid = employeeId;
+        if (empcode) payload.hr_etimecode = empcode;
+        if (name) payload.hr_hremployee1 = name;
+        if (r.department) payload.hr_department = String(r.department);
+        if (r.designation) payload.hr_designation = String(r.designation);
+        if (r.shift) payload.hr_shiftname = String(r.shift);
+        if (r.status) payload.hr_status = toValue('hr_employee_status', String(r.status).toLowerCase());
+        if (existing) {
+          await robustWrite('update', ENTITY, existing.hr_hremployeeid, payload);
+          updated++;
+        } else {
+          if (!name) { skipped++; continue; }   // need at least a name to create
+          if (payload.hr_status === undefined) payload.hr_status = toValue('hr_employee_status', 'active');
+          await robustWrite('create', ENTITY, null, payload);
+          created++;
+        }
+      } catch (e) { errors.push({ employeeId, empcode, error: e.message }); }
+    }
+    res.json({ message: `eTime sync — ${created} created, ${updated} updated, ${skipped} skipped`, created, updated, skipped, errors: errors.slice(0, 25) });
   } catch (err) { next(err); }
 });
 

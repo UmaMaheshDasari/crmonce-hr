@@ -81,8 +81,8 @@ async function buildPayslipPdf({ payroll, employee, company }) {
   y += headerH;
 
   // ── Employee grid: 2 columns × rows (label/value each side) ──
-  // Employee ID = the eTime device code (EMP1039) — NEVER the GUID.
-  const empNo = emp.hr_etimecode || emp.hr_employeecode || (emp.hr_hremployeeid || '').slice(0, 8) || '';
+  // Employee ID = the eTime business ID (EMP1039) — NEVER the GUID or device code.
+  const empNo = emp.hr_employeeid || emp.hr_employeecode || emp.hr_etimecode || (emp.hr_hremployeeid || '').slice(0, 8) || '';
   const managerName = emp['_hr_manager_value@OData.Community.Display.V1.FormattedValue'] || '';
   const left = [
     ['Name:', emp.hr_hremployee1 || ''],

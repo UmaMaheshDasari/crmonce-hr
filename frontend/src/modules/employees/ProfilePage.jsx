@@ -234,7 +234,7 @@ export default function ProfilePage() {
               {/* Professional identity grid — Employee ID, never GUID */}
               <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-3 border-t border-gray-100 pt-4">
                 {[
-                  ['Employee ID', emp._employeeid || emp.hr_etimecode || emp.hr_employeecode],
+                  ['Employee ID', emp._employeeid || emp.hr_employeeid],
                   ['Department', emp.hr_department],
                   ['Designation', emp.hr_designation],
                   ['Reporting Manager', managerName],
@@ -311,7 +311,8 @@ export default function ProfilePage() {
               <div className="mt-8 pt-6 border-t border-gray-100">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Employment (HR-managed · read only)</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
-                  <RO label="Employee ID" value={emp._employeeid || emp.hr_etimecode || emp.hr_employeecode} />
+                  <RO label="Employee ID" value={emp._employeeid || emp.hr_employeeid} />
+                  {hrView && <RO label="Employee Code" value={emp._empcode || emp.hr_etimecode} />}
                   <RO label="Work Email" value={emp.hr_email} />
                   <RO label="Department" value={emp.hr_department} />
                   <RO label="Designation" value={emp.hr_designation} />
