@@ -614,7 +614,7 @@ export default function GoalsPage() {
   const deptOptions = Array.from(new Set(employees.map(e => e.hr_department).filter(Boolean))).sort();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -711,9 +711,9 @@ export default function GoalsPage() {
         </div>
       </div>
 
-      {/* Goals Grid */}
+      {/* Goals Grid — 3 desktop/laptop · 2 tablet · 1 mobile; natural heights, no gaps */}
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 items-start">
           {[...Array(6)].map((_, i) => <GoalCardSkeleton key={i} />)}
         </div>
       ) : goals.length === 0 ? (
@@ -727,7 +727,7 @@ export default function GoalsPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 items-start">
           {goals.map(goal => (
             <GoalCard key={goal.hr_hrgoalid} goal={goal}
               canEdit={canEdit} canReview={canReview} canDelete={canDelete}
