@@ -63,7 +63,7 @@ export default function NotificationBell() {
     socketRef.current = socket;
     socket.emit('register', user.id);
 
-    const events = ['leave:updated', 'payroll:processed', 'recruitment:new_applicant', 'attendance:anomaly', 'request:new', 'goal:assigned', 'profile:updated', 'profile:verification', 'profile:verified', 'document:pending', 'document:verified'];
+    const events = ['leave:updated', 'payroll:processed', 'recruitment:new_applicant', 'attendance:anomaly', 'request:new', 'goal:assigned', 'goal:reassigned', 'profile:updated', 'profile:verification', 'profile:verified', 'document:pending', 'document:verified'];
     events.forEach(evt => {
       socket.on(evt, (payload) => {
         const notif = { id: Date.now(), event: evt, payload, time: new Date(), read: false };
@@ -94,6 +94,9 @@ export default function NotificationBell() {
     }
     if (evt === 'goal:assigned') {
       return `New goal assigned: ${payload.title || 'Goal'}${payload.assignedBy ? ` by ${payload.assignedBy}` : ''}`;
+    }
+    if (evt === 'goal:reassigned') {
+      return `Goal re-assigned away: ${payload.title || 'Goal'}${payload.assignedBy ? ` by ${payload.assignedBy}` : ''}`;
     }
     if (evt === 'profile:updated') return payload.verification ? 'Profile updated — pending HR verification' : 'Profile updated successfully';
     if (evt === 'profile:verification') return `Profile verification pending: ${payload.employeeName || 'an employee'}`;

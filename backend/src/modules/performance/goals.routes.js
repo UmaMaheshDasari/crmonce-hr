@@ -3,7 +3,7 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
 const { ensureGoalTable } = require('../../services/provision-goal');
-const { notifyGoalAssigned } = require('../../services/goal-notify.service');
+const { notifyGoalAssigned, notifyGoalReassigned } = require('../../services/goal-notify.service');
 
 // hr_hrgoals — a TEXT-column table (see services/provision-goal.js). Quarter /
 // Priority / Status are stored as their plain string codes ('Q1', 'medium',
@@ -200,6 +200,7 @@ router.patch('/:id', async (req, res, next) => {
     const isHR = HR_ROLES.includes(req.user.role);
 
     // Employees can only update their OWN goal's progress/self-rating/comments/status.
+    let reassign = null;
     if (!isHR) {
       const existing = await d365.getById(ENTITY, req.params.id, { select: 'hr_employeeid' });
       if (existing.hr_employeeid !== req.user.id) {
@@ -209,6 +210,8 @@ router.patch('/:id', async (req, res, next) => {
       Object.keys(body).forEach(k => { if (!allowed.includes(k)) delete body[k]; });
     } else if (body.employeeId && /^[0-9a-fA-F-]{36}$/.test(String(body.employeeId))) {
       // HR re-assigning the goal to a different employee → move the GUID + name.
+      const prev = await d365.getById(ENTITY, req.params.id, { select: 'hr_employeeid' });
+      if (prev.hr_employeeid !== body.employeeId) reassign = { oldId: prev.hr_employeeid, newId: body.employeeId };
       body.hr_employeeid = body.employeeId;
       try { const emp = await d365.getById(EMP, body.employeeId, { select: 'hr_hremployee1' }); body.hr_employeename = emp?.hr_hremployee1 || ''; } catch {}
     }
@@ -222,6 +225,14 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     const goal = await d365.update(ENTITY, req.params.id, body);
+
+    // On re-assignment, notify BOTH the old and new employee (best-effort).
+    if (reassign) {
+      notifyGoalReassigned({
+        goal, assigner: { name: req.user?.name, email: req.user?.email },
+        oldEmployeeId: reassign.oldId, newEmployeeId: reassign.newId,
+      }).catch(() => {});
+    }
     res.json(goal);
   } catch (err) {
     console.error('[goals/update] FAILED:', err.message);

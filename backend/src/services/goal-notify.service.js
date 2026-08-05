@@ -181,4 +181,36 @@ async function notifyGoalAssigned({ goal, assigner, employeeId }) {
   return audit;
 }
 
-module.exports = { notifyGoalAssigned, _fmtDate: fmtDate, _emailedGoals: emailedGoals };
+/**
+ * A goal was RE-ASSIGNED to a different employee. Notify BOTH:
+ *   - the NEW employee (full assignment email + in-app + activity), and
+ *   - the OLD employee (their goal was moved away).
+ * Best-effort, never throws.
+ */
+async function notifyGoalReassigned({ goal, assigner, oldEmployeeId, newEmployeeId }) {
+  try {
+    // New assignee — the standard assignment flow (email + bell + activity).
+    if (newEmployeeId) {
+      emailedGoals.delete(goal?.hr_hrgoalid);   // allow the reassignment email through
+      await notifyGoalAssigned({ goal, assigner, employeeId: newEmployeeId }).catch(() => {});
+    }
+    // Old assignee — inform them the goal was reassigned.
+    if (oldEmployeeId && oldEmployeeId !== newEmployeeId) {
+      const title = goal?.hr_hrgoal1 || 'Goal';
+      const by = assigner?.name || assigner?.email || 'HR';
+      notifyUser(oldEmployeeId, 'goal:reassigned', { title, assignedBy: by });
+      try {
+        const emp = await d365.getById(EMP, oldEmployeeId, { select: 'hr_hremployee1,hr_email' });
+        if (emp?.hr_email && !isPlaceholder(emp.hr_email)) {
+          const content =
+            `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Hello ${T._esc(emp.hr_hremployee1 || 'there')},</p>` +
+            `<p style="margin:0 0 4px;color:#374151;">The goal <strong>${T._esc(title)}</strong> previously assigned to you has been re-assigned by ${T._esc(by)}. No further action is needed from you.</p>` +
+            T.banner('If you believe this is a mistake, please contact HR.');
+          await sendEmail(emp.hr_email, `Goal Re-assigned — ${title}`, T.layout({ title: 'Goal Re-assigned', preheader: 'A goal was reassigned', content }), { meta: { type: 'goal_reassigned' } });
+        }
+      } catch (e) { global.logger?.warn?.(`[goal] old-assignee notify failed: ${e.message}`); }
+    }
+  } catch (err) { global.logger?.error(`notifyGoalReassigned failed: ${err.message}`); }
+}
+
+module.exports = { notifyGoalAssigned, notifyGoalReassigned, _fmtDate: fmtDate, _emailedGoals: emailedGoals };

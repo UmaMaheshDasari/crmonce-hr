@@ -115,6 +115,7 @@ function GoalModal({ goal, onClose }) {
     employeeId: goal.hr_employeeid || '', hr_hrgoal1: goal.hr_hrgoal1 || '', hr_description: goal.hr_description || '',
     hr_quarter: goal.hr_quarter || 'Q1', hr_financialyear: goal.hr_financialyear || YEARS[1],
     hr_priority: goal.hr_priority || 'medium', hr_weightage: goal.hr_weightage ?? 25,
+    hr_status: goal.hr_status || 'not_started',
     hr_duedate: (goal.hr_duedate || '').slice(0, 10), hr_keyresults: goal.hr_keyresults || '',
   } : {
     employeeId: '', hr_hrgoal1: '', hr_description: '', hr_quarter: 'Q1',
@@ -212,6 +213,17 @@ function GoalModal({ goal, onClose }) {
               {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
+
+          {/* Status (edit only) */}
+          {isEdit && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Status</label>
+              <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                value={form.hr_status} onChange={e => set('hr_status', e.target.value)}>
+                {STATUSES.map(s => <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Priority selector cards */}
           <div>
