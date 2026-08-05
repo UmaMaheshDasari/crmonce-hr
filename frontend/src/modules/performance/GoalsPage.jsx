@@ -7,7 +7,6 @@ import {
   ArrowTrendingUpIcon, ClipboardDocumentCheckIcon,
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid';
-import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { fmtVal, fmtDate } from '../../utils/format';
 import toast from 'react-hot-toast';
@@ -547,7 +546,6 @@ export default function GoalsPage() {
   const canEdit = isHR, canReview = isHR, canDelete = isSuperAdmin;
 
   const [filters, setFilters] = useState({ quarter: '', year: '', status: '', priority: '', department: '', employeeId: '' });
-  const [search, setSearch] = useState('');
   const [showAssign, setShowAssign] = useState(false);
   const [editGoal, setEditGoal] = useState(null);
   const [progressGoal, setProgressGoal] = useState(null);
@@ -566,15 +564,10 @@ export default function GoalsPage() {
   });
 
   const allGoals = data?.data?.data || [];
-  // Department + search are applied client-side (the goal joins employee details).
+  // Department is applied client-side (the goal joins employee details).
   const goals = allGoals.filter(g => {
     const e = g._employee || {};
     if (filters.department && e.department !== filters.department) return false;
-    if (search) {
-      const s = search.toLowerCase();
-      const hay = `${e.name || g.hr_employeename || ''} ${e.employeeId || ''} ${g.hr_hrgoal1 || ''}`.toLowerCase();
-      if (!hay.includes(s)) return false;
-    }
     return true;
   });
   const totalCount = goals.length;
@@ -634,24 +627,19 @@ export default function GoalsPage() {
         )}
       </div>
 
-      {/* Filters — no surrounding panel; controls sit on the page background */}
+      {/* Filters — no surrounding panel; controls sit on the page background.
+          Quarter tabs on top, filter dropdowns below (no search bar). */}
       <div className="space-y-3">
-        {/* Search */}
-        <div className="relative">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-300" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by employee name, Employee ID or goal title…"
-            className="w-full h-10 pl-10 pr-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white outline-none" />
+        {/* Quarter pills */}
+        <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1 w-fit">
+          <button onClick={() => setFilters(p => ({ ...p, quarter: '' }))}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${!filters.quarter ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>All</button>
+          {QUARTERS.map(q => (
+            <button key={q} onClick={() => setFilters(p => ({ ...p, quarter: p.quarter === q ? '' : q }))}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filters.quarter === q ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{q}</button>
+          ))}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {/* Quarter pills */}
-          <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1">
-            <button onClick={() => setFilters(p => ({ ...p, quarter: '' }))}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${!filters.quarter ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>All</button>
-            {QUARTERS.map(q => (
-              <button key={q} onClick={() => setFilters(p => ({ ...p, quarter: p.quarter === q ? '' : q }))}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filters.quarter === q ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{q}</button>
-            ))}
-          </div>
           {/* Financial Year */}
           <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none"
             value={filters.year} onChange={e => setFilters(p => ({ ...p, year: e.target.value }))}>
