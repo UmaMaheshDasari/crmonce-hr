@@ -7,6 +7,8 @@ const { toValue, labelsForList, labelsForEntity } = require('../../services/pick
 const { validateCompanyEmail } = require('../../services/email/sender');
 const { validateEmployeeIdentity } = require('../../services/validators');
 const profile = require('../../services/profile.service');
+const { sendEmail } = require('../../services/notification.service');
+const T = require('../../services/email/templates');
 
 const ENTITY = d365.constructor.entities.employee;
 
@@ -18,7 +20,9 @@ const ADDRESS_FIELDS = 'hr_permaddress,hr_city,hr_state,hr_country,hr_pincode';
 const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
 const VERIFY_FIELDS = 'hr_verifystatus,hr_verifiedby,hr_verifieddate,hr_verifynote';
 const BANK_FIELDS = 'hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch,hr_chequeurl';
-const ESS_OPTIONAL_SELECT = [IDENTITY_FIELDS, PERSONAL_FIELDS, ADDRESS_FIELDS, EMERGENCY_FIELDS, VERIFY_FIELDS, BANK_FIELDS].join(',');
+// Employee-master fields (HR-managed): code + employment metadata.
+const MASTER_FIELDS = 'hr_employeecode,hr_confirmationdate,hr_relievingdate,hr_employmenttype,hr_worklocation';
+const ESS_OPTIONAL_SELECT = [MASTER_FIELDS, IDENTITY_FIELDS, PERSONAL_FIELDS, ADDRESS_FIELDS, EMERGENCY_FIELDS, VERIFY_FIELDS, BANK_FIELDS].join(',');
 // Every optional column that may not exist yet — stripped on a missing-property
 // error so a not-yet-provisioned field never blocks create/edit.
 const OPTIONAL_WRITE_FIELDS = [
@@ -117,6 +121,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     const out = labelsForEntity(ENTITY, withShiftDefaults(emp));
     out._completion = profile.computeCompletion(out);          // { percent, missing, … }
     out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
+    out._employeeid = out.hr_employeecode || out.hr_etimecode || '';   // human Employee ID (never GUID)
     res.json(out);
   } catch (err) { next(err); }
 });
@@ -138,6 +143,28 @@ function sanitizeEmployee(input) {
   return data;
 }
 
+// The independent Employee ID is an EMP#### code (e.g. EMP1020) — NEVER the
+// Dataverse GUID. Existing employees already carry these in the eTime code, so we
+// derive the next number from the MAX of both hr_employeecode and hr_etimecode,
+// continuing the sequence (e.g. EMP1043 → EMP1044) instead of colliding at EMP0001.
+const EMP_CODE_RE = /EMP0*(\d+)/i;
+async function maxEmployeeCodeNumber() {
+  let max = 0;
+  try {
+    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,hr_etimecode', optionalSelect: 'hr_employeecode', top: 5000 });
+    for (const e of data || []) {
+      for (const v of [e.hr_employeecode, e.hr_etimecode]) {
+        const m = EMP_CODE_RE.exec(v || '');
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+    }
+  } catch { /* columns may not exist yet → start at 1 */ }
+  return max;
+}
+async function nextEmployeeCode() {
+  return 'EMP' + String((await maxEmployeeCodeNumber()) + 1).padStart(4, '0');
+}
+
 // POST /api/employees
 router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
@@ -156,6 +183,8 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     const employeeData = sanitizeEmployee(raw);
     if (password) employeeData.hr_password = await authService.hashPassword(password);
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
+    // Auto-assign an independent Employee Code (EMP0001) unless one was provided.
+    if (!employeeData.hr_employeecode) employeeData.hr_employeecode = await nextEmployeeCode();
     // Default shift so attendance math always has a start time (same as migration).
     if (!employeeData.hr_shiftname) employeeData.hr_shiftname = 'General Shift';
     if (!employeeData.hr_shiftstarttime) employeeData.hr_shiftstarttime = '09:00';
@@ -234,10 +263,21 @@ router.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (req
       hr_verifieddate: new Date().toISOString(),
       hr_verifynote: note || '',
     });
-    let name = 'Employee';
-    try { const e = await d365.getById(ENTITY, req.params.id, { select: 'hr_hremployee1' }); name = e.hr_hremployee1 || name; } catch {}
+    let name = 'Employee', email = '';
+    try { const e = await d365.getById(ENTITY, req.params.id, { select: 'hr_hremployee1,hr_email' }); name = e.hr_hremployee1 || name; email = e.hr_email || ''; } catch {}
     profile.writeAudit({ employeeId: req.params.id, employeeName: name, changes: [{ field: 'hr_verifystatus', label: 'Verification', oldValue: 'pending', newValue: status }], updatedBy: req.user.name || req.user.email, action: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'changes_requested', approvedBy: req.user.name || req.user.email, note }).catch(() => {});
     profile.notifyUser(req.params.id, 'profile:verified', { status, note: note || '' });
+    // On reject / request-changes, email the employee the reason (best-effort).
+    if ((action === 'reject' || action === 'request_changes') && email) {
+      const label = action === 'reject' ? 'Rejected' : 'Changes Requested';
+      const content =
+        `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear ${T._esc(name)},</p>` +
+        `<p style="margin:0 0 4px;color:#374151;">Your recent profile update has been <strong>${label.toLowerCase()}</strong> by HR.</p>` +
+        T.summaryCard('Details', [['Decision', T._esc(label)], ['Reason', T._esc(note || '—')]]) +
+        T.banner('Please review the note, update your profile in the HR Portal and resubmit.');
+      sendEmail(email, `Profile Update ${label} — Action Needed`, T.layout({ title: 'Profile Update', preheader: `Your profile update was ${label.toLowerCase()}`, content }), { meta: { type: 'profile_decision' } })
+        .catch((e) => global.logger?.warn?.(`[profile] reject email failed: ${e.message}`));
+    }
     res.json({ ...emp, _verifystatus: status });
   } catch (err) {
     console.error('[profile/verify] FAILED:', err.message);
@@ -270,6 +310,49 @@ router.get('/meta/departments', async (req, res, next) => {
       orderby: 'hr_hrdepartment1 asc',
     });
     res.json(result);
+  } catch (err) { next(err); }
+});
+
+// GET /api/employees/verifications/pending — HR queue of profiles awaiting review.
+router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { data } = await d365.getListOptional(ENTITY, {
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_etimecode',
+      optionalSelect: `${MASTER_FIELDS},${VERIFY_FIELDS}`,
+      top: 5000,
+    });
+    const pending = (data || []).filter(e => e.hr_verifystatus === 'pending');
+    const rows = await Promise.all(pending.map(async (e) => {
+      const pc = await profile.readPendingChanges(e.hr_hremployeeid);
+      return {
+        id: e.hr_hremployeeid, code: e.hr_employeecode || e.hr_etimecode || '', name: e.hr_hremployee1,
+        department: e.hr_department || '', status: 'pending',
+        sections: pc.sections, changes: pc.changes, submittedOn: pc.submittedOn,
+      };
+    }));
+    res.json({ data: rows, count: rows.length });
+  } catch (err) { next(err); }
+});
+
+// POST /api/employees/meta/backfill-codes — set Employee ID for employees missing
+// one. Reuses their existing eTime EMP code when present (so EMP1020 stays EMP1020);
+// otherwise assigns the next number in the sequence.
+router.post('/meta/backfill-codes', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,hr_etimecode,createdon', optionalSelect: 'hr_employeecode', top: 5000, orderby: 'createdon asc' });
+    let max = 0;
+    for (const e of data || []) { for (const v of [e.hr_employeecode, e.hr_etimecode]) { const m = EMP_CODE_RE.exec(v || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); } }
+    let assigned = 0;
+    for (const e of data || []) {
+      if (e.hr_employeecode) continue;
+      let code;
+      const et = String(e.hr_etimecode || '').trim();
+      if (/^EMP\d+$/i.test(et)) code = et.toUpperCase();     // reuse existing eTime EMP code
+      else { max += 1; code = 'EMP' + String(max).padStart(4, '0'); }
+      await updateStrippingOptionalShift(ENTITY, e.hr_hremployeeid, { hr_employeecode: code });
+      assigned += 1;
+    }
+    res.json({ message: `Assigned ${assigned} employee code(s)`, assigned });
   } catch (err) { next(err); }
 });
 

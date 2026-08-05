@@ -81,7 +81,9 @@ async function buildPayslipPdf({ payroll, employee, company }) {
   y += headerH;
 
   // ── Employee grid: 2 columns × rows (label/value each side) ──
-  const empNo = emp.hr_etimecode || (emp.hr_hremployeeid || '').slice(0, 8) || '';
+  // Employee ID is the independent Employee Code (EMP0001) — NEVER the GUID.
+  const empNo = emp.hr_employeecode || emp.hr_etimecode || (emp.hr_hremployeeid || '').slice(0, 8) || '';
+  const managerName = emp['_hr_manager_value@OData.Community.Display.V1.FormattedValue'] || '';
   const left = [
     ['Name:', emp.hr_hremployee1 || ''],
     ['Joining Date:', dfmt(emp.hr_joiningdate)],
@@ -92,13 +94,13 @@ async function buildPayslipPdf({ payroll, employee, company }) {
     ['LOP:', lopDays],
   ];
   const right = [
-    ['Employee No:', empNo],
+    ['Employee ID:', empNo],
+    ['Reporting Manager:', managerName],
     ['Bank Name:', emp.hr_bankname || ''],
     ['Bank Account No:', emp.hr_accountnumber || ''],
     ['PAN Number:', emp.hr_pan || ''],
     ['PF No:', emp.hr_pfnumber || ''],
     ['PF UAN:', emp.hr_uan || ''],
-    ['', ''],
   ];
   const rowH = 15;
   const gridH = rowH * left.length;

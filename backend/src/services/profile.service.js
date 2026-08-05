@@ -68,6 +68,26 @@ const MISSING_GROUPS = [
   { label: 'Bank Details', fields: ['hr_bankname', 'hr_accountnumber', 'hr_ifsc'] },
 ];
 
+// Field → section (used to label "Changed Section" in HR Verification).
+const SECTION_OF = {
+  hr_phone: 'Personal', hr_altphone: 'Personal', hr_personalemail: 'Personal', hr_dob: 'Personal',
+  hr_gender: 'Personal', hr_maritalstatus: 'Personal', hr_nationality: 'Personal', hr_bloodgroup: 'Personal', hr_photourl: 'Personal',
+  hr_aadhaar: 'Identity', hr_pan: 'Identity', hr_passport: 'Identity', hr_drivinglicence: 'Identity', hr_uan: 'Identity', hr_pfnumber: 'Identity', hr_esic: 'Identity',
+  hr_address: 'Address', hr_permaddress: 'Address', hr_city: 'Address', hr_state: 'Address', hr_country: 'Address', hr_pincode: 'Address',
+  hr_emergencycontact: 'Emergency', hr_emergencyrelation: 'Emergency', hr_emergencyphone: 'Emergency',
+  hr_bankname: 'Bank', hr_accountholder: 'Bank', hr_accountnumber: 'Bank', hr_ifsc: 'Bank', hr_branch: 'Bank', hr_chequeurl: 'Bank',
+};
+// Mask sensitive values for display (account number, Aadhaar → last 4 digits).
+function maskValue(field, v) {
+  const s = v == null ? '' : String(v);
+  if (!s) return '';
+  if (field === 'hr_accountnumber' || field === 'hr_aadhaar') {
+    const digits = s.replace(/\s/g, '');
+    return digits.length > 4 ? `${'X'.repeat(digits.length - 4)}${digits.slice(-4)}` : s;
+  }
+  return s;
+}
+
 const filled = (v) => v !== undefined && v !== null && String(v).trim() !== '';
 
 /** { percent, filled, total, missing:[labels] } */
@@ -119,6 +139,32 @@ async function readAudit(employeeId, top = 100) {
   } catch (e) { global.logger?.warn?.(`[profile] audit read failed: ${e.message}`); return []; }
 }
 
+// Field-label → logical field name (reverse of FIELD_LABELS) so audit rows (which
+// store the human label) can be mapped back to a section + masked.
+const LABEL_TO_FIELD = Object.fromEntries(Object.entries(FIELD_LABELS).map(([k, v]) => [v, k]));
+
+/**
+ * The changes an employee made SINCE their last HR decision (approve/reject/
+ * request_changes) — i.e. what's actually pending. Returns grouped sections +
+ * masked old→new pairs.
+ */
+async function readPendingChanges(employeeId) {
+  const rows = await readAudit(employeeId, 200);   // newest first
+  const changes = [];
+  for (const r of rows) {
+    if (r.hr_action && r.hr_action !== 'updated') break;   // reached the last decision boundary
+    const field = LABEL_TO_FIELD[r.hr_field] || r.hr_field;
+    changes.push({
+      field, label: r.hr_field, section: SECTION_OF[field] || 'Personal',
+      oldValue: maskValue(field, r.hr_oldvalue), newValue: maskValue(field, r.hr_newvalue),
+      updatedOn: r.hr_updatedon || r.createdon,
+    });
+  }
+  const sections = [...new Set(changes.map((c) => c.section))];
+  const submittedOn = changes[0]?.updatedOn || null;
+  return { changes, sections, submittedOn };
+}
+
 /** Notify active HR / Super Admins that a profile needs verification. */
 async function notifyHRVerification(employee) {
   try {
@@ -132,7 +178,7 @@ async function notifyHRVerification(employee) {
 }
 
 module.exports = {
-  SELF_EDITABLE, VERIFY_TRIGGER, FIELD_LABELS, COMPLETION_FIELDS,
-  computeCompletion, diffChanges, requiresVerification, writeAudit, readAudit, notifyHRVerification,
-  notifyUser,
+  SELF_EDITABLE, VERIFY_TRIGGER, FIELD_LABELS, COMPLETION_FIELDS, SECTION_OF,
+  computeCompletion, diffChanges, requiresVerification, writeAudit, readAudit, readPendingChanges,
+  maskValue, notifyHRVerification, notifyUser,
 };
