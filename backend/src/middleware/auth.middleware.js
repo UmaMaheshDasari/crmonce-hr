@@ -11,7 +11,7 @@ const PERMISSIONS = {
   super_admin:  ['*'],
   hr_manager:   ['employee:*', 'attendance:*', 'payroll:*', 'leave:*', 'performance:*', 'document:*', 'recruitment:read'],
   recruiter:    ['recruitment:*', 'employee:read'],
-  employee:     ['employee:read:self', 'attendance:read:self', 'attendance:write:self', 'payroll:read:self', 'leave:*:self', 'document:read:self', 'performance:read:self', 'goal:read:self'],
+  employee:     ['employee:read:self', 'attendance:read:self', 'attendance:write:self', 'payroll:read:self', 'leave:*:self', 'document:read:self', 'document:write:self', 'performance:read:self', 'goal:read:self'],
 };
 
 function authenticateToken(req, res, next) {
