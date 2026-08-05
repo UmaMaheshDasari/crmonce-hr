@@ -634,8 +634,8 @@ export default function GoalsPage() {
         )}
       </div>
 
-      {/* Filter Bar */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
+      {/* Filters — no surrounding panel; controls sit on the page background */}
+      <div className="space-y-3">
         {/* Search */}
         <div className="relative">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-300" />
