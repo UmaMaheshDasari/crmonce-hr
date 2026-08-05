@@ -24,7 +24,7 @@ async function enrichEmployees(goals) {
   try {
     const { data } = await d365.getListOptional(EMP, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
-      optionalSelect: 'hr_employeeid,hr_employeecode,hr_etimecode', top: 5000,
+      optionalSelect: 'hr_employeeid,hr_employeecode,hr_etimecode,hr_photourl', top: 5000,
     });
     map = new Map((data || []).map(e => [e.hr_hremployeeid, e]));
   } catch { /* enrichment is best-effort */ }
@@ -35,6 +35,7 @@ async function enrichEmployees(goals) {
       employeeId: e?.hr_employeeid || e?.hr_etimecode || e?.hr_employeecode || '',
       department: e?.hr_department || '',
       designation: e?.hr_designation || '',
+      photo: e?.hr_photourl || '',
     };
   }
   return goals;

@@ -13,6 +13,8 @@ import { fmtVal, fmtDate } from '../../utils/format';
 import toast from 'react-hot-toast';
 
 // ── Constants ───────────────────────────────────────────────────
+const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
+const photoUrl = (u) => (u ? (u.startsWith('http') ? u : API_BASE + u) : '');
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
 const YEARS = ['2024-25', '2025-26', '2026-27', '2027-28'];
 const STATUSES = ['not_started', 'in_progress', 'completed', 'exceeded', 'missed'];
@@ -465,7 +467,9 @@ function GoalCard({ goal, canEdit, canDelete, canReview, onUpdateProgress, onRev
 
         {/* Assigned To */}
         <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5 mb-3">
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{initials}</div>
+          <div className="w-9 h-9 rounded-full overflow-hidden bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+            {emp.photo ? <img src={photoUrl(emp.photo)} alt={empName} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} /> : initials}
+          </div>
           <div className="min-w-0">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Assigned To</p>
             <p className="text-sm font-semibold text-gray-900 truncate">{empName}</p>
@@ -490,10 +494,13 @@ function GoalCard({ goal, canEdit, canDelete, canReview, onUpdateProgress, onRev
         {/* Progress */}
         <div className="mb-3"><ProgressBar value={goal.hr_progress || 0} /></div>
 
-        {/* Assigned By + Due date */}
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-gray-500 mb-3">
-          <span>Assigned by <b className="text-gray-700">{fmtVal(goal.hr_assignedby)}</b>{goal.hr_assigneddate ? ` · ${fmtDate(goal.hr_assigneddate)}` : ''}</span>
-          {goal.hr_duedate && <span className="inline-flex items-center gap-1"><CalendarDaysIcon className="w-3.5 h-3.5" /> Due {fmtDate(goal.hr_duedate)}</span>}
+        {/* Assigned By + Due date + Last updated */}
+        <div className="space-y-1 text-xs text-gray-500 mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <span>Assigned by <b className="text-gray-700">{fmtVal(goal.hr_assignedby)}</b>{goal.hr_assigneddate ? ` · ${fmtDate(goal.hr_assigneddate)}` : ''}</span>
+            {goal.hr_duedate && <span className="inline-flex items-center gap-1"><CalendarDaysIcon className="w-3.5 h-3.5" /> Due {fmtDate(goal.hr_duedate)}</span>}
+          </div>
+          {goal.modifiedon && <p className="text-gray-400">Last updated {fmtDate(goal.modifiedon)}</p>}
         </div>
 
         {/* ratings if present */}
@@ -586,12 +593,15 @@ export default function GoalsPage() {
 
   // Stats
   const stats = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
     const completed = goals.filter(g => g.hr_status === 'completed' || g.hr_status === 'exceeded').length;
     const inProgress = goals.filter(g => g.hr_status === 'in_progress').length;
+    const notStarted = goals.filter(g => g.hr_status === 'not_started').length;
+    const overdue = goals.filter(g => g.hr_duedate && String(g.hr_duedate).slice(0, 10) < today && !['completed', 'exceeded'].includes(g.hr_status)).length;
     const avgProgress = goals.length > 0
       ? Math.round(goals.reduce((sum, g) => sum + (g.hr_progress || 0), 0) / goals.length)
       : 0;
-    return { total: goals.length, completed, inProgress, avgProgress };
+    return { total: goals.length, completed, inProgress, notStarted, overdue, avgProgress };
   }, [goals]);
 
   // Employee list for HR filter
@@ -679,22 +689,22 @@ export default function GoalsPage() {
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 border-l-4 border-l-indigo-400">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Total Goals</p>
-          <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 border-l-4 border-l-emerald-400">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Completed</p>
-          <p className="text-2xl font-bold text-gray-900">{stats.completed}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 border-l-4 border-l-amber-400">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">In Progress</p>
-          <p className="text-2xl font-bold text-gray-900">{stats.inProgress}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 border-l-4 border-l-purple-400">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Avg Progress</p>
-          <div className="flex items-center gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: 'Total Goals', value: stats.total, border: 'border-l-indigo-400' },
+          { label: 'Not Started', value: stats.notStarted, border: 'border-l-gray-400' },
+          { label: 'In Progress', value: stats.inProgress, border: 'border-l-amber-400' },
+          { label: 'Completed', value: stats.completed, border: 'border-l-emerald-400' },
+          { label: 'Overdue', value: stats.overdue, border: 'border-l-red-400', danger: true },
+        ].map(s => (
+          <div key={s.label} className={`bg-white rounded-xl border border-gray-100 shadow-sm p-4 border-l-4 ${s.border}`}>
+            <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">{s.label}</p>
+            <p className={`text-2xl font-bold ${s.danger && s.value > 0 ? 'text-red-600' : 'text-gray-900'}`}>{s.value}</p>
+          </div>
+        ))}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 border-l-4 border-l-purple-400">
+          <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Avg Progress</p>
+          <div className="flex items-center gap-2">
             <CircularProgress value={stats.avgProgress} />
             <span className="text-2xl font-bold text-gray-900">{stats.avgProgress}%</span>
           </div>
