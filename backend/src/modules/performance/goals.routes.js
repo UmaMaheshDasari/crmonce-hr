@@ -11,7 +11,34 @@ const { notifyGoalAssigned } = require('../../services/goal-notify.service');
 // (not a Dataverse lookup). This mirrors the Attendance-Request / Holiday tables
 // and lets the frontend read the codes back verbatim (STATUS_CONFIG[goal.hr_status]).
 const ENTITY = d365.constructor.entities.goal;   // 'hr_hrgoals'
+const EMP = d365.constructor.entities.employee;
 const HR_ROLES = ['super_admin', 'hr_manager'];
+
+// The goal stores the employee as a GUID string (hr_employeeid) — not a Dataverse
+// lookup — so we "expand" it by joining to the employee master for Name, Employee
+// ID (EMP1039), Department and Designation.
+async function enrichEmployees(goals) {
+  const ids = [...new Set((goals || []).map(g => g.hr_employeeid).filter(Boolean))];
+  if (!ids.length) return goals;
+  let map = new Map();
+  try {
+    const { data } = await d365.getListOptional(EMP, {
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
+      optionalSelect: 'hr_employeeid,hr_employeecode,hr_etimecode', top: 5000,
+    });
+    map = new Map((data || []).map(e => [e.hr_hremployeeid, e]));
+  } catch { /* enrichment is best-effort */ }
+  for (const g of goals) {
+    const e = map.get(g.hr_employeeid);
+    g._employee = {
+      name: e?.hr_hremployee1 || g.hr_employeename || '',
+      employeeId: e?.hr_employeeid || e?.hr_etimecode || e?.hr_employeecode || '',
+      department: e?.hr_department || '',
+      designation: e?.hr_designation || '',
+    };
+  }
+  return goals;
+}
 const CORE_FIELDS = [
   'hr_hrgoalid', 'hr_hrgoal1', 'hr_description', 'hr_quarter', 'hr_financialyear',
   'hr_status', 'hr_priority', 'hr_progress', 'hr_weightage', 'hr_selfrating',
@@ -34,7 +61,7 @@ const tableMissing = (err) =>
 // GET /  — list goals with filters
 router.get('/', async (req, res, next) => {
   try {
-    const { quarter, year, status, employeeId } = req.query;
+    const { quarter, year, status, priority, employeeId } = req.query;
     const isHR = HR_ROLES.includes(req.user.role);
     const targetId = isHR ? employeeId : req.user.id;   // non-HR only see their own
 
@@ -43,6 +70,7 @@ router.get('/', async (req, res, next) => {
     if (quarter) filters.push(`hr_quarter eq ${q(quarter)}`);
     if (year) filters.push(`hr_financialyear eq ${q(year)}`);
     if (status) filters.push(`hr_status eq ${q(status)}`);
+    if (priority) filters.push(`hr_priority eq ${q(priority)}`);
 
     const result = await d365.getListOptional(ENTITY, {
       select: CORE_FIELDS,
@@ -50,7 +78,8 @@ router.get('/', async (req, res, next) => {
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
     });
-    res.json(result);   // { data, count, nextLink } — codes returned verbatim
+    await enrichEmployees(result.data);   // attach _employee (name, EMP id, dept, designation)
+    res.json(result);
   } catch (err) {
     // Table not created yet → provision it, then return an empty list (no goals).
     if (tableMissing(err)) {
@@ -69,6 +98,7 @@ router.get('/:id', async (req, res, next) => {
     if (!isHR && goal.hr_employeeid !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
+    await enrichEmployees([goal]);
     res.json(goal);
   } catch (err) { next(err); }
 });
@@ -177,7 +207,12 @@ router.patch('/:id', async (req, res, next) => {
       }
       const allowed = ['hr_progress', 'hr_selfrating', 'hr_selfcomments', 'hr_status'];
       Object.keys(body).forEach(k => { if (!allowed.includes(k)) delete body[k]; });
+    } else if (body.employeeId && /^[0-9a-fA-F-]{36}$/.test(String(body.employeeId))) {
+      // HR re-assigning the goal to a different employee → move the GUID + name.
+      body.hr_employeeid = body.employeeId;
+      try { const emp = await d365.getById(EMP, body.employeeId, { select: 'hr_hremployee1' }); body.hr_employeename = emp?.hr_hremployee1 || ''; } catch {}
     }
+    if (body.hr_weightage !== undefined) body.hr_weightage = Math.max(0, Math.min(100, Math.round(Number(body.hr_weightage) || 0)));
 
     // Never forward the routing id or empty values. Quarter/priority/status stay as
     // their text codes — no option-set conversion.
@@ -194,8 +229,8 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// DELETE /:id  — delete goal (HR only, not completed/exceeded)
-router.delete('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+// DELETE /:id  — delete goal (Super Admin only, not completed/exceeded)
+router.delete('/:id', requireRole('super_admin'), async (req, res, next) => {
   try {
     const goal = await d365.getById(ENTITY, req.params.id, { select: 'hr_status' });
     if (['completed', 'exceeded'].includes(goal.hr_status)) {

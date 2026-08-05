@@ -7,7 +7,9 @@ import {
   ArrowTrendingUpIcon, ClipboardDocumentCheckIcon,
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid';
+import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
+import { fmtVal, fmtDate } from '../../utils/format';
 import toast from 'react-hot-toast';
 
 // ── Constants ───────────────────────────────────────────────────
@@ -105,15 +107,21 @@ function CircularProgress({ value = 0, size = 48, stroke = 4 }) {
   );
 }
 
-// ── Assign Goal Modal ───────────────────────────────────────────
-function AssignGoalModal({ onClose }) {
+// ── Assign / Edit Goal Modal ────────────────────────────────────
+function GoalModal({ goal, onClose }) {
+  const isEdit = !!goal;
   const qc = useQueryClient();
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(isEdit ? {
+    employeeId: goal.hr_employeeid || '', hr_hrgoal1: goal.hr_hrgoal1 || '', hr_description: goal.hr_description || '',
+    hr_quarter: goal.hr_quarter || 'Q1', hr_financialyear: goal.hr_financialyear || YEARS[1],
+    hr_priority: goal.hr_priority || 'medium', hr_weightage: goal.hr_weightage ?? 25,
+    hr_duedate: (goal.hr_duedate || '').slice(0, 10), hr_keyresults: goal.hr_keyresults || '',
+  } : {
     employeeId: '', hr_hrgoal1: '', hr_description: '', hr_quarter: 'Q1',
     hr_financialyear: YEARS[1], hr_priority: 'medium', hr_weightage: 25,
     hr_duedate: '', hr_keyresults: '',
   });
-  const [empSearch, setEmpSearch] = useState('');
+  const [empSearch, setEmpSearch] = useState(goal?._employee?.name || goal?.hr_employeename || '');
 
   const { data: empData } = useQuery({
     queryKey: ['employees-all'],
@@ -126,12 +134,10 @@ function AssignGoalModal({ onClose }) {
     : employees;
 
   const mutation = useMutation({
-    mutationFn: () => goalsApi.create(form),
-    onSuccess: () => { toast.success('Goal assigned successfully!'); qc.invalidateQueries({ queryKey: ['goals'] }); onClose(); },
-    // Surface the ACTUAL backend error (e.g. "Please select an employee.",
-    // "Weightage must be 0–100", or the exact Dataverse rejection) — never a
-    // generic message.
-    onError: (e) => toast.error(e.response?.data?.error || e.message || 'Failed to assign goal'),
+    mutationFn: () => isEdit ? goalsApi.update(goal.hr_hrgoalid, form) : goalsApi.create(form),
+    onSuccess: () => { toast.success(isEdit ? 'Goal updated' : 'Goal assigned successfully!'); qc.invalidateQueries({ queryKey: ['goals'] }); onClose(); },
+    // Surface the ACTUAL backend error, never a generic message.
+    onError: (e) => toast.error(e.response?.data?.error || e.message || (isEdit ? 'Failed to update goal' : 'Failed to assign goal')),
   });
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -141,8 +147,8 @@ function AssignGoalModal({ onClose }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-x-hidden overflow-y-auto animate-in fade-in duration-200">
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900 tracking-tight">Assign New Goal</h2>
-            <p className="text-sm text-gray-400 mt-0.5">Set a quarterly objective for an employee</p>
+            <h2 className="text-lg font-semibold text-gray-900 tracking-tight">{isEdit ? 'Edit Goal' : 'Assign New Goal'}</h2>
+            <p className="text-sm text-gray-400 mt-0.5">{isEdit ? 'Update the goal details' : 'Set a quarterly objective for an employee'}</p>
           </div>
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
             <XMarkIcon className="w-5 h-5" />
@@ -254,7 +260,7 @@ function AssignGoalModal({ onClose }) {
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Cancel</button>
           <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.hr_hrgoal1 || !form.employeeId}
             className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/25 transition-all duration-200">
-            {mutation.isPending ? 'Assigning...' : 'Assign Goal'}
+            {mutation.isPending ? (isEdit ? 'Saving...' : 'Assigning...') : (isEdit ? 'Save Changes' : 'Assign Goal')}
           </button>
         </div>
       </div>
@@ -426,89 +432,85 @@ function ManagerReviewModal({ goal, onClose }) {
 }
 
 // ── Goal Card ───────────────────────────────────────────────────
-function GoalCard({ goal, isHR, onUpdateProgress, onReview, onDelete }) {
+function GoalCard({ goal, canEdit, canDelete, canReview, onUpdateProgress, onReview, onEdit, onDelete }) {
   const priority = PRIORITY_CONFIG[goal.hr_priority] || PRIORITY_CONFIG.medium;
   const status = STATUS_CONFIG[goal.hr_status] || STATUS_CONFIG.not_started;
+  const emp = goal._employee || {};
+  const empName = emp.name || goal.hr_employeename || '—';
+  const initials = empName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
   return (
-    <div className={`bg-white rounded-xl border border-gray-100 border-l-4 ${priority.border} shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200`}>
-      <div className="p-5">
-        {/* Header row */}
-        <div className="flex items-start justify-between gap-3 mb-2">
-          <h3 className="text-base font-semibold text-gray-900 line-clamp-1 flex-1">{goal.hr_hrgoal1}</h3>
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ring-1 ${status.bg} ${status.text} ${status.ring}`}>
+    <div className={`bg-white rounded-xl border border-gray-100 border-l-4 ${priority.border} shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col`}>
+      <div className="p-5 flex flex-col flex-1">
+        {/* Top: title + status */}
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <h3 className="text-base font-semibold text-gray-900 line-clamp-2 flex-1">{goal.hr_hrgoal1}</h3>
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ring-1 whitespace-nowrap ${status.bg} ${status.text} ${status.ring}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
             {status.label}
           </span>
         </div>
 
+        {/* Assigned To */}
+        <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5 mb-3">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{initials}</div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Assigned To</p>
+            <p className="text-sm font-semibold text-gray-900 truncate">{empName}</p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-500">
+              {emp.employeeId && <span className="font-semibold text-indigo-600">{emp.employeeId}</span>}
+              {emp.department && <span>· {emp.department}</span>}
+              {emp.designation && <span>· {emp.designation}</span>}
+            </div>
+          </div>
+        </div>
+
         {/* Description */}
-        {goal.hr_description && (
-          <p className="text-sm text-gray-500 line-clamp-2 mb-3">{goal.hr_description}</p>
-        )}
+        {goal.hr_description && <p className="text-sm text-gray-500 line-clamp-2 mb-3">{goal.hr_description}</p>}
 
-        {/* Tags row */}
+        {/* Tags */}
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-indigo-50 text-indigo-600">
-            {goal.hr_quarter} {goal.hr_financialyear}
-          </span>
-          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${priority.bg} ${priority.color}`}>
-            {priority.label}
-          </span>
-          {goal.hr_weightage > 0 && (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-purple-50 text-purple-600">
-              Weight: {goal.hr_weightage}%
-            </span>
-          )}
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-indigo-50 text-indigo-600">{goal.hr_quarter} {goal.hr_financialyear}</span>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${priority.bg} ${priority.color}`}>{priority.label}</span>
+          {goal.hr_weightage > 0 && <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-purple-50 text-purple-600">Weight: {goal.hr_weightage}%</span>}
         </div>
 
-        {/* Progress bar */}
-        <div className="mb-3">
-          <ProgressBar value={goal.hr_progress || 0} />
+        {/* Progress */}
+        <div className="mb-3"><ProgressBar value={goal.hr_progress || 0} /></div>
+
+        {/* Assigned By + Due date */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-gray-500 mb-3">
+          <span>Assigned by <b className="text-gray-700">{fmtVal(goal.hr_assignedby)}</b>{goal.hr_assigneddate ? ` · ${fmtDate(goal.hr_assigneddate)}` : ''}</span>
+          {goal.hr_duedate && <span className="inline-flex items-center gap-1"><CalendarDaysIcon className="w-3.5 h-3.5" /> Due {fmtDate(goal.hr_duedate)}</span>}
         </div>
 
-        {/* Due date & ratings row */}
-        <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 mb-3">
-          {goal.hr_duedate && (
-            <span className="inline-flex items-center gap-1">
-              <CalendarDaysIcon className="w-3.5 h-3.5" />
-              {new Date(goal.hr_duedate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </span>
-          )}
-          {goal.hr_selfrating > 0 && (
-            <span className="inline-flex items-center gap-1">
-              Self: <StarRating value={goal.hr_selfrating} readOnly size="sm" />
-            </span>
-          )}
-          {goal.hr_managerrating > 0 && (
-            <span className="inline-flex items-center gap-1">
-              Manager: <StarRating value={goal.hr_managerrating} readOnly size="sm" />
-            </span>
-          )}
-        </div>
-
-        {/* Key Results preview */}
-        {goal.hr_keyresults && (
-          <p className="text-xs text-gray-400 line-clamp-2 mb-3 border-t border-gray-50 pt-2">{goal.hr_keyresults}</p>
+        {/* ratings if present */}
+        {(goal.hr_selfrating > 0 || goal.hr_managerrating > 0) && (
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 mb-3">
+            {goal.hr_selfrating > 0 && <span className="inline-flex items-center gap-1">Self: <StarRating value={goal.hr_selfrating} readOnly size="sm" /></span>}
+            {goal.hr_managerrating > 0 && <span className="inline-flex items-center gap-1">Manager: <StarRating value={goal.hr_managerrating} readOnly size="sm" /></span>}
+          </div>
         )}
 
         {/* Actions */}
-        <div className="flex items-center gap-2 pt-2 border-t border-gray-50">
-          <button onClick={() => onUpdateProgress(goal)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
+        <div className="flex items-center gap-1 pt-2 border-t border-gray-50 mt-auto flex-wrap">
+          <button onClick={() => onUpdateProgress(goal)} className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
             <ArrowTrendingUpIcon className="w-3.5 h-3.5" /> Update Progress
           </button>
-          {isHR && (
-            <>
-              <button onClick={() => onReview(goal)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-purple-600 hover:bg-purple-50 rounded-lg transition-colors">
-                <ClipboardDocumentCheckIcon className="w-3.5 h-3.5" /> Review
-              </button>
-              <button onClick={() => onDelete(goal)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors ml-auto">
-                <TrashIcon className="w-3.5 h-3.5" /> Delete
-              </button>
-            </>
+          {canReview && (
+            <button onClick={() => onReview(goal)} className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-purple-600 hover:bg-purple-50 rounded-lg transition-colors">
+              <ClipboardDocumentCheckIcon className="w-3.5 h-3.5" /> Review
+            </button>
+          )}
+          {canEdit && (
+            <button onClick={() => onEdit(goal)} className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+              <PencilSquareIcon className="w-3.5 h-3.5" /> Edit
+            </button>
+          )}
+          {canDelete && (
+            <button onClick={() => onDelete(goal)} className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors ml-auto">
+              <TrashIcon className="w-3.5 h-3.5" /> Delete
+            </button>
           )}
         </div>
       </div>
@@ -520,10 +522,15 @@ function GoalCard({ goal, isHR, onUpdateProgress, onReview, onDelete }) {
 export default function GoalsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const isSuperAdmin = user?.role === 'super_admin';
   const isHR = ['super_admin', 'hr_manager'].includes(user?.role);
+  // Permissions: super admin edits/deletes; HR edits/reviews; everyone updates progress.
+  const canEdit = isHR, canReview = isHR, canDelete = isSuperAdmin;
 
-  const [filters, setFilters] = useState({ quarter: '', year: '', status: '', employeeId: '' });
+  const [filters, setFilters] = useState({ quarter: '', year: '', status: '', priority: '', department: '', employeeId: '' });
+  const [search, setSearch] = useState('');
   const [showAssign, setShowAssign] = useState(false);
+  const [editGoal, setEditGoal] = useState(null);
   const [progressGoal, setProgressGoal] = useState(null);
   const [reviewGoal, setReviewGoal] = useState(null);
 
@@ -531,6 +538,7 @@ export default function GoalsPage() {
   if (filters.quarter) queryParams.quarter = filters.quarter;
   if (filters.year) queryParams.year = filters.year;
   if (filters.status) queryParams.status = filters.status;
+  if (filters.priority) queryParams.priority = filters.priority;
   if (filters.employeeId) queryParams.employeeId = filters.employeeId;
 
   const { data, isLoading } = useQuery({
@@ -538,8 +546,19 @@ export default function GoalsPage() {
     queryFn: () => goalsApi.list(queryParams),
   });
 
-  const goals = data?.data?.data || [];
-  const totalCount = data?.data?.count || goals.length;
+  const allGoals = data?.data?.data || [];
+  // Department + search are applied client-side (the goal joins employee details).
+  const goals = allGoals.filter(g => {
+    const e = g._employee || {};
+    if (filters.department && e.department !== filters.department) return false;
+    if (search) {
+      const s = search.toLowerCase();
+      const hay = `${e.name || g.hr_employeename || ''} ${e.employeeId || ''} ${g.hr_hrgoal1 || ''}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+  const totalCount = goals.length;
 
   const deleteMutation = useMutation({
     mutationFn: (id) => goalsApi.delete(id),
@@ -570,6 +589,7 @@ export default function GoalsPage() {
     enabled: isHR,
   });
   const employees = empData?.data?.data || [];
+  const deptOptions = Array.from(new Set(employees.map(e => e.hr_department).filter(Boolean))).sort();
 
   return (
     <div className="space-y-6">
@@ -593,45 +613,55 @@ export default function GoalsPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-        <div className="flex flex-wrap items-center gap-4">
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
+        {/* Search */}
+        <div className="relative">
+          <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-300" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by employee name, Employee ID or goal title…"
+            className="w-full h-10 pl-10 pr-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white outline-none" />
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
           {/* Quarter pills */}
           <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1">
             <button onClick={() => setFilters(p => ({ ...p, quarter: '' }))}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${!filters.quarter ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-              All
-            </button>
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${!filters.quarter ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>All</button>
             {QUARTERS.map(q => (
               <button key={q} onClick={() => setFilters(p => ({ ...p, quarter: p.quarter === q ? '' : q }))}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filters.quarter === q ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                {q}
-              </button>
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filters.quarter === q ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{q}</button>
             ))}
           </div>
-
-          {/* Year */}
-          <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+          {/* Financial Year */}
+          <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none"
             value={filters.year} onChange={e => setFilters(p => ({ ...p, year: e.target.value }))}>
             <option value="">All Years</option>
             {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-
           {/* Status */}
-          <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+          <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none"
             value={filters.status} onChange={e => setFilters(p => ({ ...p, status: e.target.value }))}>
             <option value="">All Statuses</option>
             {STATUSES.map(s => <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>)}
           </select>
-
-          {/* Employee filter (HR only) */}
+          {/* Priority */}
+          <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none"
+            value={filters.priority} onChange={e => setFilters(p => ({ ...p, priority: e.target.value }))}>
+            <option value="">All Priorities</option>
+            {PRIORITIES.map(p => <option key={p} value={p}>{PRIORITY_CONFIG[p].label}</option>)}
+          </select>
+          {/* Department + Employee (HR only) */}
           {isHR && (
-            <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-              value={filters.employeeId} onChange={e => setFilters(p => ({ ...p, employeeId: e.target.value }))}>
-              <option value="">All Employees</option>
-              {employees.map(emp => (
-                <option key={emp.hr_hremployeeid} value={emp.hr_hremployeeid}>{emp.hr_hremployee1}</option>
-              ))}
-            </select>
+            <>
+              <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none"
+                value={filters.department} onChange={e => setFilters(p => ({ ...p, department: e.target.value }))}>
+                <option value="">All Departments</option>
+                {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+              <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none"
+                value={filters.employeeId} onChange={e => setFilters(p => ({ ...p, employeeId: e.target.value }))}>
+                <option value="">All Employees</option>
+                {employees.map(emp => <option key={emp.hr_hremployeeid} value={emp.hr_hremployeeid}>{emp.hr_hremployee1}</option>)}
+              </select>
+            </>
           )}
         </div>
       </div>
@@ -677,16 +707,19 @@ export default function GoalsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {goals.map(goal => (
-            <GoalCard key={goal.hr_hrgoalid} goal={goal} isHR={isHR}
+            <GoalCard key={goal.hr_hrgoalid} goal={goal}
+              canEdit={canEdit} canReview={canReview} canDelete={canDelete}
               onUpdateProgress={setProgressGoal}
               onReview={setReviewGoal}
+              onEdit={setEditGoal}
               onDelete={handleDelete} />
           ))}
         </div>
       )}
 
       {/* Modals */}
-      {showAssign && <AssignGoalModal onClose={() => setShowAssign(false)} />}
+      {showAssign && <GoalModal onClose={() => setShowAssign(false)} />}
+      {editGoal && <GoalModal goal={editGoal} onClose={() => setEditGoal(null)} />}
       {progressGoal && <UpdateProgressModal goal={progressGoal} onClose={() => setProgressGoal(null)} />}
       {reviewGoal && <ManagerReviewModal goal={reviewGoal} onClose={() => setReviewGoal(null)} />}
     </div>
