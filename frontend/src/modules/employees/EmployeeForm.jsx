@@ -11,6 +11,9 @@ import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRu
 
 const ROLES = ['employee', 'hr_manager', 'recruiter', 'super_admin'];
 const SHIFTS = ['Morning Shift', 'General Shift', 'Noon Shift', 'Evening Shift'];
+const DESIGNATIONS = ['Employee', 'Senior Employee', 'Team Lead', 'Manager', 'HR', 'Admin'];
+const EMPLOYMENT_TYPES = ['Full-time', 'Part-time', 'Contract', 'Intern', 'Probation'];
+const DEPARTMENTS = ['ADM', 'HR', 'IT', 'Finance', 'Sales', 'Marketing', 'Support'];
 
 // NOTE: These field components are declared at module scope on purpose.
 // Defining them inside the parent recreated their identity on every render,
@@ -81,6 +84,13 @@ export default function EmployeeForm() {
     queryKey: ['departments'],
     queryFn: () => employeeApi.departments(),
   });
+  // Active employees for the Reporting Manager lookup.
+  const { data: empListData } = useQuery({
+    queryKey: ['employees-min'],
+    queryFn: () => employeeApi.list({ limit: 500, status: 'active' }),
+  });
+  const managers = (empListData?.data?.data || []).filter(e => e.hr_hremployeeid !== id);
+  const deptOptions = Array.from(new Set([...(deptData?.data?.data || []).map(d => d.hr_hrdepartment1), ...DEPARTMENTS])).filter(Boolean);
 
   useEffect(() => {
     if (empData?.data) {
@@ -91,6 +101,10 @@ export default function EmployeeForm() {
         hr_status: e.hr_status, hr_address: e.hr_address, hr_etimecode: e.hr_etimecode,
         hr_shiftname: e.hr_shiftname || 'General Shift', hr_shiftstarttime: e.hr_shiftstarttime || '09:00',
         hr_shiftendtime: e.hr_shiftendtime || '18:00',
+        // Master
+        managerId: e._hr_manager_value || '', hr_employmenttype: e.hr_employmenttype,
+        hr_worklocation: e.hr_worklocation, hr_confirmationdate: e.hr_confirmationdate?.split('T')[0],
+        hr_relievingdate: e.hr_relievingdate?.split('T')[0], hr_employeecode: e.hr_employeecode || e.hr_etimecode,
         // Identity
         hr_aadhaar: e.hr_aadhaar, hr_pan: e.hr_pan, hr_passport: e.hr_passport,
         hr_drivinglicence: e.hr_drivinglicence, hr_uan: e.hr_uan, hr_esic: e.hr_esic,
@@ -176,19 +190,34 @@ export default function EmployeeForm() {
           </div>
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <Field label="Employee ID" name="hr_employeecode" placeholder="Auto (EMP0001)" register={register} errors={errors} />
+              <SelectField label="Reporting Manager" name="managerId" register={register}>
+                <option value="">— None —</option>
+                {managers.map(m => <option key={m.hr_hremployeeid} value={m.hr_hremployeeid}>{m.hr_hremployee1}</option>)}
+              </SelectField>
               <SelectField label="Department" name="hr_department" register={register}>
                 <option value="">Select department</option>
-                {deptData?.data?.data?.map(d => <option key={d.hr_hrdepartmentid} value={d.hr_hrdepartment1}>{d.hr_hrdepartment1}</option>)}
+                {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
               </SelectField>
-              <Field label="Designation" name="hr_designation" placeholder="Software Engineer" register={register} errors={errors} />
+              <SelectField label="Designation" name="hr_designation" register={register}>
+                <option value="">Select designation</option>
+                {DESIGNATIONS.map(d => <option key={d} value={d}>{d}</option>)}
+              </SelectField>
               <SelectField label="Role" name="hr_role" register={register}>
                 {ROLES.map(r => <option key={r} value={r}>{r.replace('_',' ')}</option>)}
+              </SelectField>
+              <SelectField label="Employment Type" name="hr_employmenttype" register={register}>
+                <option value="">Select type</option>
+                {EMPLOYMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </SelectField>
               <SelectField label="Status" name="hr_status" register={register}>
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
                 <option value="on_leave">On Leave</option>
               </SelectField>
+              <Field label="Work Location" name="hr_worklocation" placeholder="Nellore" register={register} errors={errors} />
+              <Field label="Confirmation Date" name="hr_confirmationdate" type="date" register={register} errors={errors} />
+              <Field label="Relieving Date" name="hr_relievingdate" type="date" register={register} errors={errors} />
               <SelectField label="Shift Name" name="hr_shiftname" register={register}>
                 {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
               </SelectField>

@@ -49,27 +49,39 @@ const { ensureEmployeeColumns } = require('../../services/provision-employee-col
 // retry — so existing columns always persist and we never silently drop everything.
 async function robustWrite(op, entity, id, data) {
   let payload = { ...data };
-  let provisioned = false;
+  let provisioned = false, strippedBind = false;
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
       return op === 'create' ? await d365.create(entity, payload) : await d365.update(entity, id, payload);
     } catch (err) {
-      if (!d365._isMissingProperty(err)) throw err;
-      if (!provisioned) {
-        provisioned = true;
-        try { await ensureEmployeeColumns(global.logger || console); continue; } catch { /* fall through to stripping */ }
+      // (a) unknown column → provision once, then strip only the named column.
+      if (d365._isMissingProperty(err)) {
+        if (!provisioned) {
+          provisioned = true;
+          try { await ensureEmployeeColumns(global.logger || console); continue; } catch { /* fall through */ }
+        }
+        const prop = d365._missingPropertyName(err);
+        if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) {
+          global.logger?.warn?.(`[employee] column '${prop}' unavailable — saved without it`);
+          delete payload[prop];
+          if (Object.keys(payload).length) continue;
+          return op === 'create' ? {} : d365.getById(entity, id);
+        }
+        throw err;
       }
-      const prop = d365._missingPropertyName(err);
-      if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) {
-        global.logger?.warn?.(`[employee] column '${prop}' unavailable — saved without it`);
-        delete payload[prop];
-        if (Object.keys(payload).length) continue;
-        return op === 'create' ? {} : d365.getById(entity, id);
+      // (b) a lookup bind (@odata.bind) the tenant doesn't expose under this nav
+      //     name → strip the bind(s) once and save the rest (never block the save).
+      const bindKeys = Object.keys(payload).filter(k => k.endsWith('@odata.bind'));
+      if (bindKeys.length && !strippedBind) {
+        strippedBind = true;
+        for (const k of bindKeys) delete payload[k];
+        global.logger?.warn?.('[employee] lookup bind rejected — saved without the reporting-manager link');
+        continue;
       }
-      throw err;   // missing property we can't name/strip — surface it
+      throw err;
     }
   }
-  throw new Error('employee write failed after provisioning retries');
+  throw new Error('employee write failed after retries');
 }
 const createStrippingOptionalShift = (entity, data) => robustWrite('create', entity, null, data);
 const updateStrippingOptionalShift = (entity, id, data) => robustWrite('update', entity, id, data);
@@ -165,10 +177,18 @@ async function nextEmployeeCode() {
   return 'EMP' + String((await maxEmployeeCodeNumber()) + 1).padStart(4, '0');
 }
 
+// Bind the Reporting Manager lookup (best-effort — robustWrite strips it if the
+// tenant exposes the nav property under a different name).
+const GUID_RE = /^[0-9a-fA-F-]{36}$/;
+const bindManager = (data, managerId) => {
+  if (managerId && GUID_RE.test(String(managerId))) data['hr_Manager@odata.bind'] = `/hr_hremployees(${managerId})`;
+  return data;
+};
+
 // POST /api/employees
 router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
-    const { password, ...raw } = req.body;
+    const { password, managerId, ...raw } = req.body;
     // Employee email must be a valid company mailbox — it is the sender of their
     // own leave requests (external providers like gmail are rejected).
     const ev = validateCompanyEmail(raw.hr_email, 'Employee');
@@ -185,6 +205,7 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     if (employeeData.hr_status === undefined) employeeData.hr_status = toValue('hr_employee_status', 'active');
     // Auto-assign an independent Employee Code (EMP0001) unless one was provided.
     if (!employeeData.hr_employeecode) employeeData.hr_employeecode = await nextEmployeeCode();
+    bindManager(employeeData, managerId);
     // Default shift so attendance math always has a start time (same as migration).
     if (!employeeData.hr_shiftname) employeeData.hr_shiftname = 'General Shift';
     if (!employeeData.hr_shiftstarttime) employeeData.hr_shiftstarttime = '09:00';
@@ -205,7 +226,7 @@ router.patch('/:id', async (req, res, next) => {
     const isSelf = req.user.id === req.params.id;
     if (!isHRWrite && !isSelf) return res.status(403).json({ error: 'Access denied' });
 
-    const { password, ...raw } = req.body;
+    const { password, managerId, ...raw } = req.body;
 
     // Employees editing themselves: keep ONLY the whitelisted fields.
     if (!isHRWrite) {
@@ -235,6 +256,7 @@ router.patch('/:id', async (req, res, next) => {
 
     const updateData = sanitizeEmployee(raw);
     if (password && isHRWrite) updateData.hr_password = await authService.hashPassword(password);
+    if (isHRWrite) bindManager(updateData, managerId);   // only HR can set Reporting Manager
     const emp = await updateStrippingOptionalShift(ENTITY, req.params.id, updateData);
 
     // Audit every changed field + notify (best-effort; never fails the save).

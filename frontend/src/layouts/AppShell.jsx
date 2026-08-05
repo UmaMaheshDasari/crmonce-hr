@@ -9,13 +9,14 @@ import {
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
-  BuildingOffice2Icon, UserCircleIcon,
+  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
   { to: '/',            label: 'Dashboard',    icon: HomeIcon,            exact: true },
   { to: '/profile',     label: 'My Profile',   icon: UserCircleIcon },
   { to: '/employees',   label: 'Employees',    icon: UsersIcon, roles: ['super_admin', 'hr_manager'] },
+  { to: '/hr-verification', label: 'HR Verification', icon: ShieldCheckIcon, roles: ['super_admin', 'hr_manager'] },
   { to: '/attendance',  label: 'Attendance',    icon: ClockIcon },
   { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
   { to: '/leave',       label: 'Leave',        icon: CalendarDaysIcon },
@@ -33,6 +34,7 @@ const LABEL_MAP = {
   '/':            'Dashboard',
   '/profile':     'My Profile',
   '/employees':   'Employees',
+  '/hr-verification': 'HR Verification',
   '/attendance':  'Attendance',
   '/attendance-requests': 'Attendance Requests',
   '/leave':       'Leave',

@@ -221,8 +221,7 @@ export default function ProfilePage() {
                   </div>
                   <p className="text-gray-500 text-sm mt-0.5 font-medium">{fmtVal(emp.hr_designation)} · {fmtVal(emp.hr_department)}</p>
                   <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-xs text-gray-500">
-                    <span>ID: <b className="text-gray-700">{fmtVal((emp.hr_hremployeeid || '').slice(0, 8))}</b></span>
-                    <span>Code: <b className="text-gray-700">{fmtVal(emp.hr_etimecode)}</b></span>
+                    <span>Employee ID: <b className="text-gray-700">{fmtVal(emp._employeeid || emp.hr_employeecode || emp.hr_etimecode)}</b></span>
                     <span>Manager: <b className="text-gray-700">{managerName}</b></span>
                   </div>
                 </div>
@@ -296,13 +295,17 @@ export default function ProfilePage() {
               <div className="mt-8 pt-6 border-t border-gray-100">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Employment (HR-managed · read only)</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+                  <RO label="Employee ID" value={emp._employeeid || emp.hr_employeecode || emp.hr_etimecode} />
                   <RO label="Work Email" value={emp.hr_email} />
                   <RO label="Department" value={emp.hr_department} />
                   <RO label="Designation" value={emp.hr_designation} />
                   <RO label="Reporting Manager" value={managerName} />
                   <RO label="Role" value={titleCase(emp.hr_role)} />
+                  <RO label="Employment Type" value={emp.hr_employmenttype} />
                   <RO label="Shift" value={emp.hr_shiftname} />
+                  <RO label="Work Location" value={emp.hr_worklocation} />
                   <RO label="Joining Date" value={fmtDate(emp.hr_joiningdate)} />
+                  <RO label="Confirmation Date" value={fmtDate(emp.hr_confirmationdate)} />
                   <RO label="Status" value={emp.hr_status} isStatus />
                 </div>
               </div>

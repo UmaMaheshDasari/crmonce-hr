@@ -20,6 +20,8 @@ export const employeeApi = {
   departments: () => api.get('/employees/meta/departments'),
   verify: (id, data) => api.patch(`/employees/${id}/verify`, data),   // HR: approve/reject/request_changes
   profileAudit: (id) => api.get(`/employees/${id}/profile-audit`),
+  pendingVerifications: () => api.get('/employees/verifications/pending'),
+  backfillCodes: () => api.post('/employees/meta/backfill-codes'),
 };
 
 // ── Attendance ───────────────────────────────────────────────────
