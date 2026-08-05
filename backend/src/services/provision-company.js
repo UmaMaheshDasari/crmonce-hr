@@ -29,6 +29,7 @@ const memo = (schema, display, maxLength = 2000) => ({
 });
 
 const COLUMNS = [
+  str('hr_GSTIN', 'GSTIN', 20),
   str('hr_CIN', 'CIN', 30),
   str('hr_CompanyType', 'Company Type', 120),
   str('hr_IncorporationDate', 'Date of Incorporation', 20),

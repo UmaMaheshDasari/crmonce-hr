@@ -11,6 +11,7 @@ const SECTIONS = [
     title: 'Identity',
     fields: [
       { name: 'hr_name', label: 'Company Name', required: true, full: true },
+      { name: 'hr_gstin', label: 'GSTIN' },
       { name: 'hr_cin', label: 'CIN' },
       { name: 'hr_companytype', label: 'Company Type' },
       { name: 'hr_incorporationdate', label: 'Date of Incorporation', type: 'date' },

@@ -16,11 +16,12 @@ const ENTITY_SET = 'hr_companysettings';
 // CRMONCE (OPC) PRIVATE LIMITED — seeded once; editable via Company Settings UI.
 const COMPANY_DEFAULTS = {
   hr_name: 'CRMONCE (OPC) PRIVATE LIMITED',
+  hr_gstin: '37AAICC8445J1Z7',
   hr_cin: 'U72900AP2020OPC115113',
   hr_companytype: 'One Person Company (OPC), Private Limited',
   hr_incorporationdate: '2020-07-25',
   hr_roc: 'Vijayawada',
-  hr_addressline: 'Kodurupadu, Nellore, Andhra Pradesh 524314',
+  hr_addressline: '28/1-C/8-112, Gamalapalem, Kodurupadu, Nellore, SPSR Nellore, Andhra Pradesh – 524314',
   hr_city: 'Nellore',
   hr_state: 'Andhra Pradesh',
   hr_pincode: '524314',
@@ -30,7 +31,7 @@ const COMPANY_DEFAULTS = {
   hr_business: 'IT Consulting; Microsoft Dynamics 365; Power Platform; Azure; CRM Solutions; Computer Related Services',
   hr_email: 'info@crmonce.com',
   hr_phone: '',
-  hr_website: 'https://www.crmonce.com',
+  hr_website: 'https://hr.crmonce.com',
   hr_logourl: '/crmonce-logo.png',   // served from the frontend public root
 };
 
