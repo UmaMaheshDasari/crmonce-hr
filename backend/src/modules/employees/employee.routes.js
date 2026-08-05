@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
 const authService = require('../../services/auth.service');
@@ -189,13 +190,56 @@ async function nextEmployeeId() {
   return 'EMP' + String((await maxEmployeeCodeNumber()) + 1).padStart(4, '0');
 }
 
-// Bind the Reporting Manager lookup (best-effort — robustWrite strips it if the
-// tenant exposes the nav property under a different name).
 const GUID_RE = /^[0-9a-fA-F-]{36}$/;
-const bindManager = (data, managerId) => {
-  if (managerId && GUID_RE.test(String(managerId))) data['hr_Manager@odata.bind'] = `/hr_hremployees(${managerId})`;
+
+// Resolve the ACTUAL navigation-property name for the hr_manager lookup from
+// Dataverse metadata (cached) — so the @odata.bind uses the correct name instead
+// of a guess. This is why the Reporting Manager never saved before.
+let _managerNav;
+async function managerNavProp() {
+  if (_managerNav) return _managerNav;
+  try {
+    const headers = await d365.getHeaders();
+    const url = `${d365.baseUrl}/EntityDefinitions(LogicalName='hr_hremployee')/ManyToOneRelationships?$select=ReferencingAttribute,ReferencingEntityNavigationPropertyName`;
+    const res = await axios.get(url, { headers });
+    const rel = (res.data.value || []).find(r => String(r.ReferencingAttribute).toLowerCase() === 'hr_manager');
+    _managerNav = rel?.ReferencingEntityNavigationPropertyName || 'hr_Manager';
+    global.logger?.info?.(`[employee] reporting-manager nav property → ${_managerNav}`);
+  } catch (e) { _managerNav = 'hr_Manager'; global.logger?.warn?.(`[employee] manager nav lookup failed (${e.message}); using ${_managerNav}`); }
+  return _managerNav;
+}
+// Bind the Reporting Manager lookup using the resolved nav property.
+async function bindManager(data, managerId) {
+  if (managerId && GUID_RE.test(String(managerId))) {
+    const nav = await managerNavProp();
+    data[`${nav}@odata.bind`] = `/hr_hremployees(${managerId})`;
+  }
   return data;
-};
+}
+
+// The default Reporting Manager (CEO) — used when HR doesn't pick one. Resolved by
+// DEFAULT_MANAGER_ID env, else by name (DEFAULT_MANAGER_NAME, default "Uma Mahesh"),
+// else the first Super Admin. Cached.
+let _defaultMgr;
+async function defaultManagerId() {
+  if (process.env.DEFAULT_MANAGER_ID) return process.env.DEFAULT_MANAGER_ID;
+  if (_defaultMgr !== undefined) return _defaultMgr;
+  const name = process.env.DEFAULT_MANAGER_NAME || 'Uma Mahesh';
+  try {
+    let hit = null;
+    try {
+      const { data } = await d365.getList(ENTITY, { select: 'hr_hremployeeid,hr_hremployee1', filter: `contains(hr_hremployee1,'${name.split(' ')[0]}')`, top: 10 });
+      hit = (data || []).find(e => String(e.hr_hremployee1 || '').toLowerCase().includes(name.toLowerCase()));
+    } catch { /* contains may be unsupported — fall through */ }
+    if (!hit) {
+      const r = await d365.getList(ENTITY, { select: 'hr_hremployeeid,hr_hremployee1', filter: `hr_role eq ${toValue('hr_role', 'super_admin')}`, top: 1 });
+      hit = r.data?.[0];
+    }
+    _defaultMgr = hit?.hr_hremployeeid || '';
+    if (_defaultMgr) global.logger?.info?.(`[employee] default reporting manager → ${hit.hr_hremployee1} (${_defaultMgr})`);
+  } catch (e) { _defaultMgr = ''; global.logger?.warn?.(`[employee] default manager resolution failed: ${e.message}`); }
+  return _defaultMgr;
+}
 
 // POST /api/employees
 router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
@@ -218,7 +262,8 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     // Employee ID comes from eTime. Only generate one (EMP1001+) if none was
     // provided — NEVER overwrite an eTime-supplied Employee ID.
     if (!employeeData.hr_employeeid) employeeData.hr_employeeid = await nextEmployeeId();
-    bindManager(employeeData, managerId);
+    // Reporting Manager: use the selected one, else default to the CEO (Uma Mahesh).
+    await bindManager(employeeData, managerId || await defaultManagerId());
     // Default shift so attendance math always has a start time (same as migration).
     if (!employeeData.hr_shiftname) employeeData.hr_shiftname = 'General Shift';
     if (!employeeData.hr_shiftstarttime) employeeData.hr_shiftstarttime = '09:00';
@@ -269,7 +314,7 @@ router.patch('/:id', async (req, res, next) => {
 
     const updateData = sanitizeEmployee(raw);
     if (password && isHRWrite) updateData.hr_password = await authService.hashPassword(password);
-    if (isHRWrite) bindManager(updateData, managerId);   // only HR can set Reporting Manager
+    if (isHRWrite && managerId) await bindManager(updateData, managerId);   // only HR can set Reporting Manager
     const emp = await updateStrippingOptionalShift(ENTITY, req.params.id, updateData);
 
     // Audit every changed field + notify (best-effort; never fails the save).
@@ -370,20 +415,23 @@ router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), a
 });
 
 // POST /api/employees/meta/backfill-codes — assign an Employee ID (EMP1001+) to
-// employees who don't have one, continuing the sequence. Never overwrites.
+// employees who don't have one, AND set the default Reporting Manager (CEO) for
+// employees who have none. Never overwrites existing values.
 router.post('/meta/backfill-codes', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
-    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,createdon', optionalSelect: 'hr_employeeid,hr_employeecode', top: 5000, orderby: 'createdon asc' });
+    const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,_hr_manager_value,createdon', optionalSelect: 'hr_employeeid,hr_employeecode', top: 5000, orderby: 'createdon asc' });
     let max = 0;
     for (const e of data || []) { for (const v of [e.hr_employeeid, e.hr_employeecode]) { const m = EMP_CODE_RE.exec(v || ''); if (m) max = Math.max(max, parseInt(m[1], 10)); } }
-    let assigned = 0;
+    const defMgr = await defaultManagerId();
+    let assigned = 0, managers = 0;
     for (const e of data || []) {
-      if (String(e.hr_employeeid || '').trim()) continue;   // already has an Employee ID
-      max += 1;
-      await updateStrippingOptionalShift(ENTITY, e.hr_hremployeeid, { hr_employeeid: 'EMP' + String(max).padStart(4, '0') });
-      assigned += 1;
+      const payload = {};
+      if (!String(e.hr_employeeid || '').trim()) { max += 1; payload.hr_employeeid = 'EMP' + String(max).padStart(4, '0'); assigned++; }
+      const needsMgr = defMgr && !e._hr_manager_value && e.hr_hremployeeid !== defMgr;
+      if (needsMgr) { await bindManager(payload, defMgr); managers++; }
+      if (Object.keys(payload).length) await updateStrippingOptionalShift(ENTITY, e.hr_hremployeeid, payload);
     }
-    res.json({ message: `Assigned ${assigned} Employee ID(s)`, assigned });
+    res.json({ message: `Assigned ${assigned} Employee ID(s) and ${managers} default manager(s)`, assigned, managers });
   } catch (err) { next(err); }
 });
 

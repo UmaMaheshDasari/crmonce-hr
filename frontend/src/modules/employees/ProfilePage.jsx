@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 import {
   UserIcon, IdentificationIcon, MapPinIcon, BuildingLibraryIcon, PhoneIcon, DocumentTextIcon,
   CheckBadgeIcon, ClockIcon, PencilIcon, ArrowUpTrayIcon, CameraIcon,
-  CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon,
+  CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon, LockClosedIcon,
 } from '@heroicons/react/24/outline';
 import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, esicRule, phoneRule } from '../../utils/validators';
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
@@ -186,14 +186,6 @@ export default function ProfilePage() {
     );
   };
 
-  const RO = ({ label, value, isStatus }) => (
-    <div className="min-w-0">
-      <p className="text-xs text-gray-400 font-medium">{label}</p>
-      {isStatus ? <div className="mt-0.5"><StatusBadge status={value} /></div>
-        : <p className="text-sm text-gray-900 font-medium truncate">{fmtVal(value)}</p>}
-    </div>
-  );
-
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {/* ── Profile header ── */}
@@ -231,23 +223,31 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              {/* Professional identity grid — Employee ID, never GUID */}
-              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-3 border-t border-gray-100 pt-4">
-                {[
-                  ['Employee ID', emp._employeeid || emp.hr_employeeid],
-                  ['Department', emp.hr_department],
-                  ['Designation', emp.hr_designation],
-                  ['Reporting Manager', managerName],
-                  ['Joining Date', fmtDate(emp.hr_joiningdate)],
-                  ['Shift', emp.hr_shiftname],
-                  ['Employment Type', emp.hr_employmenttype],
-                  ['Work Location', emp.hr_worklocation],
-                ].map(([label, value]) => (
-                  <div key={label} className="min-w-0">
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{label}</p>
-                    <p className="text-sm text-gray-900 font-medium truncate">{fmtVal(value)}</p>
-                  </div>
-                ))}
+              {/* HR-managed identity — shown ONCE, read-only (no duplicate card) */}
+              <div className="mt-4 border-t border-gray-100 pt-3">
+                <div className="flex items-center gap-1.5 mb-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                  <LockClosedIcon className="w-3.5 h-3.5" /> Managed by HR
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-3">
+                  {[
+                    ['Employee ID', emp._employeeid || emp.hr_employeeid],
+                    hrView && ['Employee Code', emp._empcode || emp.hr_etimecode],
+                    ['Department', emp.hr_department],
+                    ['Designation', emp.hr_designation],
+                    ['Reporting Manager', managerName],
+                    ['Role', titleCase(emp.hr_role)],
+                    ['Joining Date', fmtDate(emp.hr_joiningdate)],
+                    ['Shift', emp.hr_shiftname],
+                    ['Employment Type', emp.hr_employmenttype],
+                    ['Work Location', emp.hr_worklocation],
+                    ['Work Email', emp.hr_email],
+                  ].filter(Boolean).map(([label, value]) => (
+                    <div key={label} className="min-w-0">
+                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{label}</p>
+                      <p className="text-sm text-gray-900 font-medium truncate">{fmtVal(value)}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -307,26 +307,6 @@ export default function ProfilePage() {
                 {t.fields.map(Field)}
               </div>
             ))}
-            {tab === 'general' && (
-              <div className="mt-8 pt-6 border-t border-gray-100">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Employment (HR-managed · read only)</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
-                  <RO label="Employee ID" value={emp._employeeid || emp.hr_employeeid} />
-                  {hrView && <RO label="Employee Code" value={emp._empcode || emp.hr_etimecode} />}
-                  <RO label="Work Email" value={emp.hr_email} />
-                  <RO label="Department" value={emp.hr_department} />
-                  <RO label="Designation" value={emp.hr_designation} />
-                  <RO label="Reporting Manager" value={managerName} />
-                  <RO label="Role" value={titleCase(emp.hr_role)} />
-                  <RO label="Employment Type" value={emp.hr_employmenttype} />
-                  <RO label="Shift" value={emp.hr_shiftname} />
-                  <RO label="Work Location" value={emp.hr_worklocation} />
-                  <RO label="Joining Date" value={fmtDate(emp.hr_joiningdate)} />
-                  <RO label="Confirmation Date" value={fmtDate(emp.hr_confirmationdate)} />
-                  <RO label="Status" value={emp.hr_status} isStatus />
-                </div>
-              </div>
-            )}
           </form>
 
           {/* Documents */}
