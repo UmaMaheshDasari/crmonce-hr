@@ -22,16 +22,22 @@ const memo = (schema, display, maxLength = 2000) => ({
   '@odata.type': 'Microsoft.Dynamics.CRM.MemoAttributeMetadata',
   SchemaName: schema, MaxLength: maxLength, Format: 'Text', RequiredLevel: req(), DisplayName: label(display), Description: label(display),
 });
+const int = (schema, display, min = 0, max = 100000) => ({
+  '@odata.type': 'Microsoft.Dynamics.CRM.IntegerAttributeMetadata',
+  SchemaName: schema, Format: 'None', MinValue: min, MaxValue: max, RequiredLevel: req(), DisplayName: label(display), Description: label(display),
+});
 
 const COLUMNS = [
   str('hr_DocumentType', 'Document Type', 60),
   memo('hr_Remarks', 'Remarks'),
-  str('hr_Status', 'Verification Status', 20),   // pending | verified | rejected | reupload
+  str('hr_Status', 'Verification Status', 20),   // pending | verified | rejected | reupload | superseded
   str('hr_UploadedBy', 'Uploaded By', 200),
   str('hr_VerifiedBy', 'Verified By', 200),
   str('hr_VerifiedOn', 'Verified On', 30),
   memo('hr_HRRemarks', 'HR Remarks'),
   str('hr_ContentType', 'Content Type', 100),
+  int('hr_Version', 'Version', 1, 100000),        // V1, V2, V3 …
+  str('hr_DocGroup', 'Document Group', 50),        // version-chain id
 ];
 
 const isExists = (m) => /already exists|duplicate|with the name|with a name|is not unique/i.test(m || '');

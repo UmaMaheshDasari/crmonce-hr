@@ -67,7 +67,7 @@ const DOC = d365.constructor.entities.document;
 const EMP = d365.constructor.entities.employee;
 const { notifyUser, broadcast } = require('../../services/notification.service');
 const DOC_SELECT = 'hr_hrdocumentid,hr_name,hr_fileurl,hr_filesize,hr_originalname,createdon,modifiedon,_hr_hremployee_value';
-const DOC_OPT = 'hr_documenttype,hr_remarks,hr_status,hr_uploadedby,hr_verifiedby,hr_verifiedon,hr_hrremarks,hr_contenttype';
+const DOC_OPT = 'hr_documenttype,hr_remarks,hr_status,hr_uploadedby,hr_verifiedby,hr_verifiedon,hr_hrremarks,hr_contenttype,hr_version,hr_docgroup';
 const isHR = (u) => ['super_admin', 'hr_manager'].includes(u.role);
 
 // create/update that strips a not-yet-provisioned column and retries.
@@ -104,6 +104,7 @@ const shape = (d) => ({
   verifiedBy: d.hr_verifiedby || '', verifiedOn: d.hr_verifiedon || '', hrRemarks: d.hr_hrremarks || '',
   uploadedOn: d.createdon, employeeId: d._hr_hremployee_value,
   employeeName: d['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '',
+  version: d.hr_version || 1, docGroup: d.hr_docgroup || d.hr_hrdocumentid,   // group = version chain
 });
 
 // GET /  — list documents (employee sees own; HR passes ?employeeId=)
@@ -142,6 +143,8 @@ docRouter.post('/upload', requirePermission('document:write'), upload.single('fi
       hr_remarks: remarks || '',
       hr_status: 'pending',
       hr_uploadedby: req.user.name || req.user.email || '',
+      hr_version: 1,
+      hr_docgroup: uuidv4(),   // start a new version chain
     });
     let empName = '';
     try { const e = await d365.getById(EMP, empId, { select: 'hr_hremployee1' }); empName = e.hr_hremployee1 || ''; } catch {}
@@ -166,18 +169,62 @@ docRouter.post('/:id/replace', requirePermission('document:write'), upload.singl
   } catch (err) { next(err); }
 });
 
-// PATCH /:id/verify  — HR approve / reject / request re-upload + HR remarks
+// POST /:id/new-version  — upload a NEW VERSION of a document (typically a verified
+// one). The previous version is KEPT; the new version starts as pending → HR
+// notified. Owner or HR.
+docRouter.post('/:id/new-version', requirePermission('document:write'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const existing = await d365.getByIdOptional(DOC, req.params.id, { select: 'hr_name,_hr_hremployee_value', optionalSelect: 'hr_documenttype,hr_docgroup,hr_version' });
+    if (!isHR(req.user) && existing._hr_hremployee_value !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+    const empId = existing._hr_hremployee_value;
+    const group = existing.hr_docgroup || existing.hr_hrdocumentid || req.params.id;
+    // Next version = max version in the group + 1.
+    let maxV = existing.hr_version || 1;
+    try {
+      const { data } = await d365.getListOptional(DOC, { select: 'hr_hrdocumentid', optionalSelect: 'hr_version,hr_docgroup', filter: `hr_docgroup eq '${group}'`, top: 100 });
+      for (const d of data || []) if ((d.hr_version || 1) > maxV) maxV = d.hr_version || 1;
+    } catch { /* column may not exist yet */ }
+    const doc = await docWrite('create', null, {
+      'hr_hremployee@odata.bind': `/hr_hremployees(${empId})`,
+      hr_name: existing.hr_name, hr_documenttype: existing.hr_documenttype,
+      hr_fileurl: `/uploads/${req.file.filename}`, hr_filesize: req.file.size,
+      hr_originalname: req.file.originalname, hr_contenttype: req.file.mimetype,
+      hr_remarks: req.body.remarks || '', hr_status: 'pending',
+      hr_uploadedby: req.user.name || req.user.email || '',
+      hr_docgroup: group, hr_version: maxV + 1,
+    });
+    let empName = '';
+    try { const e = await d365.getById(EMP, empId, { select: 'hr_hremployee1' }); empName = e.hr_hremployee1 || ''; } catch {}
+    notifyHRDocument(empName, `${existing.hr_name} (v${maxV + 1})`);
+    res.status(201).json(shape({ ...doc, _hr_hremployee_value: empId, hr_docgroup: group, hr_version: maxV + 1 }));
+  } catch (err) { next(err); }
+});
+
+// PATCH /:id/verify  — HR approve / reject / request re-upload + HR remarks.
+// Approving a NEW version supersedes the previously-verified version in the group.
 docRouter.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
     const { action, hrRemarks } = req.body;   // approve | reject | reupload
     const map = { approve: 'verified', reject: 'rejected', reupload: 'reupload' };
     const status = map[action];
     if (!status) return res.status(400).json({ error: 'action must be approve, reject or reupload.' });
-    const doc = await d365.getByIdOptional(DOC, req.params.id, { select: 'hr_name,_hr_hremployee_value', optionalSelect: 'hr_documenttype' });
+    const doc = await d365.getByIdOptional(DOC, req.params.id, { select: 'hr_name,_hr_hremployee_value', optionalSelect: 'hr_documenttype,hr_docgroup' });
     await docWrite('update', req.params.id, {
       hr_status: status, hr_verifiedby: req.user.name || req.user.email || 'HR',
       hr_verifiedon: new Date().toISOString(), hr_hrremarks: hrRemarks || '',
     });
+    // On approval: mark any OTHER currently-verified version in the same group as superseded.
+    if (status === 'verified' && doc.hr_docgroup) {
+      try {
+        const { data } = await d365.getListOptional(DOC, { select: 'hr_hrdocumentid', optionalSelect: 'hr_docgroup,hr_status', filter: `hr_docgroup eq '${doc.hr_docgroup}'`, top: 100 });
+        for (const other of data || []) {
+          if (other.hr_hrdocumentid !== req.params.id && other.hr_status === 'verified') {
+            await docWrite('update', other.hr_hrdocumentid, { hr_status: 'superseded' });
+          }
+        }
+      } catch { /* best-effort */ }
+    }
     if (doc._hr_hremployee_value) notifyUser(doc._hr_hremployee_value, 'document:verified', { status, docName: doc.hr_name, remarks: hrRemarks || '' });
     res.json({ message: `Document ${status}` });
   } catch (err) {
@@ -192,7 +239,7 @@ docRouter.delete('/:id', requirePermission('document:read'), async (req, res, ne
     if (!isHR(req.user)) {
       const existing = await d365.getByIdOptional(DOC, req.params.id, { select: '_hr_hremployee_value', optionalSelect: 'hr_status' });
       if (existing._hr_hremployee_value !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-      if (existing.hr_status === 'verified') return res.status(400).json({ error: 'Verified documents cannot be deleted.' });
+      if (['verified', 'superseded'].includes(existing.hr_status)) return res.status(400).json({ error: 'Verified documents cannot be deleted — upload a new version instead.' });
     }
     await d365.delete(DOC, req.params.id);
     res.json({ message: 'Document deleted' });

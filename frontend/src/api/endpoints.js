@@ -149,6 +149,9 @@ export const documentApi = {
   replace: (id, formData, onUploadProgress) => api.post(`/documents/${id}/replace`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress,
   }),
+  newVersion: (id, formData, onUploadProgress) => api.post(`/documents/${id}/new-version`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress,
+  }),
   verify: (id, data) => api.patch(`/documents/${id}/verify`, data),
   delete: (id) => api.delete(`/documents/${id}`),
 };
