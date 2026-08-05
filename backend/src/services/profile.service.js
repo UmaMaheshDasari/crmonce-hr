@@ -90,12 +90,28 @@ function maskValue(field, v) {
 
 const filled = (v) => v !== undefined && v !== null && String(v).trim() !== '';
 
-/** { percent, filled, total, missing:[labels] } */
-function computeCompletion(emp = {}) {
-  const total = COMPLETION_FIELDS.length;
-  const done = COMPLETION_FIELDS.filter((f) => filled(emp[f])).length;
+// Documents that count toward completion — profile is NEVER 100% while any is missing.
+const REQUIRED_DOCS = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
+
+/**
+ * { percent, filled, total, missing:[labels] } across Personal / Identity / Address /
+ * Bank / Emergency AND Documents.
+ * @param {object} emp    employee record
+ * @param {object} [opts] { documents: string[] } — names of uploaded documents
+ */
+function computeCompletion(emp = {}, opts = {}) {
+  const uploaded = new Set((opts.documents || []).map((d) => String(d)));
+  const fieldTotal = COMPLETION_FIELDS.length;
+  const docTotal = REQUIRED_DOCS.length;
+  const total = fieldTotal + docTotal;
+
+  const doneFields = COMPLETION_FIELDS.filter((f) => filled(emp[f])).length;
+  const doneDocs = REQUIRED_DOCS.filter((d) => uploaded.has(d)).length;
+  const done = doneFields + doneDocs;
   const percent = Math.round((done / total) * 100);
+
   const missing = MISSING_GROUPS.filter((g) => g.fields.some((f) => !filled(emp[f]))).map((g) => g.label);
+  if (doneDocs < docTotal) missing.push('Documents');
   return { percent, filled: done, total, missing };
 }
 
@@ -178,7 +194,7 @@ async function notifyHRVerification(employee) {
 }
 
 module.exports = {
-  SELF_EDITABLE, VERIFY_TRIGGER, FIELD_LABELS, COMPLETION_FIELDS, SECTION_OF,
+  SELF_EDITABLE, VERIFY_TRIGGER, FIELD_LABELS, COMPLETION_FIELDS, SECTION_OF, REQUIRED_DOCS,
   computeCompletion, diffChanges, requiresVerification, writeAudit, readAudit, readPendingChanges,
   maskValue, notifyHRVerification, notifyUser,
 };

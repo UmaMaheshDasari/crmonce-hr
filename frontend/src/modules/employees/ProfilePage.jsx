@@ -213,17 +213,14 @@ export default function ProfilePage() {
               )}
             </div>
             <div className="flex-1 min-w-0 pt-2">
-              <div className="flex items-start justify-between flex-wrap gap-3">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <h1 className="text-2xl font-bold text-gray-900 truncate">{emp.hr_hremployee1}</h1>
+                    <StatusBadge status={emp.hr_status} />
                     <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${badge.cls}`}><badge.icon className="w-3.5 h-3.5" /> {badge.text}</span>
                   </div>
                   <p className="text-gray-500 text-sm mt-0.5 font-medium">{fmtVal(emp.hr_designation)} · {fmtVal(emp.hr_department)}</p>
-                  <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-xs text-gray-500">
-                    <span>Employee ID: <b className="text-gray-700">{fmtVal(emp._employeeid || emp.hr_employeecode || emp.hr_etimecode)}</b></span>
-                    <span>Manager: <b className="text-gray-700">{managerName}</b></span>
-                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="relative"><ProgressRing value={completion.percent} /><span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-gray-800">{completion.percent}%</span></div>
@@ -232,6 +229,25 @@ export default function ProfilePage() {
                     {completion.missing?.length ? <p className="text-xs text-gray-400 mt-0.5">Missing: {completion.missing.join(', ')}</p> : <p className="text-xs text-emerald-500 mt-0.5 font-medium">All set 🎉</p>}
                   </div>
                 </div>
+              </div>
+
+              {/* Professional identity grid — Employee ID, never GUID */}
+              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-3 border-t border-gray-100 pt-4">
+                {[
+                  ['Employee ID', emp._employeeid || emp.hr_employeecode || emp.hr_etimecode],
+                  ['Department', emp.hr_department],
+                  ['Designation', emp.hr_designation],
+                  ['Reporting Manager', managerName],
+                  ['Joining Date', fmtDate(emp.hr_joiningdate)],
+                  ['Shift', emp.hr_shiftname],
+                  ['Employment Type', emp.hr_employmenttype],
+                  ['Work Location', emp.hr_worklocation],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0">
+                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{label}</p>
+                    <p className="text-sm text-gray-900 font-medium truncate">{fmtVal(value)}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

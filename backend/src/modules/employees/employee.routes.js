@@ -108,13 +108,14 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     // empty the whole list). Defaults are then applied below.
     const result = await d365.getListOptional(ENTITY, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,_hr_manager_value',
-      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime',
+      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeecode,hr_etimecode',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_hremployee1 asc',
       top: pageNum * lim,
     });
     const pageData = (result.data || []).slice((pageNum - 1) * lim);
     pageData.forEach(withShiftDefaults);
+    pageData.forEach(e => { e._employeeid = e.hr_employeecode || e.hr_etimecode || ''; });
     res.json(labelsForList(ENTITY, { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
@@ -131,7 +132,13 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
       optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,${ESS_OPTIONAL_SELECT}`,
     });
     const out = labelsForEntity(ENTITY, withShiftDefaults(emp));
-    out._completion = profile.computeCompletion(out);          // { percent, missing, … }
+    // Completion includes uploaded documents — never 100% while a required doc is missing.
+    let documents = [];
+    try {
+      const dres = await d365.getList(d365.constructor.entities.document, { select: 'hr_name', filter: `_hr_hremployee_value eq '${req.params.id}'`, top: 100 });
+      documents = (dres.data || []).map(d => d.hr_name);
+    } catch { /* documents optional */ }
+    out._completion = profile.computeCompletion(out, { documents });
     out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
     out._employeeid = out.hr_employeecode || out.hr_etimecode || '';   // human Employee ID (never GUID)
     res.json(out);

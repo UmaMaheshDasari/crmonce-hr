@@ -114,6 +114,7 @@ export default function EmployeeList() {
             <thead>
               <tr className="border-b border-gray-100">
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Employee</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Employee ID</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Department</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Designation</th>
                 <th className="hidden lg:table-cell px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Shift</th>
@@ -126,14 +127,14 @@ export default function EmployeeList() {
               {isLoading ? (
                 Array(8).fill(0).map((_, i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    {Array(7).fill(0).map((_, j) => (
+                    {Array(8).fill(0).map((_, j) => (
                       <td key={j} className="px-6 py-5"><div className="h-4 bg-gray-50 rounded-lg animate-pulse" /></td>
                     ))}
                   </tr>
                 ))
               ) : employees.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-20 text-center">
+                  <td colSpan={8} className="px-6 py-20 text-center">
                     <div className="flex flex-col items-center">
                       <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-4">
                         <UserGroupIcon className="w-8 h-8 text-gray-300" />
@@ -163,6 +164,9 @@ export default function EmployeeList() {
                           <p className="text-xs text-gray-400 mt-0.5">{emp.hr_email}</p>
                         </div>
                       </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm font-semibold text-gray-800 tabular-nums">{emp._employeeid || emp.hr_employeecode || emp.hr_etimecode || <span className="text-gray-300 font-normal">&mdash;</span>}</span>
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-600">{emp.hr_department || <span className="text-gray-300">&mdash;</span>}</span>
