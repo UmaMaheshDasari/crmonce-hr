@@ -146,6 +146,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
     out._employeeid = employeeIdOf(out);        // EMP1039 (business ID) — never the GUID
     out._empcode = out.hr_etimecode || '';      // device Empcode (40) — HR/internal only
+    out._reportingmanager = out[MGR_FMT] || DEFAULT_MANAGER_NAME;   // never blank
     res.json(out);
   } catch (err) { next(err); }
 });
@@ -191,6 +192,8 @@ async function nextEmployeeId() {
 }
 
 const GUID_RE = /^[0-9a-fA-F-]{36}$/;
+const DEFAULT_MANAGER_NAME = process.env.DEFAULT_MANAGER_NAME || 'Uma Mahesh';
+const MGR_FMT = '_hr_manager_value@OData.Community.Display.V1.FormattedValue';
 
 // Resolve the ACTUAL navigation-property name for the hr_manager lookup from
 // Dataverse metadata (cached) — so the @odata.bind uses the correct name instead

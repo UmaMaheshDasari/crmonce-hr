@@ -76,7 +76,7 @@ function ProgressRing({ value }) {
     <svg width="64" height="64" className="-rotate-90">
       <circle cx="32" cy="32" r={r} fill="none" stroke="#e5e7eb" strokeWidth="6" />
       <circle cx="32" cy="32" r={r} fill="none" stroke="url(#pg)" strokeWidth="6" strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" className="transition-all duration-700" />
-      <defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#a855f7" /></linearGradient></defs>
+      <defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#2563EB" /><stop offset="100%" stopColor="#3B82F6" /></linearGradient></defs>
     </svg>
   );
 }
@@ -108,7 +108,7 @@ export default function ProfilePage() {
   const completion = emp?._completion || { percent: 0, missing: [] };
   const status = emp?._verifystatus || emp?.hr_verifystatus || 'verified';
   const badge = VERIFY_BADGE[status] || VERIFY_BADGE.verified;
-  const managerName = fmtVal(emp?.['_hr_manager_value@OData.Community.Display.V1.FormattedValue']);
+  const managerName = fmtVal(emp?._reportingmanager || emp?.['_hr_manager_value@OData.Community.Display.V1.FormattedValue']);
   const initials = emp?.hr_hremployee1?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
   const saveMutation = useMutation({
@@ -169,7 +169,7 @@ export default function ProfilePage() {
   const Field = (f) => {
     const err = errors[f.name];
     const ro = !editing;
-    const base = `w-full ${f.textarea ? 'px-4 py-2.5' : 'h-11 px-4'} border rounded-xl text-sm transition-all outline-none ${err ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} ${ro ? 'bg-gray-50/70 text-gray-600 cursor-default' : 'bg-white text-gray-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400'}`;
+    const base = `w-full ${f.textarea ? 'px-4 py-2.5' : 'h-11 px-4'} border rounded-xl text-sm transition-all outline-none ${err ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} ${ro ? 'bg-gray-50/70 text-gray-600 cursor-default' : 'bg-white text-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400'}`;
     const reg = register(f.name, { ...(f.required ? { required: `${f.label} is required` } : {}), ...(f.rules || {}) });
     return (
       <div key={f.name} className={`space-y-1.5 ${f.textarea ? 'sm:col-span-2' : ''}`}>
@@ -188,49 +188,43 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      {/* ── Profile header ── */}
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-        <div className="h-24 bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-500" />
-        <div className="px-5 sm:px-8 pb-6">
-          <div className="flex flex-col sm:flex-row sm:items-end gap-5 -mt-12">
-            <div className="relative flex-shrink-0">
-              <div className="w-24 h-24 rounded-2xl ring-4 ring-white shadow-lg bg-gray-100 overflow-hidden flex items-center justify-center">
-                {emp.hr_photourl ? <img src={emp.hr_photourl} alt={emp.hr_hremployee1} className="w-full h-full object-cover" /> : <span className="text-2xl font-bold text-indigo-500">{initials}</span>}
-              </div>
-              {canEdit && (
-                <label className="absolute -bottom-1 -right-1 w-8 h-8 bg-white rounded-full shadow ring-1 ring-gray-200 flex items-center justify-center cursor-pointer hover:bg-gray-50">
-                  <CameraIcon className="w-4 h-4 text-gray-500" />
-                  <input type="file" accept=".jpg,.jpeg,.png" className="hidden" onChange={e => uploadDoc('Photo', e.target.files?.[0])} />
-                </label>
-              )}
-            </div>
-            <div className="flex-1 min-w-0 pt-2">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <h1 className="text-2xl font-bold text-gray-900 truncate">{emp.hr_hremployee1}</h1>
+      {/* ── Profile header — clean white card, subtle blue accent ── */}
+      <div className="bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden shadow-sm">
+        <div className="h-1.5 bg-[#2563EB]" />
+        <div className="p-5 sm:p-6">
+          <div className="flex flex-col lg:flex-row gap-6">
+            {/* Identity */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start gap-4">
+                <div className="relative flex-shrink-0 group">
+                  <div className="w-20 h-20 rounded-full overflow-hidden ring-2 ring-blue-100 bg-blue-50 flex items-center justify-center">
+                    {emp.hr_photourl ? <img src={emp.hr_photourl} alt={emp.hr_hremployee1} className="w-full h-full object-cover" /> : <span className="text-xl font-bold text-[#2563EB]">{initials}</span>}
+                  </div>
+                  {canEdit && (
+                    <label className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                      <CameraIcon className="w-5 h-5 text-white" />
+                      <input type="file" accept=".jpg,.jpeg,.png" className="hidden" onChange={e => uploadDoc('Photo', e.target.files?.[0])} />
+                    </label>
+                  )}
+                </div>
+                <div className="min-w-0 pt-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h1 className="text-xl font-bold text-gray-900 truncate">{emp.hr_hremployee1}</h1>
                     <StatusBadge status={emp.hr_status} />
                     <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 ${badge.cls}`}><badge.icon className="w-3.5 h-3.5" /> {badge.text}</span>
                   </div>
-                  <p className="text-gray-500 text-sm mt-0.5 font-medium">{fmtVal(emp.hr_designation)} · {fmtVal(emp.hr_department)}</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="relative"><ProgressRing value={completion.percent} /><span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-gray-800">{completion.percent}%</span></div>
-                  <div className="max-w-[190px]">
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Profile Completion</p>
-                    {completion.missing?.length ? <p className="text-xs text-gray-400 mt-0.5">Missing: {completion.missing.join(', ')}</p> : <p className="text-xs text-emerald-500 mt-0.5 font-medium">All set 🎉</p>}
-                  </div>
+                  <p className="text-gray-500 text-sm mt-1 font-medium">{fmtVal(emp.hr_designation)} · {fmtVal(emp.hr_department)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Employee ID <span className="font-bold text-[#2563EB]">{fmtVal(emp._employeeid || emp.hr_employeeid)}</span></p>
                 </div>
               </div>
 
-              {/* HR-managed identity — shown ONCE, read-only (no duplicate card) */}
-              <div className="mt-4 border-t border-gray-100 pt-3">
+              {/* HR-managed identity — shown ONCE, read-only */}
+              <div className="mt-5 pt-4 border-t border-[#E5E7EB]">
                 <div className="flex items-center gap-1.5 mb-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
                   <LockClosedIcon className="w-3.5 h-3.5" /> Managed by HR
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3.5">
                   {[
-                    ['Employee ID', emp._employeeid || emp.hr_employeeid],
                     hrView && ['Employee Code', emp._empcode || emp.hr_etimecode],
                     ['Department', emp.hr_department],
                     ['Designation', emp.hr_designation],
@@ -244,10 +238,26 @@ export default function ProfilePage() {
                   ].filter(Boolean).map(([label, value]) => (
                     <div key={label} className="min-w-0">
                       <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{label}</p>
-                      <p className="text-sm text-gray-900 font-medium truncate">{fmtVal(value)}</p>
+                      <p className="text-sm text-gray-900 font-semibold truncate">{fmtVal(value)}</p>
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            {/* Profile completion — white circular card on the right */}
+            <div className="lg:w-60 flex-shrink-0">
+              <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-5 flex flex-col items-center text-center h-full">
+                <div className="relative"><ProgressRing value={completion.percent} /><span className="absolute inset-0 flex items-center justify-center text-base font-bold text-gray-800">{completion.percent}%</span></div>
+                <p className="text-sm font-semibold text-gray-800 mt-2">Profile Complete</p>
+                {completion.missing?.length ? (
+                  <div className="mt-3 w-full">
+                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Missing</p>
+                    <div className="flex flex-wrap gap-1.5 justify-center">
+                      {completion.missing.map(m => <span key={m} className="text-[11px] font-medium text-[#F59E0B] bg-amber-50 px-2 py-0.5 rounded-full">{m}</span>)}
+                    </div>
+                  </div>
+                ) : <p className="text-xs text-[#10B981] font-medium mt-2">All set 🎉</p>}
               </div>
             </div>
           </div>
@@ -272,7 +282,7 @@ export default function ProfilePage() {
         <div className="flex items-center justify-between border-b border-gray-100 gap-2">
           <div className="flex overflow-x-auto">
             {TABS.map(t => (
-              <button key={t.key} onClick={() => setTab(t.key)} className={`inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              <button key={t.key} onClick={() => setTab(t.key)} className={`inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                 <t.icon className="w-4 h-4" /> {t.label}
                 {t.verify && status === 'verified' && <CheckBadgeIcon className="w-4 h-4 text-emerald-500" />}
               </button>
@@ -284,10 +294,10 @@ export default function ProfilePage() {
               {editing ? (
                 <>
                   <button onClick={cancelEdit} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800">Cancel</button>
-                  <button onClick={handleSubmit(onValid, onInvalid)} disabled={saveMutation.isPending} className="px-5 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50">{saveMutation.isPending ? 'Saving…' : 'Save'}</button>
+                  <button onClick={handleSubmit(onValid, onInvalid)} disabled={saveMutation.isPending} className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50">{saveMutation.isPending ? 'Saving…' : 'Save'}</button>
                 </>
               ) : (
-                <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100"><PencilIcon className="w-4 h-4" /> Edit</button>
+                <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-blue-600 bg-blue-50 rounded-xl hover:bg-blue-100"><PencilIcon className="w-4 h-4" /> Edit</button>
               )}
             </div>
           )}
@@ -323,7 +333,7 @@ export default function ProfilePage() {
                         {existing ? <a href={existing.hr_fileurl} target="_blank" rel="noreferrer" className="text-xs text-emerald-600 font-medium inline-flex items-center gap-1"><CheckCircleIcon className="w-3.5 h-3.5" /> Uploaded — view</a> : <p className="text-xs text-gray-400">Not uploaded</p>}
                       </div>
                       {canEdit && (
-                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 rounded-lg cursor-pointer hover:bg-indigo-100 flex-shrink-0">
+                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 rounded-lg cursor-pointer hover:bg-blue-100 flex-shrink-0">
                           <ArrowUpTrayIcon className="w-3.5 h-3.5" /> {uploading === dt ? 'Uploading…' : (existing ? 'Replace' : 'Upload')}
                           <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={e => uploadDoc(dt, e.target.files?.[0])} />
                         </label>
