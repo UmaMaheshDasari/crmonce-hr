@@ -24,6 +24,7 @@ const COLUMNS = [
   int('hr_Gross', 'Gross Salary'),
   int('hr_Overtime', 'Overtime Pay'),
   int('hr_LOP', 'LOP Amount'),
+  int('hr_Advance', 'Advance Salary Recovery'),
   int('hr_PresentDays', 'Present Days', 0, 366),
   int('hr_AbsentDays', 'Absent Days', 0, 366),
   int('hr_WorkingDays', 'Salary Working Days', 0, 366),

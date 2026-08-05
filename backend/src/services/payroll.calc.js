@@ -3,7 +3,7 @@
  *
  * Inputs are FACTS the route assembles (salary structure + attendance):
  *   basic, allowances       — monthly salary structure (₹)
- *   fixedDeductions         — statutory/other fixed deductions (PF/ESI/tax, ₹)
+ *   fixedDeductions         — statutory/other fixed deductions (PF/PT/tax, ₹)
  *   salaryWorkingDays       — payable working days in the month (excl. week-offs/holidays)
  *   lopDays                 — Loss-of-Pay days (unpaid absence)
  *   overtimeHours           — approved overtime hours

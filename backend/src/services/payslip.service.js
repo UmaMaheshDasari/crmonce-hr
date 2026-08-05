@@ -60,9 +60,25 @@ async function buildPayslipPdf({ payroll, employee, company }) {
   const basic = Number(p.hr_basic) || 0;
   const allowances = Number(p.hr_allowances) || 0;
   const overtime = Number(p.hr_overtime) || 0;
-  const gross = p.hr_gross != null ? Number(p.hr_gross) : basic + allowances + overtime;
-  const deductions = Number(p.hr_deductions) || 0;
-  const net = p.hr_netpay != null ? Number(p.hr_netpay) : gross - deductions;
+  // The slip shows the FULL monthly gross (the sum of the earning rows) and then
+  // lists LOP as an explicit deduction, so it reads transparently as
+  // Gross − PF − PT − TDS − LOP − Advance − Other = Net. (Because the stored
+  // hr_gross is already LOP-prorated, full gross = hr_gross + LOP, and the net
+  // computed here equals hr_netpay minus any advance — no double counting.)
+  const gross = basic + allowances + overtime;
+
+  // Itemised deductions. PF / Professional Tax / Income Tax are read from the
+  // payroll record when those columns exist (else 0.00). LOP is the loss-of-pay
+  // amount; Advance Salary is any salary advance recovered this month (0.00 when
+  // none); Other Deductions is the fixed/statutory bucket we store on the record.
+  const pf = Number(p.hr_pf) || 0;
+  const professionalTax = Number(p.hr_professionaltax) || 0;
+  const incomeTax = Number(p.hr_incometax) || Number(p.hr_tds) || 0;
+  const lop = Number(p.hr_lop) || 0;
+  const advance = Number(p.hr_advance) || 0;
+  const otherDeductions = Number(p.hr_deductions) || 0;
+  const deductions = pf + professionalTax + incomeTax + lop + advance + otherDeductions;
+  const net = gross - deductions;
 
   // Basic + a combined Allowances (+ OT) are the only earnings we store; statutory
   // splits aren't itemised, so combined amounts land in "Other" rows and the rest
@@ -72,8 +88,9 @@ async function buildPayslipPdf({ payroll, employee, company }) {
     ['Medical Allowance', 0], ['Conveyance', 0], ['Other Allowances', allowances + overtime],
   ];
   const deductionRows = [
-    ['Provident Fund (PF)', 0], ['ESI', 0], ['Professional Tax', 0],
-    ['Income Tax (TDS)', 0], ['Other Deductions', deductions],
+    ['Provident Fund (PF)', pf], ['Professional Tax', professionalTax],
+    ['Income Tax (TDS)', incomeTax], ['LOP Deduction', lop],
+    ['Advance Salary', advance], ['Other Deductions', otherDeductions],
   ];
 
   // ── helpers ──
@@ -88,16 +105,24 @@ async function buildPayslipPdf({ payroll, employee, company }) {
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.dark).text(String(value ?? '—'), x + 10 + w * 0.42, y, { width: w * 0.58 - 14 });
   };
 
-  // ── header (white) ──
+  // ── header (white) — logo floats left; all company identity is centered across
+  //    the FULL page width so name / GSTIN / CIN / address / email / website line
+  //    up on one centre axis regardless of the logo. ──
+  const email = company.hr_email || 'info@crmonce.com';
+  // Website comes from Company Settings, but the payslip must show the HR portal
+  // URL; normalise a blank or legacy bare "crmonce.com" to https://hr.crmonce.com.
+  const rawSite = String(company.hr_website || '').trim();
+  const website = (!rawSite || /^(https?:\/\/)?(www\.)?crmonce\.com\/?$/i.test(rawSite))
+    ? 'https://hr.crmonce.com' : rawSite;
+
   let y = 34;
-  try { if (companySvc.LOGO_FILE && fs.existsSync(companySvc.LOGO_FILE)) doc.image(companySvc.LOGO_FILE, X0 + 4, y, { fit: [58, 58] }); } catch { /* logo optional */ }
-  const cx = X0 + 74, cw = W - 74;
-  doc.fillColor(C.blue).font('Helvetica-Bold').fontSize(17).text(company.hr_name || 'Company', cx, y, { width: cw, align: 'center' });
-  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.dark).text(`GSTIN: ${company.hr_gstin || '—'}      CIN: ${company.hr_cin || '—'}`, cx, y + 23, { width: cw, align: 'center' });
-  doc.font('Helvetica').fontSize(7.5).fillColor(C.gray).text(companySvc.addressLines(company).join(', '), cx, y + 35, { width: cw, align: 'center' });
-  const contact = [company.hr_email, company.hr_phone, company.hr_website].filter(Boolean).join('   |   ');
-  doc.fontSize(7.5).fillColor(C.gray).text(contact, cx, y + 47, { width: cw, align: 'center' });
-  y += 70;
+  try { if (companySvc.LOGO_FILE && fs.existsSync(companySvc.LOGO_FILE)) doc.image(companySvc.LOGO_FILE, X0 + 4, y + 2, { fit: [56, 56] }); } catch { /* logo optional */ }
+  doc.fillColor(C.blue).font('Helvetica-Bold').fontSize(17).text(company.hr_name || 'Company', X0, y, { width: W, align: 'center' });
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.dark).text(`GSTIN: ${company.hr_gstin || '—'}      CIN: ${company.hr_cin || '—'}`, X0, y + 24, { width: W, align: 'center' });
+  doc.font('Helvetica').fontSize(7.5).fillColor(C.gray).text(companySvc.addressLines(company).join(', '), X0, y + 37, { width: W, align: 'center' });
+  const contact = `Email: ${email}      |      Website: ${website}`;
+  doc.font('Helvetica').fontSize(7.5).fillColor(C.gray).text(contact, X0, y + 49, { width: W, align: 'center' });
+  y += 72;
   doc.moveTo(X0, y).lineTo(X1, y).lineWidth(1).strokeColor(C.blue).stroke();
   y += 10;
 

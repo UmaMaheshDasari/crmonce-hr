@@ -18,7 +18,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 // Base columns always present + computed/workflow columns that may not be
 // provisioned yet (selected/stored optionally so payroll works before migration).
 const BASE_SELECT = 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,hr_processeddate,_hr_hremployee_value';
-const OPT_SELECT = 'hr_gross,hr_overtime,hr_lop,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_approveddate,hr_releasedby,hr_releaseddate,hr_emailsent,hr_emailsenttime';
+const OPT_SELECT = 'hr_gross,hr_overtime,hr_lop,hr_advance,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_approveddate,hr_releasedby,hr_releaseddate,hr_emailsent,hr_emailsenttime';
 const OPT_FIELDS = OPT_SELECT.split(',');
 
 // create/update that retry WITHOUT the optional (computed/workflow) columns if
