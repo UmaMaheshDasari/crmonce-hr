@@ -46,6 +46,7 @@ const COLUMNS = [
   str('hr_Phone', 'Phone', 20),
   str('hr_Website', 'Website', 120),
   str('hr_LogoUrl', 'Logo Url', 500),
+  str('hr_RequiredDocs', 'Required Documents', 500),
 ];
 
 const ENTITY_BODY = {

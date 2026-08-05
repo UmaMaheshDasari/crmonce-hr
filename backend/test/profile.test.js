@@ -12,7 +12,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const profile = require('../src/services/profile.service');
 
-const ALL_DOCS = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
+const REQ = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
+const ALL_DOCS_VERIFIED = REQ.map((t) => ({ type: t, status: 'verified' }));
 const FULL_FIELDS = {
   hr_phone: '9876543210', hr_dob: '1990-01-01', hr_gender: 'Male', hr_bloodgroup: 'O+',
   hr_pan: 'ABCDE1234F', hr_aadhaar: '234123412346',
@@ -21,34 +22,34 @@ const FULL_FIELDS = {
   hr_bankname: 'SBI', hr_accountnumber: '123456789012', hr_ifsc: 'SBIN0001234',
 };
 
-test('computeCompletion: empty profile → 0% and all groups missing (incl Documents)', () => {
-  const c = profile.computeCompletion({});
+test('computeCompletion: empty profile → 0% and all groups + required docs missing', () => {
+  const c = profile.computeCompletion({}, { requiredDocs: REQ });
   assert.strictEqual(c.percent, 0);
   assert.strictEqual(c.total, 19);   // 15 fields + 4 required docs
-  assert.deepStrictEqual(c.missing, ['PAN', 'Aadhaar', 'Personal Info', 'Address', 'Emergency Contact', 'Bank Details', 'Documents']);
+  assert.deepStrictEqual(c.missing, ['PAN', 'Aadhaar', 'Personal Info', 'Address', 'Emergency Contact', 'Bank Details', ...REQ]);
 });
 
-test('computeCompletion: all fields but NO documents → not 100%, Documents missing', () => {
-  const c = profile.computeCompletion(FULL_FIELDS);
-  assert.ok(c.percent < 100, `expected <100, got ${c.percent}`);
-  assert.strictEqual(c.percent, 79);   // 15/19
-  assert.deepStrictEqual(c.missing, ['Documents']);
+test('computeCompletion: all fields but docs only UPLOADED (not verified) → not 100%', () => {
+  const uploaded = REQ.map((t) => ({ type: t, status: 'pending' }));
+  const c = profile.computeCompletion(FULL_FIELDS, { requiredDocs: REQ, documents: uploaded });
+  assert.strictEqual(c.percent, 79);   // 15/19 — pending docs don't count
+  assert.deepStrictEqual(c.missing, REQ);
 });
 
-test('computeCompletion: all fields AND all documents → 100%, nothing missing', () => {
-  const c = profile.computeCompletion(FULL_FIELDS, { documents: ALL_DOCS });
+test('computeCompletion: all fields AND all docs VERIFIED → 100%, nothing missing', () => {
+  const c = profile.computeCompletion(FULL_FIELDS, { requiredDocs: REQ, documents: ALL_DOCS_VERIFIED });
   assert.strictEqual(c.percent, 100);
   assert.deepStrictEqual(c.missing, []);
 });
 
-test('computeCompletion: partial → rounded % over 19 items', () => {
-  const c = profile.computeCompletion({ hr_pan: 'ABCDE1234F', hr_phone: '9876543210' });
+test('computeCompletion: partial → rounded % over 19 items, missing lists each doc', () => {
+  const c = profile.computeCompletion({ hr_pan: 'ABCDE1234F', hr_phone: '9876543210' }, { requiredDocs: REQ });
   assert.strictEqual(c.filled, 2);
   assert.strictEqual(c.total, 19);
   assert.strictEqual(c.percent, 11);
   assert.ok(c.missing.includes('Aadhaar'));
-  assert.ok(c.missing.includes('Documents'));
-  assert.ok(!c.missing.includes('PAN'));   // PAN is filled
+  assert.ok(c.missing.includes('Photo'));
+  assert.ok(!c.missing.includes('PAN'));   // PAN field is filled
 });
 
 test('diffChanges: only whitelisted, actually-changed fields are returned', () => {

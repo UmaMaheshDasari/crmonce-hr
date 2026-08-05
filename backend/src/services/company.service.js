@@ -33,6 +33,8 @@ const COMPANY_DEFAULTS = {
   hr_phone: '',
   hr_website: 'https://hr.crmonce.com',
   hr_logourl: '/crmonce-logo.png',   // served from the frontend public root
+  // Documents that must be uploaded AND verified for a profile to reach 100%.
+  hr_requireddocs: 'Aadhaar Card, PAN Card, Photo, Cancelled Cheque',
 };
 
 // Absolute path to the bundled logo file — used by the payslip PDF (pdfkit reads

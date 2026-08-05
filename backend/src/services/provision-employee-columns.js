@@ -29,9 +29,7 @@ const COLUMNS = [
   str('hr_Aadhaar', 'Aadhaar Number', 12),
   str('hr_PAN', 'PAN Number', 10),
   str('hr_Passport', 'Passport Number', 20),
-  str('hr_DrivingLicence', 'Driving Licence', 30),
   str('hr_UAN', 'UAN Number', 12),
-  str('hr_ESIC', 'ESIC Number', 20),
   str('hr_PFNumber', 'PF Number', 30),
   str('hr_BloodGroup', 'Blood Group', 5),
   // Employee master

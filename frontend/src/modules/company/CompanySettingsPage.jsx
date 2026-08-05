@@ -43,6 +43,10 @@ const SECTIONS = [
     title: 'Business',
     fields: [{ name: 'hr_business', label: 'Business (semicolon-separated)', full: true, textarea: true }],
   },
+  {
+    title: 'HR Policy',
+    fields: [{ name: 'hr_requireddocs', label: 'Required Documents for 100% profile (comma-separated)', full: true, textarea: true }],
+  },
 ];
 
 export default function CompanySettingsPage() {

@@ -7,7 +7,7 @@ import { ChevronRightIcon, ArrowUpTrayIcon, CheckCircleIcon } from '@heroicons/r
 import Button from '../../components/Button';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
-import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, esicRule, phoneRule } from '../../utils/validators';
+import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, phoneRule } from '../../utils/validators';
 
 const ROLES = ['employee', 'hr_manager', 'recruiter', 'super_admin'];
 const SHIFTS = ['Morning Shift', 'General Shift', 'Noon Shift', 'Evening Shift'];
@@ -108,7 +108,7 @@ export default function EmployeeForm() {
         hr_relievingdate: e.hr_relievingdate?.split('T')[0],
         // Identity
         hr_aadhaar: e.hr_aadhaar, hr_pan: e.hr_pan, hr_passport: e.hr_passport,
-        hr_drivinglicence: e.hr_drivinglicence, hr_uan: e.hr_uan, hr_esic: e.hr_esic,
+        hr_uan: e.hr_uan,
         hr_pfnumber: e.hr_pfnumber, hr_bloodgroup: e.hr_bloodgroup,
         hr_emergencycontact: e.hr_emergencycontact, hr_emergencyphone: e.hr_emergencyphone,
         // Bank
@@ -255,9 +255,7 @@ export default function EmployeeForm() {
               <Field label="Aadhaar Number" name="hr_aadhaar" required rules={aadhaarRule} placeholder="1234 5678 9012" maxLength={12} register={register} errors={errors} />
               <Field label="PAN Number" name="hr_pan" required rules={panRule} placeholder="ABCDE1234F" maxLength={10} onInput={upper} register={register} errors={errors} />
               <Field label="Passport Number" name="hr_passport" placeholder="A1234567" register={register} errors={errors} />
-              <Field label="Driving Licence" name="hr_drivinglicence" placeholder="AP01 20200012345" register={register} errors={errors} />
               <Field label="UAN Number" name="hr_uan" rules={uanRule} placeholder="123456789012" maxLength={12} register={register} errors={errors} />
-              <Field label="ESIC Number" name="hr_esic" rules={esicRule} placeholder="10 or 17 digits" register={register} errors={errors} />
               <Field label="PF Number" name="hr_pfnumber" placeholder="AP/HYD/1234567/000/0001234" register={register} errors={errors} />
               <SelectField label="Blood Group" name="hr_bloodgroup" register={register}>
                 <option value="">Select</option>

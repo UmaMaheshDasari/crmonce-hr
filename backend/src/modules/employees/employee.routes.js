@@ -15,7 +15,7 @@ const ENTITY = d365.constructor.entities.employee;
 
 // ESS columns (provisioned by provision-employee-columns.js). Selected as OPTIONAL
 // so the module keeps working before the columns exist.
-const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_drivinglicence,hr_uan,hr_esic,hr_pfnumber,hr_bloodgroup';
+const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_uan,hr_pfnumber,hr_bloodgroup';
 const PERSONAL_FIELDS = 'hr_altphone,hr_personalemail,hr_dob,hr_gender,hr_maritalstatus,hr_nationality,hr_photourl';
 const ADDRESS_FIELDS = 'hr_permaddress,hr_city,hr_state,hr_country,hr_pincode';
 const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
@@ -136,13 +136,17 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
       optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,${ESS_OPTIONAL_SELECT}`,
     });
     const out = labelsForEntity(ENTITY, withShiftDefaults(emp));
-    // Completion includes uploaded documents — never 100% while a required doc is missing.
+    // Completion counts the company's REQUIRED documents — and only when VERIFIED.
     let documents = [];
     try {
-      const dres = await d365.getList(d365.constructor.entities.document, { select: 'hr_name', filter: `_hr_hremployee_value eq '${req.params.id}'`, top: 100 });
-      documents = (dres.data || []).map(d => d.hr_name);
+      const dres = await d365.getListOptional(d365.constructor.entities.document, {
+        select: 'hr_name', optionalSelect: 'hr_documenttype,hr_status', filter: `_hr_hremployee_value eq '${req.params.id}'`, top: 200,
+      });
+      documents = (dres.data || []).map(d => ({ name: d.hr_name, type: d.hr_documenttype || d.hr_name, status: d.hr_status || 'pending' }));
     } catch { /* documents optional */ }
-    out._completion = profile.computeCompletion(out, { documents });
+    let requiredDocs;
+    try { requiredDocs = String((await require('../../services/company.service').getCompany()).hr_requireddocs || '').split(',').map(s => s.trim()).filter(Boolean); } catch { /* default */ }
+    out._completion = profile.computeCompletion(out, { documents, requiredDocs });
     out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
     out._employeeid = employeeIdOf(out);        // EMP1039 (business ID) — never the GUID
     out._empcode = out.hr_etimecode || '';      // device Empcode (40) — HR/internal only

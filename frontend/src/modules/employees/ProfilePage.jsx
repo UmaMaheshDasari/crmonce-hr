@@ -10,9 +10,10 @@ import {
   CheckBadgeIcon, ClockIcon, PencilIcon, ArrowUpTrayIcon, CameraIcon,
   CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon, LockClosedIcon,
 } from '@heroicons/react/24/outline';
-import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, esicRule, phoneRule } from '../../utils/validators';
+import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, phoneRule } from '../../utils/validators';
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
+import DocumentsManager from '../../components/DocumentsManager';
 
 const GENDERS = ['Male', 'Female'];
 const MARITAL = ['Single', 'Married'];
@@ -33,10 +34,8 @@ const FORM_TABS = [
     { name: 'hr_aadhaar', label: 'Aadhaar Number', rules: aadhaarRule, required: true, maxLength: 12 },
     { name: 'hr_pan', label: 'PAN Number', rules: panRule, required: true, maxLength: 10, upper: true },
     { name: 'hr_passport', label: 'Passport Number' },
-    { name: 'hr_drivinglicence', label: 'Driving Licence' },
     { name: 'hr_uan', label: 'UAN Number', rules: uanRule, maxLength: 12 },
     { name: 'hr_pfnumber', label: 'PF Number' },
-    { name: 'hr_esic', label: 'ESIC Number', rules: esicRule },
   ] },
   { key: 'address', label: 'Address', icon: MapPinIcon, verify: true, fields: [
     { name: 'hr_address', label: 'Current Address', textarea: true },
@@ -145,20 +144,20 @@ export default function ProfilePage() {
   };
   const cancelEdit = () => { reset(emp); setEditing(false); };
 
+  // Profile photo upload (sets hr_photourl). General documents are handled by the
+  // Documents tab (DocumentsManager).
   const uploadDoc = async (docType, file) => {
     if (!file) return;
     setUploading(docType);
     try {
       const fd = new FormData();
       fd.append('file', file); fd.append('employeeId', id);
-      fd.append('type', docType === 'Photo' ? 'Other' : 'ID Proof'); fd.append('name', docType);
+      fd.append('documentType', 'Photo'); fd.append('name', 'Photo');
       const res = await documentApi.upload(fd);
-      if (docType === 'Photo' && res.data?.hr_fileurl) {
-        await employeeApi.update(id, { hr_photourl: res.data.hr_fileurl });
-        qc.invalidateQueries({ queryKey: ['employee', id] });
-      }
+      const url = res.data?.fileUrl;
+      if (url) { await employeeApi.update(id, { hr_photourl: url }); qc.invalidateQueries({ queryKey: ['employee', id] }); }
       qc.invalidateQueries({ queryKey: ['documents', id] });
-      toast.success(`${docType} uploaded`);
+      toast.success('Photo updated');
     } catch (err) { toast.error(err.response?.data?.error || 'Upload failed'); }
     finally { setUploading(''); }
   };
@@ -319,30 +318,9 @@ export default function ProfilePage() {
             ))}
           </form>
 
-          {/* Documents */}
+          {/* Documents — generic management (upload any type, HR verifies) */}
           {tab === 'documents' && (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-500 mb-4">Upload your documents (PDF, JPG or PNG).</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {DOC_TYPES.map(dt => {
-                  const existing = docs.find(d => d.hr_name === dt);
-                  return (
-                    <div key={dt} className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-4 py-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-gray-800">{dt}</p>
-                        {existing ? <a href={existing.hr_fileurl} target="_blank" rel="noreferrer" className="text-xs text-emerald-600 font-medium inline-flex items-center gap-1"><CheckCircleIcon className="w-3.5 h-3.5" /> Uploaded — view</a> : <p className="text-xs text-gray-400">Not uploaded</p>}
-                      </div>
-                      {canEdit && (
-                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 rounded-lg cursor-pointer hover:bg-blue-100 flex-shrink-0">
-                          <ArrowUpTrayIcon className="w-3.5 h-3.5" /> {uploading === dt ? 'Uploading…' : (existing ? 'Replace' : 'Upload')}
-                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={e => uploadDoc(dt, e.target.files?.[0])} />
-                        </label>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <DocumentsManager employeeId={id} canManage={canEdit} hrView={hrView} />
           )}
         </div>
       </div>

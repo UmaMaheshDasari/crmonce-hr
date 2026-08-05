@@ -23,7 +23,7 @@ const SELF_EDITABLE = new Set([
   // Personal
   'hr_phone', 'hr_altphone', 'hr_personalemail', 'hr_dob', 'hr_gender', 'hr_maritalstatus', 'hr_nationality', 'hr_bloodgroup', 'hr_photourl',
   // Identity
-  'hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_drivinglicence', 'hr_uan', 'hr_pfnumber', 'hr_esic',
+  'hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_uan', 'hr_pfnumber',
   // Address
   'hr_address', 'hr_permaddress', 'hr_city', 'hr_state', 'hr_country', 'hr_pincode',
   // Emergency
@@ -44,8 +44,8 @@ const FIELD_LABELS = {
   hr_phone: 'Mobile Number', hr_altphone: 'Alternate Mobile', hr_personalemail: 'Personal Email',
   hr_dob: 'Date of Birth', hr_gender: 'Gender', hr_maritalstatus: 'Marital Status', hr_nationality: 'Nationality',
   hr_bloodgroup: 'Blood Group', hr_photourl: 'Photo',
-  hr_aadhaar: 'Aadhaar', hr_pan: 'PAN', hr_passport: 'Passport', hr_drivinglicence: 'Driving Licence',
-  hr_uan: 'UAN', hr_pfnumber: 'PF Number', hr_esic: 'ESIC',
+  hr_aadhaar: 'Aadhaar', hr_pan: 'PAN', hr_passport: 'Passport',
+  hr_uan: 'UAN', hr_pfnumber: 'PF Number',
   hr_address: 'Current Address', hr_permaddress: 'Permanent Address', hr_city: 'City', hr_state: 'State', hr_country: 'Country', hr_pincode: 'PIN Code',
   hr_emergencycontact: 'Emergency Contact', hr_emergencyrelation: 'Emergency Relationship', hr_emergencyphone: 'Emergency Phone',
   hr_bankname: 'Bank Name', hr_accountholder: 'Account Holder', hr_accountnumber: 'Account Number', hr_ifsc: 'IFSC', hr_branch: 'Branch', hr_chequeurl: 'Cancelled Cheque',
@@ -72,7 +72,7 @@ const MISSING_GROUPS = [
 const SECTION_OF = {
   hr_phone: 'Personal', hr_altphone: 'Personal', hr_personalemail: 'Personal', hr_dob: 'Personal',
   hr_gender: 'Personal', hr_maritalstatus: 'Personal', hr_nationality: 'Personal', hr_bloodgroup: 'Personal', hr_photourl: 'Personal',
-  hr_aadhaar: 'Identity', hr_pan: 'Identity', hr_passport: 'Identity', hr_drivinglicence: 'Identity', hr_uan: 'Identity', hr_pfnumber: 'Identity', hr_esic: 'Identity',
+  hr_aadhaar: 'Identity', hr_pan: 'Identity', hr_passport: 'Identity', hr_uan: 'Identity', hr_pfnumber: 'Identity',
   hr_address: 'Address', hr_permaddress: 'Address', hr_city: 'Address', hr_state: 'Address', hr_country: 'Address', hr_pincode: 'Address',
   hr_emergencycontact: 'Emergency', hr_emergencyrelation: 'Emergency', hr_emergencyphone: 'Emergency',
   hr_bankname: 'Bank', hr_accountholder: 'Bank', hr_accountnumber: 'Bank', hr_ifsc: 'Bank', hr_branch: 'Bank', hr_chequeurl: 'Bank',
@@ -95,24 +95,30 @@ const REQUIRED_DOCS = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
 
 /**
  * { percent, filled, total, missing:[labels] } across Personal / Identity / Address /
- * Bank / Emergency AND Documents.
+ * Bank / Emergency AND the company's Required Documents (which must be VERIFIED).
  * @param {object} emp    employee record
- * @param {object} [opts] { documents: string[] } — names of uploaded documents
+ * @param {object} [opts] { documents: [{type,name,status}], requiredDocs: string[] }
  */
 function computeCompletion(emp = {}, opts = {}) {
-  const uploaded = new Set((opts.documents || []).map((d) => String(d)));
-  const fieldTotal = COMPLETION_FIELDS.length;
-  const docTotal = REQUIRED_DOCS.length;
-  const total = fieldTotal + docTotal;
+  const requiredDocs = (opts.requiredDocs && opts.requiredDocs.length) ? opts.requiredDocs : REQUIRED_DOCS;
+  // A required doc counts only when an uploaded doc of that type/name is VERIFIED.
+  const verified = new Set();
+  for (const d of opts.documents || []) {
+    if (String(d.status || '').toLowerCase() !== 'verified') continue;
+    if (d.type) verified.add(String(d.type).toLowerCase());
+    if (d.name) verified.add(String(d.name).toLowerCase());
+  }
+  const missingDocs = requiredDocs.filter((r) => !verified.has(String(r).toLowerCase()));
 
+  const fieldTotal = COMPLETION_FIELDS.length;
+  const total = fieldTotal + requiredDocs.length;
   const doneFields = COMPLETION_FIELDS.filter((f) => filled(emp[f])).length;
-  const doneDocs = REQUIRED_DOCS.filter((d) => uploaded.has(d)).length;
-  const done = doneFields + doneDocs;
-  const percent = Math.round((done / total) * 100);
+  const doneDocs = requiredDocs.length - missingDocs.length;
+  const percent = total ? Math.round(((doneFields + doneDocs) / total) * 100) : 0;
 
   const missing = MISSING_GROUPS.filter((g) => g.fields.some((f) => !filled(emp[f]))).map((g) => g.label);
-  if (doneDocs < docTotal) missing.push('Documents');
-  return { percent, filled: done, total, missing };
+  for (const md of missingDocs) missing.push(md);   // list each missing required doc
+  return { percent, filled: doneFields + doneDocs, total, missing };
 }
 
 /** Which whitelisted fields actually changed vs the current record. */

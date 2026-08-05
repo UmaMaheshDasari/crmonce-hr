@@ -126,7 +126,6 @@ const FIELD_VALIDATORS = {
   hr_ifsc: validateIFSC,
   hr_accountnumber: validateAccountNumber,
   hr_uan: validateUAN,
-  hr_esic: validateESIC,
   hr_bloodgroup: validateBloodGroup,
   hr_emergencyphone: validatePhone,
   hr_phone: validatePhone,

@@ -1,11 +1,67 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { employeeApi } from '../../api/endpoints';
+import { employeeApi, documentApi } from '../../api/endpoints';
 import {
   ShieldCheckIcon, CheckCircleIcon, XCircleIcon, ArrowRightIcon, XMarkIcon, EyeIcon, ExclamationTriangleIcon,
+  DocumentTextIcon, ArrowDownTrayIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { fmtVal, fmtDate } from '../../utils/format';
 import toast from 'react-hot-toast';
+
+const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
+const docUrl = (u) => (u ? (u.startsWith('http') ? u : API_BASE + u) : '');
+
+function PendingDocuments() {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: ['pending-documents'], queryFn: () => documentApi.pending(), refetchInterval: 30000 });
+  const rows = data?.data?.data || [];
+  const verify = useMutation({
+    mutationFn: ({ id, action, hrRemarks }) => documentApi.verify(id, { action, hrRemarks }),
+    onSuccess: (_r, v) => { toast.success(v.action === 'approve' ? 'Document approved' : v.action === 'reject' ? 'Document rejected' : 'Re-upload requested'); qc.invalidateQueries({ queryKey: ['pending-documents'] }); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Action failed'),
+  });
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="bg-gray-50/80">
+              {['Employee', 'Document Type', 'Name', 'Uploaded', 'Uploaded By', 'Actions'].map(h => (
+                <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100/70">
+            {isLoading ? (
+              <tr><td colSpan={6} className="px-5 py-16 text-center text-sm text-gray-400">Loading…</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={6} className="px-5 py-16 text-center">
+                <div className="flex flex-col items-center gap-2"><DocumentTextIcon className="w-10 h-10 text-emerald-300" /><p className="text-sm font-medium text-gray-500">No documents pending verification</p></div>
+              </td></tr>
+            ) : rows.map(d => (
+              <tr key={d.id} className="hover:bg-gray-50/50">
+                <td className="px-5 py-4 text-sm font-medium text-gray-800">{fmtVal(d.employeeName)}</td>
+                <td className="px-5 py-4 text-sm text-gray-600">{fmtVal(d.type)}</td>
+                <td className="px-5 py-4 text-sm text-gray-600">{fmtVal(d.name)}{d.remarks && <span className="block text-xs text-gray-400">{d.remarks}</span>}</td>
+                <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">{fmtDate(d.uploadedOn)}</td>
+                <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">{fmtVal(d.uploadedBy)}</td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <a href={docUrl(d.fileUrl)} target="_blank" rel="noreferrer" className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Preview"><EyeIcon className="w-4 h-4" /></a>
+                    <a href={docUrl(d.fileUrl)} download target="_blank" rel="noreferrer" className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Download"><ArrowDownTrayIcon className="w-4 h-4" /></a>
+                    <button onClick={() => verify.mutate({ id: d.id, action: 'approve' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckCircleIcon className="w-3.5 h-3.5" /> Approve</button>
+                    <button onClick={() => verify.mutate({ id: d.id, action: 'reject', hrRemarks: window.prompt('Reason for rejection:') || '' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XCircleIcon className="w-3.5 h-3.5" /> Reject</button>
+                    <button onClick={() => verify.mutate({ id: d.id, action: 'reupload', hrRemarks: window.prompt('What needs re-uploading?') || '' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-orange-700 bg-orange-50 rounded-lg hover:bg-orange-100"><ArrowPathIcon className="w-3.5 h-3.5" /> Re-upload</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 function ChangesModal({ row, onClose, onDecision, busy }) {
   return (
@@ -55,6 +111,7 @@ function ChangesModal({ row, onClose, onDecision, busy }) {
 export default function HRVerificationPage() {
   const qc = useQueryClient();
   const [selected, setSelected] = useState(null);
+  const [vtab, setVtab] = useState('profiles');
 
   const { data, isLoading } = useQuery({ queryKey: ['pending-verifications'], queryFn: () => employeeApi.pendingVerifications(), refetchInterval: 30000 });
   const rows = data?.data?.data || [];
@@ -99,6 +156,14 @@ export default function HRVerificationPage() {
         </button>
       </div>
 
+      {/* Sub-tabs: Profiles | Documents */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {[['profiles', 'Profile Changes'], ['documents', 'Documents']].map(([k, l]) => (
+          <button key={k} onClick={() => setVtab(k)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${vtab === k ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{l}</button>
+        ))}
+      </div>
+
+      {vtab === 'documents' ? <PendingDocuments /> : (
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -146,6 +211,7 @@ export default function HRVerificationPage() {
           </table>
         </div>
       </div>
+      )}
 
       {selected && <ChangesModal row={selected} onClose={() => setSelected(null)} onDecision={onDecision} busy={decide.isPending} />}
     </div>

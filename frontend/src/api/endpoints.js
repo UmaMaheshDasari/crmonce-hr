@@ -142,8 +142,13 @@ export const companyApi = {
 // ── Documents ────────────────────────────────────────────────────
 export const documentApi = {
   list: (params) => api.get('/documents', { params }),
-  upload: (formData) => api.post('/documents/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+  pending: () => api.get('/documents/pending'),
+  upload: (formData, onUploadProgress) => api.post('/documents/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress,
   }),
+  replace: (id, formData, onUploadProgress) => api.post(`/documents/${id}/replace`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress,
+  }),
+  verify: (id, data) => api.patch(`/documents/${id}/verify`, data),
   delete: (id) => api.delete(`/documents/${id}`),
 };

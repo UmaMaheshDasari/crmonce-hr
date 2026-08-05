@@ -44,7 +44,7 @@ const empCode = (e) => e?.hr_etimecode || '';   // device Empcode (40)
 async function fetchEmployees() {
   const res = await d365.getListOptional(E.employee, {
     select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_salary,hr_allowances,hr_deductions,hr_etimecode',
-    optionalSelect: 'hr_employeeid,hr_employeecode,hr_pan,hr_aadhaar,hr_uan,hr_esic,hr_pfnumber,hr_bloodgroup,hr_emergencycontact,hr_emergencyphone,hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch',
+    optionalSelect: 'hr_employeeid,hr_employeecode,hr_pan,hr_aadhaar,hr_uan,hr_pfnumber,hr_bloodgroup,hr_emergencycontact,hr_emergencyphone,hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch',
     top: 5000, orderby: 'hr_hremployee1 asc',
   });
   return res.data || [];
@@ -129,7 +129,7 @@ async function buildReport(type, { year, month } = {}) {
       { header: 'Designation', key: 'desig', width: 18 }, { header: 'Joining Date', key: 'doj', width: 14 },
       { header: 'PAN', key: 'pan', width: 12 }, { header: 'Aadhaar', key: 'aadhaar', width: 14 },
       { header: 'UAN', key: 'uan', width: 14 }, { header: 'PF No', key: 'pf', width: 16 },
-      { header: 'ESIC', key: 'esic', width: 14 }, { header: 'Blood Group', key: 'blood', width: 10 },
+      { header: 'Blood Group', key: 'blood', width: 10 },
       { header: 'Emergency Contact', key: 'ec', width: 18 }, { header: 'Emergency Phone', key: 'ep', width: 14 },
       { header: 'Bank', key: 'bank', width: 18 }, { header: 'Account No', key: 'acc', width: 18 }, { header: 'IFSC', key: 'ifsc', width: 14 },
     ];
@@ -137,7 +137,7 @@ async function buildReport(type, { year, month } = {}) {
       eid: empId(e) || '—', code: empCode(e) || '—', name: e.hr_hremployee1, email: e.hr_email || '—', phone: e.hr_phone || '—', dept: e.hr_department || '—',
       desig: e.hr_designation || '—', doj: (e.hr_joiningdate || '').slice(0, 10) || '—',
       pan: e.hr_pan || '—', aadhaar: e.hr_aadhaar || '—', uan: e.hr_uan || '—', pf: e.hr_pfnumber || '—',
-      esic: e.hr_esic || '—', blood: e.hr_bloodgroup || '—', ec: e.hr_emergencycontact || '—', ep: e.hr_emergencyphone || '—',
+      blood: e.hr_bloodgroup || '—', ec: e.hr_emergencycontact || '—', ep: e.hr_emergencyphone || '—',
       bank: e.hr_bankname || '—', acc: e.hr_accountnumber || '—', ifsc: e.hr_ifsc || '—',
     });
     styleHeader(ws); autoWidth(ws);
