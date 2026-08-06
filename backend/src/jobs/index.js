@@ -16,6 +16,23 @@ function initJobs() {
     global.logger?.info('Attendance exception scans scheduled (21:30 nightly, 09:00 reminders, IST)');
   }
 
+  // Payroll Automation — scheduled month-end run. OFF by default (opt-in), so it
+  // never surprises anyone: set AUTO_PAYROLL=true to enable. Runs on the last day
+  // of the month at 20:00 IST for the CURRENT month. Manual "Run Now" + retry are
+  // always available in the Automation dashboard regardless of this flag.
+  if (process.env.AUTO_PAYROLL === 'true') {
+    const automation = require('../services/payroll-automation.service');
+    cron.schedule('0 20 28-31 * *', async () => {
+      const now = new Date();
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      if (now.getDate() !== last) return;   // only actually run on the true last day
+      global.logger?.info('[automation] scheduled month-end payroll run starting');
+      automation.runJob({ month: now.getMonth() + 1, year: now.getFullYear(), user: { name: 'Scheduler' }, trigger: 'scheduled', wait: true })
+        .catch(e => global.logger?.error(`[automation] scheduled run failed: ${e.message}`));
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Payroll Automation scheduled (last day of month, 20:00 IST)');
+  }
+
   global.logger?.info('Cron jobs initialized');
 }
 

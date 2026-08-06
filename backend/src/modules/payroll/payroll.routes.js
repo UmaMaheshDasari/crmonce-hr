@@ -95,27 +95,26 @@ payrollRouter.get('/', requirePermission('payroll:read'), async (req, res, next)
   } catch (err) { next(err); }
 });
 
-// POST /generate  — generate DRAFT payroll for a month (HR). Idempotent: updates an
-// existing DRAFT, skips already-approved/released rows.
-async function generatePayroll(req, res, next) {
-  try {
-    const { month, year, employeeIds } = req.body;
-    if (!month || !year) return res.status(400).json({ error: 'month and year are required.' });
+// The reusable generation CORE — used by the POST /generate handler AND the
+// Payroll Automation orchestrator. Idempotent: updates an existing DRAFT, skips
+// locked/finalised months. Returns counts (no HTTP). Runs Attendance → Leave →
+// LOP → Advance → Salary Calculation → Payroll for each employee.
+async function runGeneration({ month, year, employeeIds } = {}) {
+  const filter = employeeIds?.length
+    ? employeeIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ')
+    : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
+  const { data: employees } = await d365.getList(E.employee, {
+    select: 'hr_hremployeeid,hr_hremployee1,hr_salary,hr_allowances,hr_deductions',
+    filter,
+  });
 
-    const filter = employeeIds?.length
-      ? employeeIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ')
-      : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
-    const { data: employees } = await d365.getList(E.employee, {
-      select: 'hr_hremployeeid,hr_hremployee1,hr_salary,hr_allowances,hr_deductions',
-      filter,
-    });
+  // Rates come from Payroll Settings — never hardcoded (§15).
+  const settings = await payrollSettings.getResolved().catch(() => payrollSettings.resolve(null));
+  const asOf = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;   // last day of the month
 
-    // Rates come from Payroll Settings — never hardcoded (§15).
-    const settings = await payrollSettings.getResolved().catch(() => payrollSettings.resolve(null));
-    const asOf = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;   // last day of the month
-
-    const draft = toValue('hr_payroll_status', 'draft');
-    let created = 0, updated = 0, skipped = 0, locked = 0;
+  const draft = toValue('hr_payroll_status', 'draft');
+  let created = 0, updated = 0, skipped = 0, locked = 0;
+  {
     for (const emp of employees) {
       // Skip a locked or finalised month for this employee up front.
       const existing = await d365.getListOptional(PAYROLL, {
@@ -160,14 +159,52 @@ async function generatePayroll(req, res, next) {
       if (row) { await updateOpt(row.hr_hrpayrollid, record); updated++; }
       else { await createOpt({ 'hr_hremployee@odata.bind': `/hr_hremployees(${emp.hr_hremployeeid})`, ...record }); created++; }
     }
+  }
+  return { created, updated, skipped, locked, count: created + updated };
+}
 
-    try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${created + updated} employees${locked ? `, ${locked} locked skipped` : ''}` }); } catch {}
-    broadcast('payroll:processed', { month: `${month}/${year}`, count: created + updated });
-    res.json({ message: `Payroll generated for ${created + updated} employees (${skipped} finalised, ${locked} locked skipped)`, created, updated, skipped, locked, count: created + updated });
+// POST /generate  — HTTP wrapper around runGeneration (HR).
+async function generatePayroll(req, res, next) {
+  try {
+    const { month, year, employeeIds } = req.body;
+    if (!month || !year) return res.status(400).json({ error: 'month and year are required.' });
+    const r = await runGeneration({ month, year, employeeIds });
+    try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${r.created + r.updated} employees${r.locked ? `, ${r.locked} locked skipped` : ''}` }); } catch {}
+    broadcast('payroll:processed', { month: `${month}/${year}`, count: r.created + r.updated });
+    res.json({ message: `Payroll generated for ${r.created + r.updated} employees (${r.skipped} finalised, ${r.locked} locked skipped)`, ...r });
   } catch (err) { next(err); }
 }
 payrollRouter.post('/generate', requireRole('super_admin', 'hr_manager'), generatePayroll);
 payrollRouter.post('/process', requireRole('super_admin', 'hr_manager'), generatePayroll);   // backward-compat alias
+
+// Finalise a month for the Automation orchestrator: approve every DRAFT row,
+// email its payslip PDF and notify the employee. Idempotent — rows already
+// approved are not fetched (only DRAFT), so a retry only handles what's left.
+async function finalizeMonth({ month, year, employeeIds } = {}) {
+  const draft = toValue('hr_payroll_status', 'draft');
+  const processed = toValue('hr_payroll_status', 'processed');
+  const filters = [`hr_year eq ${year}`, `hr_month eq ${month}`, `hr_status eq ${draft}`];
+  if (employeeIds?.length) filters.push('(' + employeeIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ') + ')');
+  const { data } = await d365.getListOptional(PAYROLL, { select: BASE_SELECT, optionalSelect: OPT_SELECT, filter: filters.join(' and '), top: 2000 });
+  let approved = 0, emailed = 0, emailFailed = 0, notified = 0, failed = 0;
+  for (const payroll of data || []) {
+    try {
+      const empId = payroll._hr_hremployee_value;
+      const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
+        select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
+        optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode,hr_employeeid',
+      }) : {};
+      const mail = await emailPayslip({ payroll, employee });   // builds the PDF + sends
+      await updateOpt(payroll.hr_hrpayrollid, {
+        hr_status: processed, hr_approvedby: 'Payroll Automation', hr_approveddate: new Date().toISOString(),
+        hr_emailsent: mail.success ? 'sent' : 'failed', hr_emailsenttime: mail.sentAt || '',
+      });
+      approved++; if (mail.success) emailed++; else emailFailed++;
+      if (empId) { try { notifyUser(empId, 'payroll:processed', { month: `${month}/${year}` }); notified++; } catch {} }
+    } catch (e) { failed++; global.logger?.warn?.(`[automation] finalise row ${payroll.hr_hrpayrollid}: ${e.message}`); }
+  }
+  return { approved, emailed, emailFailed, notified, failed };
+}
 
 // PATCH /:id/approve  — approve payroll → status 'processed' + email the payslip
 payrollRouter.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
@@ -371,3 +408,5 @@ payrollRouter.post('/:id/email', requirePermission('payroll:read'), async (req, 
 });
 
 module.exports = payrollRouter;
+module.exports.runGeneration = runGeneration;    // reused by the Automation orchestrator
+module.exports.finalizeMonth = finalizeMonth;

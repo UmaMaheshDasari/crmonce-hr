@@ -9,7 +9,7 @@ import {
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
-  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon,
+  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon, BoltIcon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
@@ -23,6 +23,7 @@ const NAV = [
   { to: '/holidays',    label: 'Holidays',     icon: CalendarDaysIcon },
   { to: '/payroll',     label: 'Payroll',      icon: CurrencyDollarIcon },
   { to: '/payroll-dashboard', label: 'Payroll Dashboard', icon: ChartBarIcon, roles: ['super_admin', 'hr_manager'] },
+  { to: '/payroll-automation', label: 'Payroll Automation', icon: BoltIcon, roles: ['super_admin', 'hr_manager'] },
   { to: '/salary-structure', label: 'Salary Structure', icon: BanknotesIcon },
   { to: '/advance-salary', label: 'Advance Salary', icon: BanknotesIcon },
   { to: '/payroll-settings', label: 'Payroll Settings', icon: Cog6ToothIcon, roles: ['super_admin'] },
@@ -46,6 +47,7 @@ const LABEL_MAP = {
   '/holidays':    'Holidays',
   '/payroll':     'Payroll',
   '/payroll-dashboard': 'Payroll Dashboard',
+  '/payroll-automation': 'Payroll Automation',
   '/salary-structure': 'Salary Structure',
   '/advance-salary': 'Advance Salary',
   '/payroll-settings': 'Payroll Settings',

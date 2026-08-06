@@ -100,6 +100,14 @@ export const payrollApi = {
   dashboard: (params) => api.get('/payroll/dashboard', { params }),
 };
 
+// ── Payroll Automation ───────────────────────────────────────────
+export const automationApi = {
+  jobs: (params) => api.get('/payroll/automation/jobs', { params }),
+  job: (id) => api.get(`/payroll/automation/jobs/${id}`),
+  run: (data) => api.post('/payroll/automation/run', data),
+  retry: (id) => api.post(`/payroll/automation/jobs/${id}/retry`),
+};
+
 // ── Payroll Settings (admin-configurable payroll parameters) ─────
 export const payrollSettingsApi = {
   get: () => api.get('/payroll/settings'),
