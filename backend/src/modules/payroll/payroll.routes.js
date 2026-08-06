@@ -7,6 +7,7 @@ const { notifyPayrollProcessed, broadcast, notifyUser } = require('../../service
 const { toValue, labelsForList } = require('../../services/picklist');
 const { rangeCounts } = require('../../services/attendance-summary.util');
 const { computePayroll, round2 } = require('../../services/payroll.calc');
+const leaveEngine = require('../../services/leave-engine.service');
 const { buildPayslipPdf } = require('../../services/payslip.service');
 const { emailPayslip } = require('../../services/payslip-notify.service');
 const { buildReport } = require('../../services/payroll-reports.service');
@@ -53,19 +54,15 @@ async function attendanceFacts(empId, month, year) {
     presentDays = Math.min(dates.size, workingDays);
   } catch { /* keep assumed full present */ }
 
-  let paidLeaveDays = 0;
-  try {
-    const { data } = await d365.getList(E.leave, {
-      select: 'hr_days,hr_fromdate,hr_status',
-      filter: `_hr_hremployee_value eq '${empId}' and hr_status eq ${toValue('hr_leave_status', 'approved')}`,
-      top: 200,
-    });
-    const ym = `${year}-${pad2(month)}`;
-    for (const l of data || []) if (String(l.hr_fromdate || '').slice(0, 7) === ym) paidLeaveDays += Number(l.hr_days) || 0;
-  } catch { /* no paid leave data */ }
+  // Leave Engine splits the month's approved leave into PAID (within the annual
+  // 18-day cap) vs LOP (beyond it). Excess paid-leave automatically falls into
+  // lopDays via the formula below. The engine never throws — on any failure it
+  // falls back to the legacy "all approved leave is paid" behaviour, so payroll
+  // is never blocked. (§2/§8 — paid leave exhausted → remaining days become LOP.)
+  const { paidLeaveDays } = await leaveEngine.splitMonthLeave(empId, { year, month });
 
   const lopDays = Math.max(0, workingDays - presentDays - paidLeaveDays);
-  return { workingDays, presentDays, absentDays: lopDays, lopDays, overtimeHours };
+  return { workingDays, presentDays, absentDays: lopDays, lopDays, paidLeaveDays, overtimeHours };
 }
 
 // GET /  — list payroll (employees scoped to their own)

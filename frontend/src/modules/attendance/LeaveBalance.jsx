@@ -1,0 +1,169 @@
+import { useMemo, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { leaveApi, employeeApi } from '../../api/endpoints';
+import { XMarkIcon, AdjustmentsHorizontalIcon, GiftIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '../../context/AuthContext';
+import toast from 'react-hot-toast';
+
+const d = (n) => `${Number(n || 0)}`;
+
+// One balance stat card with an optional usage bar.
+function BalanceCard({ label, value, sub, accent, pct }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{label}</p>
+        <span className={`w-2.5 h-2.5 rounded-full ${accent}`} />
+      </div>
+      <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      {typeof pct === 'number' && (
+        <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full ${accent}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// HR modal: manual adjustment + comp-off grant/use.
+function ManageModal({ employeeId, employeeName, onClose }) {
+  const qc = useQueryClient();
+  const [tab, setTab] = useState('adjust');
+  const adjustForm = useForm({ defaultValues: { category: 'casual', days: '', reason: '' } });
+  const compForm = useForm({ defaultValues: { action: 'earn', days: '', date: new Date().toISOString().slice(0, 10), reason: '' } });
+
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['leave-balance'] }); qc.invalidateQueries({ queryKey: ['leave-ledger'] }); };
+  const adjustMut = useMutation({
+    mutationFn: (v) => leaveApi.adjust({ employeeId, ...v, days: Number(v.days) }),
+    onSuccess: () => { toast.success('Balance adjusted'); invalidate(); onClose(); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to adjust'),
+  });
+  const compMut = useMutation({
+    mutationFn: (v) => leaveApi.compOff({ employeeId, ...v, days: Number(v.days) }),
+    onSuccess: () => { toast.success('Comp-off saved'); invalidate(); onClose(); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to save comp-off'),
+  });
+
+  const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
+  return (
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
+      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl shadow-2xl my-0 sm:my-8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div><h2 className="text-lg font-bold text-gray-900">Manage Leave Balance</h2><p className="text-xs text-gray-400">{employeeName}</p></div>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
+        </div>
+        <div className="px-6 pt-4">
+          <div className="inline-flex bg-gray-100 p-1 rounded-lg gap-0.5">
+            {[['adjust', 'Adjust Balance'], ['compoff', 'Comp Off']].map(([k, l]) => (
+              <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-md text-xs font-semibold ${tab === k ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        {tab === 'adjust' ? (
+          <form onSubmit={adjustForm.handleSubmit(v => adjustMut.mutate(v))} className="p-6 space-y-4">
+            <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Bucket</label>
+              <select className={inp} {...adjustForm.register('category')}>
+                <option value="casual">Casual Leave</option><option value="sick">Sick Leave</option><option value="compoff">Comp Off</option>
+              </select></div>
+            <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Days (use a negative number to deduct)</label>
+              <input type="number" step="0.5" className={inp} placeholder="e.g. 2 or -1" {...adjustForm.register('days', { required: true })} /></div>
+            <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Reason</label>
+              <input className={inp} placeholder="e.g. Carry-forward, correction…" {...adjustForm.register('reason')} /></div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
+              <button type="submit" disabled={adjustMut.isPending} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50">{adjustMut.isPending ? 'Saving…' : 'Apply Adjustment'}</button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={compForm.handleSubmit(v => compMut.mutate(v))} className="p-6 space-y-4">
+            <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Action</label>
+              <select className={inp} {...compForm.register('action')}>
+                <option value="earn">Grant (earned — e.g. holiday working)</option><option value="use">Consume (used instead of paid leave)</option>
+              </select></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Days</label>
+                <input type="number" step="0.5" min="0" className={inp} placeholder="e.g. 1" {...compForm.register('days', { required: true })} /></div>
+              <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Date</label>
+                <input type="date" className={inp} {...compForm.register('date', { required: true })} /></div>
+            </div>
+            <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Reason</label>
+              <input className={inp} placeholder="e.g. Worked on Republic Day holiday" {...compForm.register('reason')} /></div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
+              <button type="submit" disabled={compMut.isPending} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50">{compMut.isPending ? 'Saving…' : 'Save Comp Off'}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function LeaveBalance() {
+  const { user, isHR } = useAuth();
+  const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
+  const [selectedEmp, setSelectedEmp] = useState('');
+  const [showManage, setShowManage] = useState(false);
+
+  const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500 }), enabled: hr });
+  const employees = empRes?.data?.data || empRes?.data || [];
+  const targetId = hr ? (selectedEmp || undefined) : undefined;   // undefined → self on the backend
+  const targetName = hr && selectedEmp ? (employees.find(e => e.hr_hremployeeid === selectedEmp)?.hr_hremployee1 || 'Employee') : (user?.name || 'You');
+
+  const { data: bal, isLoading } = useQuery({
+    queryKey: ['leave-balance', targetId || 'self'],
+    queryFn: () => leaveApi.balance(targetId ? { employeeId: targetId } : {}),
+  });
+  const b = bal?.data;
+
+  const cards = useMemo(() => {
+    if (!b) return [];
+    const available = (b.paid?.remaining || 0) + (b.compOff?.balance || 0);
+    return [
+      { label: 'Paid Leave', value: d(b.paid?.remaining), sub: `${d(b.paid?.used)} used of ${d(b.paid?.entitled)}`, accent: 'bg-indigo-500', pct: (b.paid?.used / (b.paid?.entitled || 1)) * 100 },
+      { label: 'Casual Leave', value: d(b.casual?.remaining), sub: `${d(b.casual?.used)} used of ${d(b.casual?.entitled)}`, accent: 'bg-sky-500', pct: (b.casual?.used / (b.casual?.entitled || 1)) * 100 },
+      { label: 'Sick Leave', value: d(b.sick?.remaining), sub: `${d(b.sick?.used)} used of ${d(b.sick?.entitled)}`, accent: 'bg-rose-500', pct: (b.sick?.used / (b.sick?.entitled || 1)) * 100 },
+      { label: 'Comp Off', value: d(b.compOff?.balance), sub: `${d(b.compOff?.used)} used of ${d(b.compOff?.earned)}`, accent: 'bg-emerald-500' },
+      { label: 'LOP (this year)', value: d(b.lop?.fromLeave), sub: 'unpaid leave days', accent: 'bg-amber-500' },
+      { label: 'Available Balance', value: d(available), sub: 'paid + comp-off', accent: 'bg-violet-500' },
+    ];
+  }, [b]);
+
+  return (
+    <div className="bg-gray-50/60 rounded-2xl border border-gray-100 p-4 sm:p-5 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-gray-900">Leave Balance {b?.year ? `· ${b.year}` : ''}</h2>
+          <p className="text-xs text-gray-400">Policy: 12 Casual + 6 Sick = 18 paid/year. Beyond that becomes LOP.</p>
+        </div>
+        {hr && (
+          <div className="flex items-center gap-2">
+            <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)}
+              className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+              <option value="">Me</option>
+              {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
+            </select>
+            <button onClick={() => setShowManage(true)} disabled={!selectedEmp}
+              className="inline-flex items-center gap-1.5 h-9 px-3 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-40"
+              title={selectedEmp ? 'Adjust balance / comp-off' : 'Select an employee first'}>
+              <AdjustmentsHorizontalIcon className="w-4 h-4" /> Manage
+            </button>
+          </div>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">{[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-white rounded-xl border border-gray-100 animate-pulse" />)}</div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {cards.map(c => <BalanceCard key={c.label} {...c} />)}
+        </div>
+      )}
+
+      {showManage && selectedEmp && <ManageModal employeeId={selectedEmp} employeeName={targetName} onClose={() => setShowManage(false)} />}
+    </div>
+  );
+}

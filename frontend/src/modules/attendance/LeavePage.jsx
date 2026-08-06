@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { leaveApi } from '../../api/endpoints';
 import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 import Button from '../../components/Button';
+import LeaveBalance from './LeaveBalance';
 import { useAuth } from '../../context/AuthContext';
 import { format, differenceInCalendarDays } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -631,6 +632,9 @@ export default function LeavePage() {
         </div>
         <Button onClick={() => setShowModal(true)} icon={PlusIcon}>Apply Leave</Button>
       </div>
+
+      {/* Leave Balance dashboard (Paid / Casual / Sick / Comp Off / LOP / Available) */}
+      <LeaveBalance />
 
       {/* Pill-style Status Tabs */}
       <div className="inline-flex bg-gray-100/80 p-1 rounded-xl gap-0.5 flex-wrap">

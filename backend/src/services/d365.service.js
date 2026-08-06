@@ -272,6 +272,7 @@ class D365Service {
     designation: 'hr_hrdesignations',
     goal:        'hr_hrgoals',
     salaryStructure: 'hr_salarystructures',       // Effective-dated salary revisions per employee
+    leaveLedger: 'hr_leaveledgers',               // Comp-off grants + manual leave-balance adjustments
     attendanceRequest: 'hr_attendancerequests',   // Missing Punch / Attendance correction requests
     holiday:     'hr_holidays',                   // HR-managed holiday calendar
   };

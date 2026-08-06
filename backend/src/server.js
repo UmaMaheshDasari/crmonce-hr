@@ -166,6 +166,9 @@ server.listen(PORT, () => {
     require('./services/provision-salary-structure')
       .ensureSalaryStructureTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] salary structure table skipped: ${err.message}`));
+    require('./services/provision-leave-ledger')
+      .ensureLeaveLedgerTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] leave ledger table skipped: ${err.message}`));
     require('./services/provision-profile-audit')
       .ensureProfileAuditTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] profile-audit table skipped: ${err.message}`));

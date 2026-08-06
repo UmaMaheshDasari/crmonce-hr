@@ -69,6 +69,11 @@ export const leaveApi = {
   // Approve/Reject from an email button (carries the signed link token).
   emailAction: (id, action, token, remarks) =>
     api.post(`/attendance/leave/${id}/email-action`, { action, token, remarks }),
+  // ── Leave Engine (balances, comp-off, adjustments) ──
+  balance: (params) => api.get('/attendance/leave/balance', { params }),
+  ledger: (params) => api.get('/attendance/leave/ledger', { params }),
+  compOff: (data) => api.post('/attendance/leave/compoff', data),
+  adjust: (data) => api.post('/attendance/leave/adjust', data),
 };
 
 // ── Holiday Calendar (HR-managed) ────────────────────────────────

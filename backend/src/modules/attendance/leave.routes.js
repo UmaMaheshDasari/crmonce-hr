@@ -9,9 +9,12 @@ const { verifyApprovalToken } = require('../../services/approval-token');
 const { resolveSender } = require('../../services/email/sender');
 const time = require('../../services/time.util');
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
+const leaveEngine = require('../../services/leave-engine.service');
+const { ensureLeaveLedgerTable } = require('../../services/provision-leave-ledger');
 
 const ENTITY = d365.constructor.entities.leave;
 const EMP_ENTITY = d365.constructor.entities.employee;
+const HR_ROLES = ['super_admin', 'hr_manager'];
 
 /**
  * Two-level leave approval flow:
@@ -591,6 +594,88 @@ router.get('/pending-approvals', async (req, res, next) => {
 
     res.json(labelsForList('hr_hrleaves', result));
   } catch (err) { next(err); }
+});
+
+// ════════════════════════════════════════════════════════════════════════
+//  LEAVE ENGINE — balances, comp-off, manual adjustments (Phase 3)
+//  Mounted under /api/attendance/leave. Additive — the existing apply/approve
+//  flow above is untouched.
+// ════════════════════════════════════════════════════════════════════════
+
+// GET /balance  — full leave-balance picture (dashboard). Self, or HR ?employeeId.
+router.get('/balance', async (req, res, next) => {
+  try {
+    const isHR = HR_ROLES.includes(req.user.role);
+    const employeeId = isHR ? (req.query.employeeId || req.user.id) : req.user.id;
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const balance = await leaveEngine.getBalance(employeeId, year);
+    res.json(balance);
+  } catch (err) { next(err); }
+});
+
+// GET /ledger  — comp-off + adjustment transactions. Self, or HR ?employeeId.
+router.get('/ledger', async (req, res, next) => {
+  try {
+    const isHR = HR_ROLES.includes(req.user.role);
+    const employeeId = isHR ? (req.query.employeeId || req.user.id) : req.user.id;
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const ledger = await leaveEngine.readLedger(employeeId, year);
+    res.json({ data: ledger, count: ledger.length });
+  } catch (err) { next(err); }
+});
+
+// Shared helper for the two write endpoints: resolve employee name + persist a
+// ledger entry (self-provisioning the table on first use).
+async function writeLedger(req, res, { kind, category, days, reason }) {
+  const employeeId = req.body.employeeId;
+  if (!employeeId || !/^[0-9a-fA-F-]{36}$/.test(String(employeeId))) {
+    return res.status(400).json({ error: 'A valid employee is required.' });
+  }
+  const n = Number(days);
+  if (!Number.isFinite(n) || n === 0) return res.status(400).json({ error: 'Days must be a non-zero number.' });
+
+  const effectiveDate = String(req.body.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const year = Number(effectiveDate.slice(0, 4)) || new Date().getFullYear();
+  let employeeName = '';
+  try { const emp = await d365.getById(EMP_ENTITY, employeeId, { select: 'hr_hremployee1' }); employeeName = emp?.hr_hremployee1 || ''; } catch {}
+
+  const doWrite = () => leaveEngine.addLedgerEntry({
+    employeeId, employeeName, year, kind, category, days: n,
+    effectiveDate, reason, createdBy: req.user?.name || req.user?.email || 'HR',
+  });
+  try {
+    await doWrite();
+  } catch (err) {
+    if (/Resource not found for the segment|does not exist|Could not find/i.test(err.message)) {
+      await ensureLeaveLedgerTable(global.logger || console).catch(() => {});
+      await doWrite();
+    } else { throw err; }
+  }
+  const balance = await leaveEngine.getBalance(employeeId, year);
+  res.status(201).json({ message: 'Saved', balance });
+}
+
+// POST /compoff  — grant ('earn') or consume ('use') comp-off (HR / Super Admin).
+router.post('/compoff', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const action = req.body.action === 'use' ? 'use' : 'earn';
+    const kind = action === 'use' ? 'comp_off_used' : 'comp_off_earned';
+    await writeLedger(req, res, { kind, category: 'compoff', days: Math.abs(Number(req.body.days)), reason: req.body.reason });
+  } catch (err) {
+    console.error('[leave/compoff] FAILED:', err.message);
+    res.status(err.status || 400).json({ error: err.message || 'Failed to save comp-off' });
+  }
+});
+
+// POST /adjust  — manual balance adjustment, signed days (HR / Super Admin).
+router.post('/adjust', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const category = ['casual', 'sick', 'compoff'].includes(req.body.category) ? req.body.category : 'casual';
+    await writeLedger(req, res, { kind: 'adjustment', category, days: Number(req.body.days), reason: req.body.reason });
+  } catch (err) {
+    console.error('[leave/adjust] FAILED:', err.message);
+    res.status(err.status || 400).json({ error: err.message || 'Failed to adjust balance' });
+  }
 });
 
 module.exports = router;
