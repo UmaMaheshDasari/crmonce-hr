@@ -164,6 +164,45 @@ async function buildReport(type, { year, month } = {}) {
     styleHeader(ws); autoWidth(ws);
   }
 
+  else if (type === 'payslip-register') {
+    const [rows, ids] = await Promise.all([fetchPayroll(year), empInfoMap()]);
+    const ws = await titledSheet(wb, 'Payslip Register', company);
+    ws.columns = [
+      { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 },
+      { header: 'Month', key: 'month', width: 8 }, { header: 'Year', key: 'year', width: 8 },
+      { header: 'Gross', key: 'gross', width: 12 }, { header: 'Deductions', key: 'ded', width: 12 },
+      { header: 'Net Pay', key: 'net', width: 12 }, { header: 'Status', key: 'status', width: 12 },
+    ];
+    const filtered = month ? rows.filter((r) => r.hr_month === month) : rows;
+    for (const r of filtered) ws.addRow({
+      eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
+      gross: r.hr_gross != null ? r.hr_gross : (r.hr_basic || 0) + (r.hr_allowances || 0),
+      ded: r.hr_deductions || 0, net: r.hr_netpay || 0, status: statusLabel(r.hr_status),
+    });
+    styleHeader(ws); autoWidth(ws);
+  }
+
+  else if (type === 'leave') {
+    const { toLabel } = require('./picklist');
+    const [{ data }, ids] = await Promise.all([
+      d365.getList(E.leave, { select: 'hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_status,_hr_hremployee_value', top: 5000 }),
+      empInfoMap(),
+    ]);
+    const ws = await titledSheet(wb, 'Leave Report', company);
+    ws.columns = [
+      { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 },
+      { header: 'Leave Type', key: 'type', width: 16 }, { header: 'From', key: 'from', width: 12 },
+      { header: 'To', key: 'to', width: 12 }, { header: 'Days', key: 'days', width: 8 }, { header: 'Status', key: 'status', width: 12 },
+    ];
+    const rows = (year ? (data || []).filter((l) => String(l.hr_fromdate || '').slice(0, 4) === String(year)) : (data || []));
+    for (const l of rows) ws.addRow({
+      eid: ids.get(l._hr_hremployee_value)?.id || '—', emp: l['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '—',
+      type: toLabel('hr_leave_type', l.hr_leavetype), from: String(l.hr_fromdate || '').slice(0, 10), to: String(l.hr_todate || '').slice(0, 10),
+      days: l.hr_days || 0, status: toLabel('hr_leave_status', l.hr_status),
+    });
+    styleHeader(ws); autoWidth(ws);
+  }
+
   else {
     throw Object.assign(new Error(`Unknown report type: ${type}`), { status: 400 });
   }

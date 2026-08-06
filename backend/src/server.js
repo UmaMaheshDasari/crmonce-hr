@@ -114,6 +114,7 @@ app.use('/api/dashboard',   authenticateToken, dashboardRoutes);
 app.use('/api/attendance-requests', authenticateToken, attendanceRequestRoutes);
 app.use('/api/holidays',    authenticateToken, holidayRoutes);
 app.use('/api/company',     authenticateToken, require('./modules/company/company.routes'));
+app.use('/api/import-export', authenticateToken, require('./modules/shared/import-export.routes'));
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));

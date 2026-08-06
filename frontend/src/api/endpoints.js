@@ -171,6 +171,15 @@ export const dashboardApi = {
   adminSummary: (params) => api.get('/dashboard/admin-summary', { params }), // HR / admin
 };
 
+// ── Import / Export Center ───────────────────────────────────────
+export const importExportApi = {
+  types: () => api.get('/import-export/types'),
+  template: (type) => api.get(`/import-export/template/${type}`, { responseType: 'blob' }),
+  preview: (type, formData) => api.post(`/import-export/import/${type}/preview`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  commit: (type, formData) => api.post(`/import-export/import/${type}/commit`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  export: (type, params) => api.get(`/import-export/export/${type}`, { params, responseType: 'blob' }),
+};
+
 // ── Company Settings ─────────────────────────────────────────────
 export const companyApi = {
   get: () => api.get('/company'),

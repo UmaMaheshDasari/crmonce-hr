@@ -9,7 +9,7 @@ import {
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
-  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon,
+  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
@@ -31,6 +31,7 @@ const NAV = [
   { to: '/performance', label: 'Performance',  icon: ChartBarIcon },
   { to: '/goals',       label: 'Goals',        icon: FlagIcon },
   { to: '/documents',   label: 'Documents',    icon: DocumentTextIcon },
+  { to: '/import-export', label: 'Import / Export', icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
   { to: '/company-settings', label: 'Company Settings', icon: BuildingOffice2Icon, roles: ['super_admin'] },
 ];
 
@@ -53,6 +54,7 @@ const LABEL_MAP = {
   '/performance': 'Performance',
   '/goals':       'Goals',
   '/documents':   'Documents',
+  '/import-export': 'Import / Export',
   '/company-settings': 'Company Settings',
 };
 
