@@ -38,6 +38,9 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   hr_paidleavesperyear: '18',
   hr_casualleaves: '12',
   hr_sickleaves: '6',
+  // ── Sick-leave medical certificate policy (configurable — never hardcoded) ──
+  hr_medcertrequired: 'true',     // require a certificate for longer sick leaves
+  hr_medcertafterdays: '1',       // mandatory when Sick Leave days > this (i.e. 2+ days)
   // ── Default salary components applied to a new employee's Salary Structure.
   //    JSON: [{ name, type: 'percent'|'fixed', value }]. percent = % of Basic. ──
   hr_defaultallowances: JSON.stringify([
@@ -106,6 +109,8 @@ function resolve(settings = null) {
       casual: num(g.hr_casualleaves, 12),
       sick: num(g.hr_sickleaves, 6),
     },
+    // Sick-leave medical-certificate policy.
+    medCert: { required: bool(g.hr_medcertrequired), afterDays: num(g.hr_medcertafterdays, 1) },
     defaultAllowances: parseJson(g.hr_defaultallowances, []),
     defaultDeductions: parseJson(g.hr_defaultdeductions, []),
   };

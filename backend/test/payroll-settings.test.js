@@ -74,3 +74,17 @@ test('resolve: already-parsed array/object passes through', () => {
 test('lopBasis override is preserved', () => {
   assert.strictEqual(svc.resolve({ hr_lopbasis: 'fixed_30' }).lopBasis, 'fixed_30');
 });
+
+test('medCert: defaults require a certificate after 1 day (2+ day sick leave)', () => {
+  const r = svc.resolve(null);
+  assert.strictEqual(r.medCert.required, true);
+  assert.strictEqual(r.medCert.afterDays, 1);
+});
+
+test('medCert: configurable — can be disabled and threshold raised', () => {
+  const off = svc.resolve({ hr_medcertrequired: 'false' });
+  assert.strictEqual(off.medCert.required, false);
+  const raised = svc.resolve({ hr_medcertrequired: 'true', hr_medcertafterdays: '3' });
+  assert.strictEqual(raised.medCert.required, true);
+  assert.strictEqual(raised.medCert.afterDays, 3);
+});

@@ -51,6 +51,14 @@ const SECTIONS = [
       { name: 'hr_sickleaves', label: 'Sick Leaves', type: 'number' },
     ],
   },
+  {
+    title: 'Sick Leave — Medical Certificate',
+    hint: 'Require a medical certificate (hospital report) when a Sick Leave exceeds the threshold. A certificate becomes mandatory when Sick Leave days is greater than the value below (e.g. 1 → mandatory for 2+ days).',
+    fields: [
+      { name: 'hr_medcertrequired', label: 'Medical Certificate Required for Sick Leave', toggle: true },
+      { name: 'hr_medcertafterdays', label: 'Medical Certificate Required After (days)', type: 'number', hint: 'Mandatory when Sick Leave days is more than this' },
+    ],
+  },
 ];
 
 // A friendly editor for a JSON list of { name, type: 'fixed'|'percent', value }.

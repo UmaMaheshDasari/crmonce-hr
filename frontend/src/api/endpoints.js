@@ -74,6 +74,8 @@ export const leaveApi = {
   ledger: (params) => api.get('/attendance/leave/ledger', { params }),
   compOff: (data) => api.post('/attendance/leave/compoff', data),
   adjust: (data) => api.post('/attendance/leave/adjust', data),
+  // Sick-leave Medical Certificate policy (configurable; not hardcoded in the UI).
+  medCertPolicy: () => api.get('/attendance/leave/medcert-policy'),
 };
 
 // ── Holiday Calendar (HR-managed) ────────────────────────────────
@@ -206,6 +208,7 @@ export const companyApi = {
 // ── Documents ────────────────────────────────────────────────────
 export const documentApi = {
   list: (params) => api.get('/documents', { params }),
+  get: (id) => api.get(`/documents/${id}`),
   pending: () => api.get('/documents/pending'),
   upload: (formData, onUploadProgress) => api.post('/documents/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress,

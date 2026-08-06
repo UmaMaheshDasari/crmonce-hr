@@ -4,6 +4,7 @@ import { leaveApi } from '../../api/endpoints';
 import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import Button from '../../components/Button';
 import LeaveBalance from './LeaveBalance';
+import { CertUploader, CertReview } from '../../components/MedicalCertificate';
 import { useAuth } from '../../context/AuthContext';
 import { format, differenceInCalendarDays } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -207,6 +208,21 @@ function LeaveActions({ leave, user, isHR }) {
     onError: () => toast.error('Action failed'),
   });
 
+  // Medical-Certificate approval gate (req 5): a Sick Leave beyond the threshold
+  // cannot be approved until a valid (not rejected/awaiting) certificate exists.
+  // Uses the status the leave list carries — no per-viewer document access needed.
+  const { data: certPolicy } = useQuery({
+    queryKey: ['medcert-policy'],
+    queryFn: () => leaveApi.medCertPolicy().then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+  const certDocId = leave.hr_medcertdocid;
+  const certStatus = leave.medCertStatus;   // pending | verified | rejected | reupload | null
+  const certNeeded = !!certPolicy?.required && leave.hr_leavetype === 'Sick Leave'
+    && (Number(leave.hr_days) || 0) > (Number(certPolicy?.afterDays) || 1);
+  const certValid = !!certDocId && !!certStatus && !['rejected', 'reupload'].includes(certStatus);
+  const blockApprove = certNeeded && !certValid;
+
   const handleConfirm = (remarks) => {
     const id = leave.hr_hrleaveid;
     switch (remarksAction?.type) {
@@ -250,7 +266,7 @@ function LeaveActions({ leave, user, isHR }) {
       <button
         key="l1-approve"
         onClick={() => setRemarksAction({ type: 'l1_approve' })}
-        disabled={isAnyLoading}
+        disabled={isAnyLoading || blockApprove}
         className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white text-emerald-700 border-2 border-emerald-200 rounded-xl text-xs font-semibold hover:bg-emerald-50 hover:border-emerald-300 active:scale-95 transition-all duration-150 disabled:opacity-50"
       >
         <CheckIcon className="w-3.5 h-3.5" /> Approve (L1)
@@ -274,7 +290,7 @@ function LeaveActions({ leave, user, isHR }) {
       <button
         key="l2-approve"
         onClick={() => setRemarksAction({ type: 'l2_approve' })}
-        disabled={isAnyLoading}
+        disabled={isAnyLoading || blockApprove}
         className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white text-blue-700 border-2 border-blue-200 rounded-xl text-xs font-semibold hover:bg-blue-50 hover:border-blue-300 active:scale-95 transition-all duration-150 disabled:opacity-50"
       >
         <CheckIcon className="w-3.5 h-3.5" /> Approve (L2)
@@ -298,7 +314,7 @@ function LeaveActions({ leave, user, isHR }) {
       <button
         key="hr-approve"
         onClick={() => setRemarksAction({ type: 'hr_approve' })}
-        disabled={isAnyLoading}
+        disabled={isAnyLoading || blockApprove}
         className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-50"
       >
         <CheckIcon className="w-3.5 h-3.5" /> Approve
@@ -334,8 +350,16 @@ function LeaveActions({ leave, user, isHR }) {
 
   return (
     <>
-      <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end pt-1">
-        {buttons}
+      <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+        <div className="flex gap-2 flex-wrap justify-end pt-1">
+          {buttons}
+        </div>
+        {blockApprove && (
+          <p className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 max-w-xs text-right">
+            <ExclamationTriangleIcon className="w-3.5 h-3.5 flex-shrink-0" />
+            Medical Certificate is required before approving this Sick Leave request.
+          </p>
+        )}
       </div>
       {remarksAction && (
         <RemarksDialog
@@ -358,6 +382,7 @@ function ApplyLeaveModal({ onClose }) {
   const [approverId, setApproverId] = useState('');
   const [cc, setCc] = useState([]);              // selected employee ids
   const [ccSearch, setCcSearch] = useState('');
+  const [certDoc, setCertDoc] = useState(null);  // uploaded Medical Certificate (shaped doc)
 
   // Approver options — active HR Managers / Super Admins (backend-filtered)
   const { data: approversData } = useQuery({
@@ -396,6 +421,7 @@ function ApplyLeaveModal({ onClose }) {
       hr_status: 'pending',
       approverId,
       cc,
+      medCertDocId: certDoc?.id || undefined,   // Sick-leave medical certificate (if uploaded)
     }),
     onSuccess: () => { toast.success('Leave applied!'); qc.invalidateQueries({ queryKey: ['leaves'] }); onClose(); },
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to apply leave'),
@@ -414,6 +440,17 @@ function ApplyLeaveModal({ onClose }) {
     (form.type === 'Casual Leave' && casualRem !== undefined && casualRem <= 0) ? 'You have exhausted your Casual Leave balance.'
     : (form.type === 'Sick Leave' && sickRem !== undefined && sickRem <= 0) ? 'You have exhausted your Sick Leave balance.'
     : '';
+
+  // Medical Certificate policy (configurable; never hardcoded) — a Sick Leave longer
+  // than the threshold requires a certificate before it can be submitted (req 1).
+  const { data: certPolicy } = useQuery({
+    queryKey: ['medcert-policy'],
+    queryFn: () => leaveApi.medCertPolicy().then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+  const certRequired = !!certPolicy?.required && form.type === 'Sick Leave' && days > (Number(certPolicy?.afterDays) || 1);
+  const certThreshold = Number(certPolicy?.threshold) || 2;
+  const certMissing = certRequired && !certDoc;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
@@ -518,6 +555,19 @@ function ApplyLeaveModal({ onClose }) {
             </div>
           )}
 
+          {/* Medical Certificate (mandatory for a Sick Leave beyond the threshold) */}
+          {certRequired && (
+            <div>
+              <CertUploader from={form.from} to={form.to} doc={certDoc} onChange={setCertDoc} required />
+              {certMissing && (
+                <div className="mt-2 flex items-center gap-2 text-xs font-medium text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                  <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" />
+                  Medical Certificate is mandatory for Sick Leave of {certThreshold} or more consecutive days.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Reason */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">Reason</label>
@@ -607,7 +657,7 @@ function ApplyLeaveModal({ onClose }) {
             fullWidth
             onClick={() => mutation.mutate()}
             loading={mutation.isPending}
-            disabled={!form.from || !form.to || !approverId || form.from < todayStr || !!exhausted}
+            disabled={!form.from || !form.to || !approverId || form.from < todayStr || !!exhausted || certMissing}
           >
             Submit Application
           </Button>
@@ -761,6 +811,16 @@ export default function LeavePage() {
 
                       {/* Approval Timeline Stepper */}
                       <ApprovalTimeline leave={leave} />
+
+                      {/* Medical Certificate (Sick Leave) — view/verify/re-upload */}
+                      {leave.hr_medcertdocid && (
+                        <CertReview
+                          docId={leave.hr_medcertdocid}
+                          status={leave.medCertStatus}
+                          isHR={isHR()}
+                          isOwner={user?.id && leave._hr_hremployee_value === user.id}
+                        />
+                      )}
                     </div>
 
                     {/* Approve / Reject actions */}

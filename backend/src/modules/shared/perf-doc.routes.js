@@ -27,6 +27,8 @@ const BLOCKED_EXT = new Set(['.exe', '.msi', '.dll', '.scr', '.com', '.bat', '.c
 const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
+let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
+const audit = (payload) => { try { activity?.record?.(payload); } catch (_) {} };
 
 // ── PERFORMANCE ───────────────────────────────────────────────────
 perfRouter.get('/', requirePermission('performance:read'), async (req, res, next) => {
@@ -146,6 +148,17 @@ docRouter.get('/pending', requireRole('super_admin', 'hr_manager'), async (req, 
   } catch (err) { next(err); }
 });
 
+// GET /:id  — single document metadata (owner or HR). Used by the Leave module to
+// show a linked Medical Certificate's current verification status/actions.
+docRouter.get('/:id', requirePermission('document:read'), async (req, res, next) => {
+  try {
+    const doc = await d365.getByIdOptional(DOC, req.params.id, { select: DOC_SELECT, optionalSelect: DOC_OPT });
+    if (!doc || !doc.hr_hrdocumentid) return res.status(404).json({ error: 'Document not found' });
+    if (!isHR(req.user) && doc._hr_hremployee_value !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+    res.json(shape(doc));
+  } catch (err) { next(err); }
+});
+
 // POST /upload  — upload a document (any type). Status → pending; HR notified.
 docRouter.post('/upload', requirePermission('document:write'), upload.single('file'), async (req, res, next) => {
   try {
@@ -169,6 +182,8 @@ docRouter.post('/upload', requirePermission('document:write'), upload.single('fi
     let empName = '';
     try { const e = await d365.getById(EMP, empId, { select: 'hr_hremployee1' }); empName = e.hr_hremployee1 || ''; } catch {}
     notifyHRDocument(empName, name || documentType || req.file.originalname);
+    audit({ category: 'document', type: 'uploaded', title: `${documentType || 'Document'} uploaded`,
+      name: name || documentType || req.file.originalname, meta: { documentType: documentType || 'Other', employeeId: empId, by: req.user.name || req.user.email } });
     res.status(201).json(shape({ ...doc, _hr_hremployee_value: empId }));
   } catch (err) { next(err); }
 });
@@ -220,6 +235,12 @@ docRouter.post('/:id/replace', requirePermission('document:write'), upload.singl
       hr_originalname: req.file.originalname, hr_contenttype: req.file.mimetype,
       hr_status: 'pending', hr_verifiedby: '', hr_verifiedon: '', hr_hrremarks: '',
     });
+    // Re-upload restarts verification — notify HR and record it for the audit trail.
+    let empName = '';
+    try { const e = await d365.getById(EMP, existing._hr_hremployee_value, { select: 'hr_hremployee1' }); empName = e.hr_hremployee1 || ''; } catch {}
+    notifyHRDocument(empName, req.file.originalname);
+    audit({ category: 'document', type: 're-uploaded', title: 'Document re-uploaded (pending verification)',
+      name: req.file.originalname, meta: { employeeId: existing._hr_hremployee_value, by: req.user.name || req.user.email } });
     res.json({ message: 'Document replaced — pending verification' });
   } catch (err) { next(err); }
 });
@@ -281,6 +302,8 @@ docRouter.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (
       } catch { /* best-effort */ }
     }
     if (doc._hr_hremployee_value) notifyUser(doc._hr_hremployee_value, 'document:verified', { status, docName: doc.hr_name, remarks: hrRemarks || '' });
+    audit({ category: 'document', type: status, title: `${doc.hr_documenttype || 'Document'} ${status === 'verified' ? 'verified' : status}`,
+      name: doc.hr_name, meta: { documentType: doc.hr_documenttype || '', employeeId: doc._hr_hremployee_value, by: req.user.name || req.user.email, remarks: hrRemarks || '' } });
     res.json({ message: `Document ${status}` });
   } catch (err) {
     console.error('[document/verify] FAILED:', err.message);

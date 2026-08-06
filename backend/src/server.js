@@ -176,6 +176,9 @@ server.listen(PORT, () => {
     require('./services/provision-leave-ledger')
       .ensureLeaveLedgerTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] leave ledger table skipped: ${err.message}`));
+    require('./services/provision-leave-columns')
+      .ensureLeaveColumns(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] leave columns skipped: ${err.message}`));
     require('./services/provision-advance')
       .ensureAdvanceTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] advance salary table skipped: ${err.message}`));

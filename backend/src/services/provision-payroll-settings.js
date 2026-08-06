@@ -44,6 +44,8 @@ const COLUMNS = [
   str('hr_PaidLeavesPerYear', 'Paid Leaves / Year', 10),
   str('hr_CasualLeaves', 'Casual Leaves', 10),
   str('hr_SickLeaves', 'Sick Leaves', 10),
+  str('hr_MedCertRequired', 'Medical Certificate Required for Sick Leave', 10),
+  str('hr_MedCertAfterDays', 'Medical Certificate Required After (days)', 10),
   memo('hr_DefaultAllowances', 'Default Allowances (JSON)'),
   memo('hr_DefaultDeductions', 'Default Deductions (JSON)'),
 ];

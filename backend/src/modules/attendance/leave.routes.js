@@ -11,10 +11,57 @@ const time = require('../../services/time.util');
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
 const leaveEngine = require('../../services/leave-engine.service');
 const { ensureLeaveLedgerTable } = require('../../services/provision-leave-ledger');
+const payrollSettings = require('../../services/payroll-settings.service');
+let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
+const audit = (payload) => { try { activity?.record?.(payload); } catch (_) {} };
 
 const ENTITY = d365.constructor.entities.leave;
 const EMP_ENTITY = d365.constructor.entities.employee;
+const DOC_ENTITY = d365.constructor.entities.document;
 const HR_ROLES = ['super_admin', 'hr_manager'];
+
+// ── Sick-leave Medical Certificate policy ────────────────────────────────────
+// Configurable (Payroll Settings → medCert.required / medCert.afterDays); never
+// hardcoded. A Sick Leave of MORE than `afterDays` consecutive days needs a
+// certificate. Returns { required, threshold, message } for the given request.
+async function medCertPolicy(typeLabel, days) {
+  const fallback = { required: false, threshold: 2, message: '' };
+  try {
+    const { medCert } = await payrollSettings.getResolved();
+    const afterDays = Number(medCert?.afterDays) || 1;
+    const threshold = afterDays + 1;          // e.g. afterDays=1 → 2+ days
+    const required = !!medCert?.required && String(typeLabel) === 'Sick Leave' && Number(days) > afterDays;
+    return {
+      required, threshold,
+      message: `Medical Certificate is mandatory for Sick Leave of ${threshold} or more consecutive days.`,
+    };
+  } catch (_) { return fallback; }
+}
+
+// Approval guard: block approving a Sick Leave that needs a certificate but has no
+// valid one (missing, rejected or awaiting re-upload). Throws a 400 the caller
+// surfaces. Never blocks on a lookup failure (best-effort).
+async function assertCertOkToApprove(leaveRecord) {
+  try {
+    const typeLabel = toLabel('hr_leave_type', leaveRecord.hr_leavetype);
+    const days = resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate);
+    const policy = await medCertPolicy(typeLabel, days);
+    if (!policy.required) return;
+    const docId = leaveRecord.hr_medcertdocid;
+    let ok = false;
+    if (docId) {
+      try {
+        const doc = await d365.getByIdOptional(DOC_ENTITY, docId, { select: 'hr_hrdocumentid', optionalSelect: 'hr_status' });
+        const st = doc?.hr_status || 'pending';
+        ok = !!doc?.hr_hrdocumentid && !['rejected', 'reupload'].includes(st);   // pending/verified are acceptable
+      } catch (_) { ok = false; }
+    }
+    if (!ok) {
+      const e = new Error('Medical Certificate is required before approving this Sick Leave request.');
+      e.status = 400; throw e;
+    }
+  } catch (e) { if (e.status) throw e; /* lookup failure — don't block */ }
+}
 
 /**
  * Two-level leave approval flow:
@@ -75,8 +122,9 @@ router.get('/', async (req, res, next) => {
 
     if (status) filters.push(`hr_status eq ${toValue('hr_leave_status', status)}`);
 
-    const result = await d365.getList(ENTITY, {
+    const result = await d365.getListOptional(ENTITY, {
       select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date',
+      optionalSelect: 'hr_medcertdocid',   // present once the leave column is provisioned
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
     });
@@ -103,6 +151,23 @@ router.get('/', async (req, res, next) => {
       data.data = data.data.filter(l => reporteeIds.has(l._hr_hremployee_value));
       data.count = data.data.length;
     }
+
+    // Attach the linked Medical Certificate's verification status so any viewer
+    // (incl. a reporting manager who cannot open the file) can see whether a valid
+    // certificate exists — the UI uses this to gate approval. Best-effort.
+    try {
+      const withCert = (data.data || []).filter(l => l.hr_medcertdocid);
+      if (withCert.length) {
+        const pairs = await Promise.all(withCert.map(async (l) => {
+          try {
+            const doc = await d365.getByIdOptional(DOC_ENTITY, l.hr_medcertdocid, { select: 'hr_hrdocumentid', optionalSelect: 'hr_status' });
+            return [l.hr_medcertdocid, doc?.hr_hrdocumentid ? (doc.hr_status || 'pending') : null];
+          } catch (_) { return [l.hr_medcertdocid, null]; }
+        }));
+        const statusById = Object.fromEntries(pairs);
+        for (const l of data.data) if (l.hr_medcertdocid) l.medCertStatus = statusById[l.hr_medcertdocid] || null;
+      }
+    } catch (_) { /* enrichment is best-effort */ }
 
     res.json(labelsForList('hr_hrleaves', data));
   } catch (err) { next(err); }
@@ -182,8 +247,9 @@ router.get('/cc-candidates', async (req, res, next) => {
 //   enforcePending=true  → refuse if the request is already finalised
 //                          (prevents duplicate approvals / replay via email links).
 async function applyHrOverride(user, id, status, remarks, { enforcePending = false } = {}) {
-  const current = await d365.getById(ENTITY, id, {
-    select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate,hr_ccrecipients,hr_leavetype',
+  const current = await d365.getByIdOptional(ENTITY, id, {
+    select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
+    optionalSelect: 'hr_medcertdocid',
   });
 
   if (enforcePending) {
@@ -194,6 +260,10 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
       throw e;
     }
   }
+
+  // Medical-Certificate guard (req 5): never approve a Sick Leave that needs a
+  // valid certificate but has none. Rejections are always allowed.
+  if (status === 'approved') await assertCertOkToApprove(current);
 
   const now = new Date().toISOString().split('T')[0];
   const leave = await d365.update(ENTITY, id, {
@@ -231,7 +301,7 @@ router.post('/', async (req, res, next) => {
   try {
     // approverId (required) + cc (optional) are business inputs, not D365 columns
     // that should be blindly written — pull them out and resolve them server-side.
-    const { approverId, cc, ...rest } = req.body;
+    const { approverId, cc, medCertDocId, ...rest } = req.body;
     const body = { ...rest };
 
     // Dynamic sender = the applicant's own company mailbox. Validate it up front
@@ -268,6 +338,27 @@ router.post('/', async (req, res, next) => {
           return res.status(400).json({ error: `You have exhausted your ${typeLabel} balance.` });
         }
       } catch (_) { /* engine unavailable — don't block */ }
+    }
+
+    // Medical Certificate gate (req 1) — mandatory for a Sick Leave longer than the
+    // configured threshold. Enforced on the backend regardless of the UI. The cert
+    // is a normal document (hr_hrdocuments) uploaded first; we store its id here.
+    const leaveDays = resolveDays(body.hr_days, fromDate, toDate);
+    const certPolicy = await medCertPolicy(typeLabel, leaveDays);
+    if (certPolicy.required && !medCertDocId) {
+      return res.status(400).json({ error: certPolicy.message });
+    }
+    if (medCertDocId) {
+      // Validate the referenced document belongs to the applicant (never trust the client).
+      try {
+        const cd = await d365.getByIdOptional(DOC_ENTITY, medCertDocId, { select: 'hr_hrdocumentid,_hr_hremployee_value' });
+        if (cd?.hr_hrdocumentid && cd._hr_hremployee_value === req.user.id) {
+          body.hr_medcertdocid = medCertDocId;
+        }
+      } catch (_) { /* invalid id — ignore, cert simply not linked */ }
+      if (certPolicy.required && !body.hr_medcertdocid) {
+        return res.status(400).json({ error: certPolicy.message });
+      }
     }
 
     if (body.hr_leavetype) body.hr_leavetype = toValue('hr_leave_type', body.hr_leavetype);
@@ -324,7 +415,27 @@ router.post('/', async (req, res, next) => {
     body.hr_approvername = approver.hr_hremployee1;
     body.hr_ccrecipients = JSON.stringify(ccRecipients);
 
-    const leave = await d365.create(ENTITY, body);
+    // Resilient create — strip hr_medcertdocid and retry if the column is not yet
+    // provisioned, so leave apply never breaks on a missing certificate column.
+    let leave;
+    {
+      let payload = { ...body };
+      for (let i = 0; i < 4; i++) {
+        try { leave = await d365.create(ENTITY, payload); break; }
+        catch (err) {
+          if (d365._isMissingProperty?.(err)) {
+            const prop = d365._missingPropertyName?.(err);
+            if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) { delete payload[prop]; continue; }
+          }
+          throw err;
+        }
+      }
+    }
+
+    if (body.hr_medcertdocid) {
+      audit({ category: 'Leave', type: 'medcert_uploaded', title: 'Medical Certificate attached to Sick Leave',
+        name: req.user.name, meta: { leaveId: leave.hr_hrleaveid, employeeId: req.user.id, docId: body.hr_medcertdocid, days: leaveDays } });
+    }
 
     // Immediate acknowledgement to the employee (best-effort, non-blocking).
     requestNotify.emailApplyAcknowledgement({
@@ -377,8 +488,9 @@ router.post('/', async (req, res, next) => {
 router.patch('/:id/l1', async (req, res, next) => {
   try {
     const { action, remarks } = req.body; // action: 'approved' or 'rejected'
-    const leaveRecord = await d365.getById(ENTITY, req.params.id, {
-      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_ccrecipients,hr_leavetype',
+    const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
+      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
+      optionalSelect: 'hr_medcertdocid',
     });
 
     // Verify this user is the L1 manager of the leave employee
@@ -415,7 +527,8 @@ router.patch('/:id/l1', async (req, res, next) => {
           level: 'L2',
         });
       } else {
-        // No L2 manager → final approval
+        // No L2 manager → final approval. Enforce the Medical-Certificate guard.
+        await assertCertOkToApprove(leaveRecord);
         updatePayload.hr_status = toValue('hr_leave_status', 'approved');
         updatePayload.hr_l2status = 'not_required';
         updatePayload.hr_remarks = `Approved by ${req.user.name} (Manager)`;
@@ -446,15 +559,19 @@ router.patch('/:id/l1', async (req, res, next) => {
 
     broadcast('leave:updated', { leaveId: req.params.id, action, level: 'L1' });
     res.json(labelsForEntity('hr_hrleaves', leave));
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 // PATCH /api/attendance/leave/:id/l2 — L2 (Manager's Manager) approval
 router.patch('/:id/l2', async (req, res, next) => {
   try {
     const { action, remarks } = req.body;
-    const leaveRecord = await d365.getById(ENTITY, req.params.id, {
-      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_ccrecipients,hr_leavetype',
+    const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
+      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
+      optionalSelect: 'hr_medcertdocid',
     });
 
     if (leaveRecord.hr_l1status !== 'approved') {
@@ -480,6 +597,7 @@ router.patch('/:id/l2', async (req, res, next) => {
     };
 
     if (action === 'approved') {
+      await assertCertOkToApprove(leaveRecord);   // Medical-Certificate guard (final approval)
       updatePayload.hr_status = toValue('hr_leave_status', 'approved');
       updatePayload.hr_remarks = `Approved by ${req.user.name} (L2 Manager)`;
     } else {
@@ -509,7 +627,10 @@ router.patch('/:id/l2', async (req, res, next) => {
 
     broadcast('leave:updated', { leaveId: req.params.id, action, level: 'L2' });
     res.json(labelsForEntity('hr_hrleaves', leave));
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 // PATCH /api/attendance/leave/:id — Single-step approval (HR / Super-Admin override, from the UI)
@@ -616,6 +737,18 @@ router.get('/pending-approvals', async (req, res, next) => {
 //  Mounted under /api/attendance/leave. Additive — the existing apply/approve
 //  flow above is untouched.
 // ════════════════════════════════════════════════════════════════════════
+
+// GET /medcert-policy — the current Sick-Leave certificate policy (so the Apply UI
+// knows the threshold without hardcoding it). Configurable in Payroll Settings.
+router.get('/medcert-policy', async (req, res, next) => {
+  try {
+    const { medCert } = await payrollSettings.getResolved();
+    const afterDays = Number(medCert?.afterDays) || 1;
+    res.json({ required: !!medCert?.required, afterDays, threshold: afterDays + 1 });
+  } catch (_) {
+    res.json({ required: false, afterDays: 1, threshold: 2 });
+  }
+});
 
 // GET /balance  — full leave-balance picture (dashboard). Self, or HR ?employeeId.
 router.get('/balance', async (req, res, next) => {
