@@ -209,4 +209,6 @@ export const documentApi = {
   }),
   verify: (id, data) => api.patch(`/documents/${id}/verify`, data),
   delete: (id) => api.delete(`/documents/${id}`),
+  // Stream the actual file (authenticated). download=true → attachment.
+  file: (id, download) => api.get(`/documents/${id}/file`, { params: download ? { download: 1 } : {}, responseType: 'blob' }),
 };

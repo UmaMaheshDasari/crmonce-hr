@@ -226,6 +226,19 @@ export default function DocumentsPage() {
     onError: () => toast.error('Delete failed'),
   });
 
+  // Download any file type via the authenticated API (correct Content-Type +
+  // original filename; not the old public /uploads link that broke non-PDFs).
+  const downloadDoc = async (doc) => {
+    const id = doc.id || doc.hr_hrdocumentid;
+    const fname = doc.originalName || doc.hr_originalname || doc.name || doc.hr_name || 'document';
+    try {
+      const res = await documentApi.file(id, true);
+      const url = URL.createObjectURL(new Blob([res.data], { type: doc.contentType || doc.hr_contenttype || 'application/octet-stream' }));
+      const a = document.createElement('a'); a.href = url; a.download = fname; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch { toast.error('Download failed — the file may be missing on the server.'); }
+  };
+
   const docs = data?.data?.data || [];
 
   return (
@@ -311,10 +324,10 @@ export default function DocumentsPage() {
 
                 {/* Actions */}
                 <div className="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                  <a href={doc.hr_fileurl} target="_blank" rel="noreferrer" title="Download"
+                  <button onClick={() => downloadDoc(doc)} title="Download"
                     className="p-2 text-indigo-500 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all">
                     <ArrowDownTrayIcon className="w-4 h-4" />
-                  </a>
+                  </button>
                   {isHR() && (
                     <button title="Delete" onClick={() => {
                       if (confirm('Delete this document?')) deleteMutation.mutate(doc.hr_hrdocumentid);

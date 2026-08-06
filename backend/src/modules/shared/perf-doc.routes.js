@@ -3,7 +3,26 @@ const perfRouter = express.Router();
 const docRouter = express.Router();
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+
+// Content-Type by extension — used to serve/label EVERY file type correctly
+// (never hardcoded to application/pdf). The stored mime type wins; this is the
+// fallback for older records or a missing/generic browser mime.
+const MIME_BY_EXT = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml', '.tiff': 'image/tiff',
+  '.txt': 'text/plain', '.csv': 'text/csv', '.html': 'text/html', '.htm': 'text/html', '.json': 'application/json', '.xml': 'application/xml', '.md': 'text/markdown',
+  '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.odt': 'application/vnd.oasis.opendocument.text', '.ods': 'application/vnd.oasis.opendocument.spreadsheet', '.odp': 'application/vnd.oasis.opendocument.presentation',
+  '.zip': 'application/zip', '.rar': 'application/vnd.rar', '.7z': 'application/x-7z-compressed', '.gz': 'application/gzip',
+};
+const mimeFromName = (name) => MIME_BY_EXT[path.extname(name || '').toLowerCase()] || 'application/octet-stream';
+// Executable / script types are refused for safety; every other document type is
+// accepted (the earlier .pdf/.doc/.docx/.jpg-only filter was blocking most types).
+const BLOCKED_EXT = new Set(['.exe', '.msi', '.dll', '.scr', '.com', '.bat', '.cmd', '.sh', '.php', '.php5', '.phtml', '.cgi', '.pl', '.py', '.rb', '.js', '.jar', '.vbs', '.ps1']);
 const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
@@ -57,9 +76,9 @@ const upload = multer({
   storage,
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760') },
   fileFilter: (req, file, cb) => {
-    const allowed = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png'];
-    if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
-    else cb(new Error('File type not allowed'));
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (BLOCKED_EXT.has(ext)) return cb(new Error(`For security, ${ext || 'this'} files are not allowed.`));
+    cb(null, true);   // accept all document/image/archive/text types
   },
 });
 
@@ -151,6 +170,41 @@ docRouter.post('/upload', requirePermission('document:write'), upload.single('fi
     notifyHRDocument(empName, name || documentType || req.file.originalname);
     res.status(201).json(shape({ ...doc, _hr_hremployee_value: empId }));
   } catch (err) { next(err); }
+});
+
+// GET /:id/file  — stream the actual file for View/Download. Serves EVERY type
+// with the correct Content-Type (from the stored mime, else by extension — never
+// hardcoded), Content-Length and Content-Disposition (inline for view, attachment
+// for download) preserving the ORIGINAL filename. Auth + owner/HR scoped, so it
+// does not depend on public static/nginx serving of /uploads.
+docRouter.get('/:id/file', requirePermission('document:read'), async (req, res, next) => {
+  try {
+    const doc = await d365.getByIdOptional(DOC, req.params.id, {
+      select: 'hr_fileurl,hr_name,_hr_hremployee_value', optionalSelect: 'hr_contenttype,hr_originalname,hr_filesize',
+    });
+    if (!isHR(req.user) && doc._hr_hremployee_value !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+    const filename = path.basename(doc.hr_fileurl || '');   // strips /uploads/ + any traversal
+    if (!filename) return res.status(404).json({ error: 'No file is associated with this document.' });
+    const dir = path.resolve(process.env.UPLOAD_DIR || './uploads');
+    const filePath = path.join(dir, filename);
+    if (filePath !== dir && !filePath.startsWith(dir + path.sep)) return res.status(400).json({ error: 'Invalid file path.' });
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on the server — it may have been removed.' });
+
+    const stat = fs.statSync(filePath);
+    const original = doc.hr_originalname || filename;
+    const contentType = doc.hr_contenttype || mimeFromName(original);   // stored mime wins; never assume PDF
+    const disposition = (req.query.download === '1' || req.query.download === 'true') ? 'attachment' : 'inline';
+    const safeName = original.replace(/[\r\n"]/g, '');
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(original)}`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+    fs.createReadStream(filePath)
+      .on('error', () => { if (!res.headersSent) res.status(500).json({ error: 'Failed to read the file.' }); })
+      .pipe(res);
+  } catch (err) { res.status(err.status || 404).json({ error: err.message || 'Document not found.' }); }
 });
 
 // POST /:id/replace  — replace the file (owner or HR; only while NOT verified). Resets to pending.
@@ -246,4 +300,4 @@ docRouter.delete('/:id', requirePermission('document:read'), async (req, res, ne
   } catch (err) { next(err); }
 });
 
-module.exports = { perfRouter, docRouter };
+module.exports = { perfRouter, docRouter, _mimeFromName: mimeFromName, _BLOCKED_EXT: BLOCKED_EXT, _MIME_BY_EXT: MIME_BY_EXT };

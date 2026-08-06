@@ -14,8 +14,68 @@ export const DOC_TYPES = [
   'Salary Slip', 'Address Proof', 'Medical Certificate', 'Other',
 ];
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
-const fileUrl = (u) => (u ? (u.startsWith('http') ? u : API_BASE + u) : '');
+// Classify a document by its original filename / stored mime → how to VIEW it.
+const extOf = (n) => (String(n || '').toLowerCase().match(/\.[a-z0-9]+$/) || [''])[0];
+function kindOf(d) {
+  const e = extOf(d.originalName || d.name); const ct = String(d.contentType || '');
+  if (e === '.pdf' || ct === 'application/pdf') return 'pdf';
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'].includes(e) || ct.startsWith('image/')) return 'image';
+  if (e === '.txt' || e === '.md' || ct === 'text/plain') return 'text';
+  if (e === '.csv' || ct === 'text/csv') return 'csv';
+  return 'other';   // docx/xlsx/pptx/zip/rar/… → download (Office Online Viewer needs a public URL; ours are auth-protected)
+}
+// Minimal CSV parser (handles quoted fields + commas), for the table preview.
+function parseCsv(text) {
+  const rows = []; let row = [], field = '', inQ = false;
+  const s = String(text || '');
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQ) {
+      if (c === '"' && s[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') inQ = false;
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== '')).slice(0, 500);
+}
+
+// In-app preview modal for PDF / image / text / csv (uses the authenticated blob,
+// so no popup and no dependency on public file serving).
+function PreviewModal({ item, onClose }) {
+  const { d, kind, url, text, rows } = item;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-4" onClick={onClose}>
+      <div className="bg-white w-full h-full sm:h-[85vh] sm:max-w-4xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-900 truncate">{d.originalName || d.name}</p>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
+        </div>
+        <div className="flex-1 overflow-auto bg-gray-50">
+          {kind === 'pdf' && <iframe title={d.name} src={url} className="w-full h-full min-h-[70vh]" />}
+          {kind === 'image' && <div className="w-full h-full flex items-center justify-center p-4"><img src={url} alt={d.name} className="max-w-full max-h-full object-contain" /></div>}
+          {kind === 'text' && <pre className="p-4 text-xs text-gray-800 whitespace-pre-wrap break-words font-mono">{text}</pre>}
+          {kind === 'csv' && (
+            <div className="p-3 overflow-auto">
+              <table className="w-full text-xs border-collapse">
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i} className={i === 0 ? 'bg-gray-100 font-semibold' : 'odd:bg-white even:bg-gray-50'}>
+                      {r.map((c, j) => <td key={j} className="border border-gray-200 px-2 py-1 whitespace-nowrap">{c}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const STATUS = {
   pending: { label: 'Pending HR Verification', cls: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
@@ -104,7 +164,7 @@ function UploadModal({ employeeId, mode, doc, onClose }) {
             <ArrowUpTrayIcon className="w-7 h-7 text-gray-300 mx-auto mb-2" />
             {file ? <p className="text-sm font-medium text-gray-800">{file.name}</p> : <p className="text-sm text-gray-500">Drag & drop a file here, or <span className="text-blue-600 font-medium">browse</span></p>}
             <p className="text-xs text-gray-400 mt-1">PDF, JPG or PNG · up to 10 MB</p>
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={e => pick(e.target.files?.[0])} />
+            <input ref={inputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.txt,.csv,.html,.htm,.zip,.rar,.7z,.odt,.ods,.odp" className="hidden" onChange={e => pick(e.target.files?.[0])} />
           </div>
           {mutation.isPending && <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-600 transition-all duration-200" style={{ width: `${progress}%` }} /></div>}
         </div>
@@ -123,6 +183,7 @@ export default function DocumentsManager({ employeeId, canManage = false, hrView
   const qc = useQueryClient();
   const [modal, setModal] = useState(null);   // { mode, doc }
   const [expanded, setExpanded] = useState({});
+  const [preview, setPreview] = useState(null);   // { d, kind, url|text|rows }
 
   const { data, isLoading } = useQuery({ queryKey: ['documents', employeeId], queryFn: () => documentApi.list({ employeeId }), enabled: !!employeeId });
   const groups = toGroups(data?.data?.data || []);
@@ -137,11 +198,33 @@ export default function DocumentsManager({ employeeId, canManage = false, hrView
     onSuccess: () => { toast.success('Document updated'); qc.invalidateQueries({ queryKey: ['documents', employeeId] }); qc.invalidateQueries({ queryKey: ['pending-documents'] }); },
     onError: (err) => toast.error(err.response?.data?.error || 'Action failed'),
   });
-  const download = (d) => { const a = document.createElement('a'); a.href = fileUrl(d.fileUrl); a.download = d.originalName || d.name; a.target = '_blank'; a.click(); };
+  // Download ANY type via the authenticated API (keeps the original filename +
+  // extension; Content-Type comes from the server). Works for every file type.
+  const download = async (d) => {
+    try {
+      const res = await documentApi.file(d.id, true);
+      const url = URL.createObjectURL(new Blob([res.data], { type: d.contentType || 'application/octet-stream' }));
+      const a = document.createElement('a'); a.href = url; a.download = d.originalName || d.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch { toast.error('Download failed — the file may be missing on the server.'); }
+  };
+  // View: preview PDF/image/text/CSV in-app; everything else downloads.
+  const view = async (d) => {
+    const kind = kindOf(d);
+    if (kind === 'other') return download(d);
+    try {
+      const res = await documentApi.file(d.id, false);
+      const blob = new Blob([res.data], { type: d.contentType || 'application/octet-stream' });
+      if (kind === 'pdf' || kind === 'image') setPreview({ d, kind, url: URL.createObjectURL(blob) });
+      else if (kind === 'text') setPreview({ d, kind, text: await blob.text() });
+      else if (kind === 'csv') setPreview({ d, kind, rows: parseCsv(await blob.text()) });
+    } catch { toast.error('Preview failed — the file may be missing on the server.'); }
+  };
+  const closePreview = () => { if (preview?.url) URL.revokeObjectURL(preview.url); setPreview(null); };
 
   const iconBtns = (d, { compact } = {}) => (
     <>
-      <a href={fileUrl(d.fileUrl)} target="_blank" rel="noreferrer" title="Preview" className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><EyeIcon className="w-4 h-4" /></a>
+      <button onClick={() => view(d)} title="View" className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><EyeIcon className="w-4 h-4" /></button>
       <button onClick={() => download(d)} title="Download" className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><ArrowDownTrayIcon className="w-4 h-4" /></button>
       {!compact && hrView && (d.status === 'pending' || d.status === 'reupload') && (
         <>
@@ -243,6 +326,7 @@ export default function DocumentsManager({ employeeId, canManage = false, hrView
       )}
 
       {modal && <UploadModal employeeId={employeeId} mode={modal.mode} doc={modal.doc} onClose={() => setModal(null)} />}
+      {preview && <PreviewModal item={preview} onClose={closePreview} />}
     </div>
   );
 }
