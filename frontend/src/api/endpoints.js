@@ -94,6 +94,8 @@ export const payrollApi = {
   unlock: (id) => api.patch(`/payroll/${id}/unlock`),
   lockMonth: (data) => api.post('/payroll/lock-month', data),
   downloadPayslip: (id) => api.get(`/payroll/${id}/payslip`, { responseType: 'blob' }),
+  payslipData: (id) => api.get(`/payroll/${id}/payslip-data`),
+  emailPayslip: (id) => api.post(`/payroll/${id}/email`),
   report: (type, params) => api.get(`/payroll/reports/${type}`, { params, responseType: 'blob' }),
 };
 

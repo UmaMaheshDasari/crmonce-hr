@@ -10,7 +10,7 @@ process.env.AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || 'test-tenant';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { computePayroll } = require('../src/services/payroll.calc');
-const { buildPayslipPdf, numberToWords } = require('../src/services/payslip.service');
+const { buildPayslipPdf, numberToWords, payslipModel, computeFigures } = require('../src/services/payslip.service');
 
 test('computePayroll: full attendance → gross = basic+allowances, net = gross - deductions', () => {
   const c = computePayroll({ basic: 6000, allowances: 2000, fixedDeductions: 500, salaryWorkingDays: 26, lopDays: 0, overtimeHours: 0 });
@@ -111,4 +111,30 @@ test('payslip: website normalised to https://hr.crmonce.com; email labelled', as
 test('payslip: a genuinely different website in settings is preserved', async () => {
   const t = await renderText({ payroll: { hr_month: 8, hr_year: 2026, hr_basic: 1000, hr_allowances: 0, hr_deductions: 0, hr_gross: 1000, hr_netpay: 1000, hr_lop: 0 }, employee: EMP, company: { ...COMP, hr_website: 'https://portal.example.com' } });
   assert.ok(t.some(x => x.includes('https://portal.example.com')), 'non-crmonce URL passes through unchanged');
+});
+
+test('payslipModel: structured data matches the PDF core (itemised, normalised website, masked bank)', async () => {
+  const model = await payslipModel({
+    payroll: { hr_month: 8, hr_year: 2026, hr_basic: 40000, hr_hra: 16000, hr_special: 4000, hr_medical: 1250, hr_conveyance: 1600, hr_allowances: 2150, hr_gross: 65000, hr_pf: 1800, hr_professionaltax: 200, hr_lop: 0, hr_advance: 5000, hr_deductions: 500, hr_netpay: 57500 },
+    employee: { hr_hremployee1: 'Jaya Tharuja', hr_employeeid: 'EMP1039', hr_department: 'IT', hr_designation: 'Consultant', hr_pan: 'ABCDE1234F', hr_accountnumber: '123456789012', hr_uan: '100200300400' },
+    company: { hr_name: 'CRMONCE (OPC) PRIVATE LIMITED', hr_gstin: '37AAICC8445J1Z7', hr_cin: 'U72', hr_addressline: 'Nellore, AP', hr_email: 'info@crmonce.com', hr_website: 'crmonce.com' },
+  });
+  assert.strictEqual(model.company.website, 'https://hr.crmonce.com');   // legacy bare domain normalised
+  assert.strictEqual(model.employee.employeeId, 'EMP1039');
+  assert.strictEqual(model.employee.bankAccount, 'XXXX9012');           // masked
+  assert.strictEqual(model.gross, 65000);
+  assert.strictEqual(model.totalDeductions, 7500);
+  assert.strictEqual(model.net, 57500);                                 // 65000 - 7500
+  assert.strictEqual(model.earnings.length, 6);
+  assert.strictEqual(model.deductions.length, 6);
+  assert.ok(model.earnings.find(e => /HRA/.test(e.label)).amount === 16000);
+  assert.ok(model.deductions.find(d => /Advance/.test(d.label)).amount === 5000);
+  assert.match(model.netInWords, /Fifty Seven Thousand Five Hundred/);
+});
+
+test('computeFigures: PDF and model share one numeric core (Net = Gross − all deductions)', () => {
+  const f = computeFigures({ hr_basic: 30000, hr_hra: 12000, hr_pf: 1800, hr_professionaltax: 200, hr_advance: 2000, hr_deductions: 0, hr_lop: 1000 });
+  assert.strictEqual(f.gross, 42000);
+  assert.strictEqual(f.deductions, 1800 + 200 + 2000 + 1000);
+  assert.strictEqual(f.net, f.gross - f.deductions);
 });

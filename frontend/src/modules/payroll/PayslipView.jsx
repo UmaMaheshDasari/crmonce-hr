@@ -1,0 +1,151 @@
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { payrollApi } from '../../api/endpoints';
+import { XMarkIcon, ArrowDownTrayIcon, EnvelopeIcon, LockClosedIcon } from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// A responsive, corporate-style payslip. Renders the SAME numbers as the PDF
+// (backend payslipModel) and offers PDF download + email.
+export default function PayslipView({ record, onClose }) {
+  const id = record.hr_hrpayrollid;
+  const { data, isLoading, isError } = useQuery({ queryKey: ['payslip-data', id], queryFn: () => payrollApi.payslipData(id) });
+  const m = data?.data;
+
+  const downloadBlob = (blob, filename) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    window.URL.revokeObjectURL(url);
+  };
+  const download = async () => {
+    try {
+      const res = await payrollApi.downloadPayslip(id);
+      const name = `Payslip_${(m?.employee?.name || 'Employee').replace(/\s+/g, '_')}_${MONTHS[(record.hr_month || 1) - 1]}_${record.hr_year}.pdf`;
+      downloadBlob(new Blob([res.data], { type: 'application/pdf' }), name);
+      toast.success('Payslip downloaded');
+    } catch { toast.error('Failed to download payslip'); }
+  };
+  const emailMut = useMutation({
+    mutationFn: () => payrollApi.emailPayslip(id),
+    onSuccess: (res) => toast.success(res.data?.message || 'Payslip emailed'),
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to email payslip'),
+  });
+
+  const Row = ({ label, value, muted }) => (
+    <div className="flex items-baseline justify-between gap-3 py-1">
+      <span className="text-xs sm:text-[13px] text-gray-500">{label}</span>
+      <span className={`text-xs sm:text-[13px] font-semibold tabular-nums ${muted ? 'text-gray-400' : 'text-gray-900'}`}>{value}</span>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto p-0 sm:p-4">
+      <div className="bg-gray-100 w-full sm:max-w-3xl sm:rounded-2xl shadow-2xl my-0 sm:my-6 overflow-hidden">
+        {/* Action bar */}
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 bg-white border-b border-gray-100 sticky top-0 z-10">
+          <h2 className="text-sm font-bold text-gray-900">Payslip</h2>
+          <div className="flex items-center gap-2">
+            <button onClick={() => emailMut.mutate()} disabled={emailMut.isPending || isLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 disabled:opacity-50">
+              <EnvelopeIcon className="w-4 h-4" /> <span className="hidden sm:inline">{emailMut.isPending ? 'Sending…' : 'Email'}</span>
+            </button>
+            <button onClick={download} disabled={isLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+              <ArrowDownTrayIcon className="w-4 h-4" /> <span className="hidden sm:inline">Download PDF</span>
+            </button>
+            <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
+          </div>
+        </div>
+
+        {/* Payslip paper */}
+        <div className="p-3 sm:p-6">
+          {isLoading ? (
+            <div className="bg-white rounded-xl p-16 text-center text-gray-400">Loading payslip…</div>
+          ) : isError || !m ? (
+            <div className="bg-white rounded-xl p-16 text-center text-gray-400">Could not load this payslip.</div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {/* Header */}
+              <div className="px-4 sm:px-8 pt-6 pb-4 text-center border-b-2 border-indigo-600 relative">
+                {m.company.logoUrl && <img src={m.company.logoUrl} alt="" className="absolute left-4 sm:left-8 top-6 w-12 h-12 sm:w-14 sm:h-14 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
+                <h1 className="text-lg sm:text-2xl font-bold text-indigo-700 tracking-tight">{m.company.name}</h1>
+                <p className="text-[11px] sm:text-xs font-semibold text-gray-700 mt-1">GSTIN: {m.company.gstin || '—'}&nbsp;&nbsp;&nbsp;CIN: {m.company.cin || '—'}</p>
+                <p className="text-[10px] sm:text-[11px] text-gray-500 mt-1">{m.company.addressLines.join(', ')}</p>
+                <p className="text-[10px] sm:text-[11px] text-gray-500 mt-0.5">Email: {m.company.email}&nbsp;&nbsp;|&nbsp;&nbsp;Website: <a href={m.company.website} className="text-indigo-600" target="_blank" rel="noreferrer">{m.company.website}</a></p>
+              </div>
+
+              {/* Title */}
+              <div className="px-4 sm:px-8 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border-b border-gray-100">
+                <h2 className="text-sm sm:text-base font-bold text-indigo-700 flex items-center gap-2">Salary Slip for {m.meta.monthYear} {m.meta.locked && <LockClosedIcon className="w-4 h-4 text-gray-400" title="Locked" />}</h2>
+                <div className="text-[10px] sm:text-xs text-gray-400 sm:text-right">
+                  <p>Payroll No: {m.meta.payrollNo}</p>
+                  <p>Generated: {m.meta.generatedOn}</p>
+                </div>
+              </div>
+
+              {/* Employee details */}
+              <div className="px-4 sm:px-8 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 mb-2">Employee Details</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
+                  <div>
+                    <Row label="Employee ID" value={m.employee.employeeId} />
+                    <Row label="Employee Name" value={m.employee.name} />
+                    <Row label="Department" value={m.employee.department} />
+                    <Row label="Designation" value={m.employee.designation} />
+                    <Row label="Reporting Manager" value={m.employee.manager} />
+                  </div>
+                  <div>
+                    <Row label="Joining Date" value={m.employee.joiningDate} />
+                    <Row label="PAN" value={m.employee.pan} />
+                    <Row label="Bank Account" value={m.employee.bankAccount} />
+                    <Row label="PF Number" value={m.employee.pfNumber} />
+                    <Row label="UAN" value={m.employee.uan} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Earnings + Deductions */}
+              <div className="px-4 sm:px-8 pb-2 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                <div>
+                  <div className="bg-indigo-50/60 rounded-t-lg px-3 py-2"><p className="text-[11px] font-bold uppercase tracking-wider text-indigo-700">Earnings</p></div>
+                  <div className="border border-gray-100 rounded-b-lg px-3 py-1">
+                    {m.earnings.map((e) => <Row key={e.label} label={e.label} value={e.display} muted={!e.amount} />)}
+                    <div className="flex items-center justify-between border-t border-gray-200 mt-1 py-2"><span className="text-xs font-bold text-gray-700">Gross Salary</span><span className="text-sm font-bold text-indigo-700 tabular-nums">{m.grossDisplay}</span></div>
+                  </div>
+                </div>
+                <div>
+                  <div className="bg-indigo-50/60 rounded-t-lg px-3 py-2"><p className="text-[11px] font-bold uppercase tracking-wider text-indigo-700">Deductions</p></div>
+                  <div className="border border-gray-100 rounded-b-lg px-3 py-1">
+                    {m.deductions.map((d) => <Row key={d.label} label={d.label} value={d.display} muted={!d.amount} />)}
+                    <div className="flex items-center justify-between border-t border-gray-200 mt-1 py-2"><span className="text-xs font-bold text-gray-700">Total Deductions</span><span className="text-sm font-bold text-red-600 tabular-nums">{m.totalDeductionsDisplay}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Net */}
+              <div className="px-4 sm:px-8 py-4">
+                <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wider text-gray-400">Net Salary Payable</p>
+                    <p className="text-2xl sm:text-3xl font-bold text-indigo-700 tabular-nums">{m.netDisplay}</p>
+                  </div>
+                  <div className="text-xs text-gray-500 sm:text-right">
+                    <div className="flex items-center justify-between sm:justify-end gap-4"><span>Gross Salary</span><span className="font-semibold text-gray-700 tabular-nums">{m.grossDisplay}</span></div>
+                    <div className="flex items-center justify-between sm:justify-end gap-4"><span>Total Deductions</span><span className="font-semibold text-gray-700 tabular-nums">− {m.totalDeductionsDisplay}</span></div>
+                  </div>
+                </div>
+                <p className="text-[11px] sm:text-xs italic text-gray-500 mt-3">Amount in Words: {m.netInWords}</p>
+              </div>
+
+              {/* Footer */}
+              <div className="px-4 sm:px-8 py-4 border-t border-gray-100 text-center">
+                <p className="text-xs font-semibold text-gray-600">Generated by CRMONCE HRMS</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">This is a computer-generated salary slip. No signature required.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

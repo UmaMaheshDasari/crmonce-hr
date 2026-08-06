@@ -13,7 +13,7 @@ const advanceService = require('../../services/advance.service');
 const salaryStructure = require('../../services/salary-structure.service');
 const payrollSettings = require('../../services/payroll-settings.service');
 const activity = require('../../services/activity.service');
-const { buildPayslipPdf } = require('../../services/payslip.service');
+const { buildPayslipPdf, payslipModel } = require('../../services/payslip.service');
 const { emailPayslip } = require('../../services/payslip-notify.service');
 const { buildReport } = require('../../services/payroll-reports.service');
 
@@ -285,6 +285,39 @@ payrollRouter.get('/:id/payslip', requirePermission('payroll:read'), async (req,
     res.setHeader('Content-Disposition', `attachment; filename=${fname}`);
     res.end(pdf);
   } catch (err) { next(err); }
+});
+
+// Load a payroll row + its employee (with the 403 self-scope check). Shared by the
+// payslip-data and email endpoints.
+async function loadPayrollWithEmployee(id, user) {
+  const payroll = await d365.getByIdOptional(PAYROLL, id, { select: BASE_SELECT, optionalSelect: OPT_SELECT });
+  if (user.role === 'employee' && payroll._hr_hremployee_value !== user.id) { const e = new Error('Access denied'); e.status = 403; throw e; }
+  const empId = payroll._hr_hremployee_value;
+  const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
+    select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
+    optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode,hr_employeeid',
+  }) : {};
+  return { payroll, employee };
+}
+
+// GET /:id/payslip-data  — structured payslip for the responsive on-screen view.
+payrollRouter.get('/:id/payslip-data', requirePermission('payroll:read'), async (req, res, next) => {
+  try {
+    const { payroll, employee } = await loadPayrollWithEmployee(req.params.id, req.user);
+    res.json(await payslipModel({ payroll, employee }));
+  } catch (err) { res.status(err.status || 500).json({ error: err.message || 'Failed to load payslip' }); }
+});
+
+// POST /:id/email  — email the payslip PDF to the employee (self or HR). The same
+// document as the download, reusing the approval-email service.
+payrollRouter.post('/:id/email', requirePermission('payroll:read'), async (req, res, next) => {
+  try {
+    const { payroll, employee } = await loadPayrollWithEmployee(req.params.id, req.user);
+    if (!employee?.hr_email) return res.status(400).json({ error: 'This employee has no email address on file.' });
+    const mail = await emailPayslip({ payroll, employee });
+    try { activity.record({ category: 'Payroll', type: 'payslip_emailed', title: 'Payslip Emailed', name: req.user?.name, meta: `Payslip ${payroll.hr_month}/${payroll.hr_year} emailed to ${employee.hr_hremployee1 || 'employee'}` }); } catch {}
+    res.json({ success: !!mail.success, message: mail.success ? `Payslip emailed to ${employee.hr_email}` : 'Payslip email failed — please retry.' });
+  } catch (err) { res.status(err.status || 500).json({ error: err.message || 'Failed to email payslip' }); }
 });
 
 module.exports = payrollRouter;

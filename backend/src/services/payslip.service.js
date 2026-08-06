@@ -41,6 +41,80 @@ function numberToWords(num) {
 // ── palette (white / light-gray / royal blue) ──
 const C = { blue: '#2563EB', dark: '#0f172a', gray: '#64748b', border: '#e5e7eb', head: '#f1f5f9', light: '#f8fafc' };
 
+// Company email + HR-portal website (normalise a blank/legacy bare crmonce.com).
+function resolveContact(company = {}) {
+  const email = company.hr_email || 'info@crmonce.com';
+  const rawSite = String(company.hr_website || '').trim();
+  const website = (!rawSite || /^(https?:\/\/)?(www\.)?crmonce\.com\/?$/i.test(rawSite)) ? 'https://hr.crmonce.com' : rawSite;
+  return { email, website };
+}
+
+/**
+ * The single numeric core of the payslip — used by BOTH the PDF and the on-screen
+ * HTML view so they can never disagree. Full monthly gross with LOP as an explicit
+ * deduction: Gross − PF − PT − TDS − LOP − Advance − Other = Net.
+ */
+function computeFigures(p = {}) {
+  const basic = Number(p.hr_basic) || 0;
+  const hra = Number(p.hr_hra) || 0;
+  const special = Number(p.hr_special) || 0;
+  const medical = Number(p.hr_medical) || 0;
+  const conveyance = Number(p.hr_conveyance) || 0;
+  const allowances = Number(p.hr_allowances) || 0;   // "Other Allowances" bucket
+  const overtime = Number(p.hr_overtime) || 0;
+  const gross = basic + hra + special + medical + conveyance + allowances + overtime;
+
+  const pf = Number(p.hr_pf) || 0;
+  const professionalTax = Number(p.hr_professionaltax) || 0;
+  const incomeTax = Number(p.hr_incometax) || Number(p.hr_tds) || 0;
+  const lop = Number(p.hr_lop) || 0;
+  const advance = Number(p.hr_advance) || 0;
+  const otherDeductions = Number(p.hr_deductions) || 0;
+  const deductions = pf + professionalTax + incomeTax + lop + advance + otherDeductions;
+  const net = gross - deductions;
+
+  const earnings = [
+    ['Basic', basic], ['House Rent Allowance (HRA)', hra], ['Special Allowance', special],
+    ['Medical Allowance', medical], ['Conveyance', conveyance], ['Other Allowances', allowances + overtime],
+  ];
+  const deductionRows = [
+    ['Provident Fund (PF)', pf], ['Professional Tax', professionalTax],
+    ['Income Tax (TDS)', incomeTax], ['LOP Deduction', lop],
+    ['Advance Salary', advance], ['Other Deductions', otherDeductions],
+  ];
+  return { gross, deductions, net, earnings, deductionRows };
+}
+
+/**
+ * Structured payslip model (company + employee + earnings/deductions + net) for the
+ * responsive on-screen view. Shares computeFigures() with the PDF. Never throws.
+ */
+async function payslipModel({ payroll, employee, company }) {
+  company = company || await companySvc.getCompany();
+  const emp = employee || {};
+  const p = payroll || {};
+  const empNo = emp.hr_employeeid || emp.hr_employeecode || emp.hr_etimecode || '—';
+  const manager = emp['_hr_manager_value@OData.Community.Display.V1.FormattedValue'] || emp._reportingmanager || DEFAULT_MANAGER;
+  const { email, website } = resolveContact(company);
+  const f = computeFigures(p);
+  const asMoney = ([label, amount]) => ({ label, amount, display: money(amount) });
+  return {
+    company: {
+      name: company.hr_name || 'Company', gstin: company.hr_gstin || '', cin: company.hr_cin || '',
+      addressLines: companySvc.addressLines(company), email, website, logoUrl: company.hr_logourl || '/crmonce-logo.png',
+    },
+    employee: {
+      employeeId: empNo, name: emp.hr_hremployee1 || '—', department: emp.hr_department || '—',
+      designation: emp.hr_designation || '—', joiningDate: dfmt(emp.hr_joiningdate), manager,
+      pan: emp.hr_pan || '—', bankAccount: maskAccount(emp.hr_accountnumber), pfNumber: emp.hr_pfnumber || '—', uan: emp.hr_uan || '—',
+    },
+    meta: { monthYear: monthYear(p), payrollNo: `PS/${p.hr_year || ''}-${pad2(p.hr_month || 0)}/${empNo}`, generatedOn: dfmt(new Date().toISOString()), status: p.hr_status || '', locked: p.hr_locked === 'true' },
+    earnings: f.earnings.map(asMoney), gross: f.gross, grossDisplay: money(f.gross),
+    deductions: f.deductionRows.map(asMoney), totalDeductions: f.deductions, totalDeductionsDisplay: money(f.deductions),
+    net: f.net, netDisplay: money(f.net), netInWords: `Rupees ${numberToWords(f.net)} Only`,
+  };
+}
+
 async function buildPayslipPdf({ payroll, employee, company }) {
   company = company || await companySvc.getCompany();
   const doc = new PDFDocument({ size: 'A4', margin: 30 });
@@ -56,46 +130,8 @@ async function buildPayslipPdf({ payroll, employee, company }) {
   const manager = emp['_hr_manager_value@OData.Community.Display.V1.FormattedValue'] || emp._reportingmanager || DEFAULT_MANAGER;
   const payrollNo = `PS/${p.hr_year || ''}-${pad2(p.hr_month || 0)}/${empNo}`;
 
-  // ── figures ──
-  const basic = Number(p.hr_basic) || 0;
-  const hra = Number(p.hr_hra) || 0;
-  const special = Number(p.hr_special) || 0;
-  const medical = Number(p.hr_medical) || 0;
-  const conveyance = Number(p.hr_conveyance) || 0;
-  const allowances = Number(p.hr_allowances) || 0;   // "Other Allowances" bucket
-  const overtime = Number(p.hr_overtime) || 0;
-  // The slip shows the FULL monthly gross (the sum of the earning rows) and then
-  // lists LOP as an explicit deduction, so it reads transparently as
-  // Gross − PF − PT − TDS − LOP − Advance − Other = Net. (Because the stored
-  // hr_gross is already LOP-prorated, full gross = hr_gross + LOP, and the net
-  // computed here equals hr_netpay minus any advance — no double counting.)
-  const gross = basic + hra + special + medical + conveyance + allowances + overtime;
-
-  // Itemised deductions. PF / Professional Tax / Income Tax are read from the
-  // payroll record when those columns exist (else 0.00). LOP is the loss-of-pay
-  // amount; Advance Salary is any salary advance recovered this month (0.00 when
-  // none); Other Deductions is the fixed/statutory bucket we store on the record.
-  const pf = Number(p.hr_pf) || 0;
-  const professionalTax = Number(p.hr_professionaltax) || 0;
-  const incomeTax = Number(p.hr_incometax) || Number(p.hr_tds) || 0;
-  const lop = Number(p.hr_lop) || 0;
-  const advance = Number(p.hr_advance) || 0;
-  const otherDeductions = Number(p.hr_deductions) || 0;
-  const deductions = pf + professionalTax + incomeTax + lop + advance + otherDeductions;
-  const net = gross - deductions;
-
-  // Basic + a combined Allowances (+ OT) are the only earnings we store; statutory
-  // splits aren't itemised, so combined amounts land in "Other" rows and the rest
-  // show 0.00 — section totals stay exact.
-  const earnings = [
-    ['Basic', basic], ['House Rent Allowance (HRA)', hra], ['Special Allowance', special],
-    ['Medical Allowance', medical], ['Conveyance', conveyance], ['Other Allowances', allowances + overtime],
-  ];
-  const deductionRows = [
-    ['Provident Fund (PF)', pf], ['Professional Tax', professionalTax],
-    ['Income Tax (TDS)', incomeTax], ['LOP Deduction', lop],
-    ['Advance Salary', advance], ['Other Deductions', otherDeductions],
-  ];
+  // ── figures (shared numeric core — identical to the on-screen HTML view) ──
+  const { gross, deductions, net, earnings, deductionRows } = computeFigures(p);
 
   // ── helpers ──
   const card = (x, y, w, h) => doc.roundedRect(x, y, w, h, 5).lineWidth(0.8).strokeColor(C.border).stroke();
@@ -112,12 +148,7 @@ async function buildPayslipPdf({ payroll, employee, company }) {
   // ── header (white) — logo floats left; all company identity is centered across
   //    the FULL page width so name / GSTIN / CIN / address / email / website line
   //    up on one centre axis regardless of the logo. ──
-  const email = company.hr_email || 'info@crmonce.com';
-  // Website comes from Company Settings, but the payslip must show the HR portal
-  // URL; normalise a blank or legacy bare "crmonce.com" to https://hr.crmonce.com.
-  const rawSite = String(company.hr_website || '').trim();
-  const website = (!rawSite || /^(https?:\/\/)?(www\.)?crmonce\.com\/?$/i.test(rawSite))
-    ? 'https://hr.crmonce.com' : rawSite;
+  const { email, website } = resolveContact(company);
 
   let y = 34;
   try { if (companySvc.LOGO_FILE && fs.existsSync(companySvc.LOGO_FILE)) doc.image(companySvc.LOGO_FILE, X0 + 4, y + 2, { fit: [56, 56] }); } catch { /* logo optional */ }
@@ -203,4 +234,4 @@ async function buildPayslipPdf({ payroll, employee, company }) {
   return done;
 }
 
-module.exports = { buildPayslipPdf, monthYear, numberToWords, MONTHS };
+module.exports = { buildPayslipPdf, payslipModel, computeFigures, resolveContact, monthYear, numberToWords, MONTHS };

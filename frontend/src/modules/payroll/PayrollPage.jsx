@@ -5,47 +5,9 @@ import { useAuth } from '../../context/AuthContext';
 import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon, CheckCircleIcon, LockClosedIcon, LockOpenIcon, EyeIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import PayslipView from './PayslipView';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
-
-// Professional salary-breakdown preview: Gross → itemised deductions → Net.
-function BreakdownModal({ record, onClose }) {
-  const r = record;
-  const earnings = [
-    ['Basic', r.hr_basic], ['HRA', r.hr_hra], ['Special Allowance', r.hr_special],
-    ['Medical', r.hr_medical], ['Conveyance', r.hr_conveyance], ['Other Allowances', r.hr_allowances], ['Overtime', r.hr_overtime],
-  ].filter(([, v]) => Number(v) > 0);
-  const deductions = [
-    ['Provident Fund (PF)', r.hr_pf], ['Professional Tax', r.hr_professionaltax], ['Income Tax (TDS)', r.hr_incometax],
-    ['LOP', r.hr_lop], ['Advance Salary', r.hr_advance], ['Other Deductions', r.hr_deductions],
-  ].filter(([, v]) => Number(v) > 0);
-  const Row = ({ label, val, neg }) => (
-    <div className="flex items-center justify-between py-1.5 text-sm"><span className="text-gray-600">{label}</span><span className={`font-medium tabular-nums ${neg ? 'text-red-600' : 'text-gray-900'}`}>{neg ? '−' : ''}{inr(val)}</span></div>
-  );
-  return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl shadow-2xl my-0 sm:my-8">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div><h2 className="text-lg font-bold text-gray-900">Salary Breakdown</h2><p className="text-xs text-gray-400">{MONTHS[(r.hr_month || 1) - 1]} {r.hr_year}{r.hr_locked === 'true' ? ' · Locked' : ''}</p></div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
-        </div>
-        <div className="p-6 space-y-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">Earnings</p>
-            {earnings.length ? earnings.map(([l, v]) => <Row key={l} label={l} val={v} />) : <p className="text-sm text-gray-400">—</p>}
-            <div className="flex items-center justify-between pt-2 mt-1 border-t border-gray-100 text-sm font-bold"><span>Gross Salary</span><span className="text-indigo-600 tabular-nums">{inr(r.hr_gross)}</span></div>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">Deductions</p>
-            {deductions.length ? deductions.map(([l, v]) => <Row key={l} label={l} val={v} neg />) : <p className="text-sm text-gray-400">None</p>}
-          </div>
-          <div className="flex items-center justify-between bg-indigo-50 rounded-xl px-4 py-3"><span className="text-sm font-bold text-indigo-700">Net Salary</span><span className="text-xl font-bold text-indigo-700 tabular-nums">{inr(r.hr_netpay)}</span></div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function ProcessPayrollModal({ onClose }) {
   const qc = useQueryClient();
@@ -466,7 +428,7 @@ export default function PayrollPage() {
       </div>
 
       {showModal && <ProcessPayrollModal onClose={() => setShowModal(false)} />}
-      {viewRec && <BreakdownModal record={viewRec} onClose={() => setViewRec(null)} />}
+      {viewRec && <PayslipView record={viewRec} onClose={() => setViewRec(null)} />}
     </div>
   );
 }
