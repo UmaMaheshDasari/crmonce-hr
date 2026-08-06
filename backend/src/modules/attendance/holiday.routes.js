@@ -9,6 +9,8 @@ const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
 const holidayService = require('../../services/holiday.service');
 const { ensureHolidayTable, addMissingColumn } = require('../../services/provision-holiday');
+let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
+const audit = (p) => { try { activity?.record?.(p); } catch (_) {} };
 
 const HOL = d365.constructor.entities.holiday;
 const notConfigured = (err) => /Could not find|does not exist|Resource not found|400|404/i.test(err?.message || '');
@@ -45,7 +47,7 @@ router.get('/', async (req, res, next) => {
   catch (err) { next(err); }
 });
 
-// POST /api/holidays — HR adds a holiday.
+// POST /api/holidays — HR adds a holiday (including historical / past dates).
 router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
     const date = String(req.body.date || '').slice(0, 10);
@@ -53,12 +55,48 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'A valid date (YYYY-MM-DD) is required' });
     if (!name) return res.status(400).json({ error: 'Holiday name is required' });
 
-    const created = await robustCreate({ hr_name: name, hr_date: date, hr_description: String(req.body.description || '') });
+    // Duplicate-date guard (validation): warn unless overwrite is explicitly set.
+    const existing = await holidayService.listHolidays().catch(() => []);
+    if (!req.body.overwrite && existing.some(h => h.date === date)) {
+      return res.status(409).json({ error: `A holiday already exists on ${date}.`, duplicate: true });
+    }
+
+    const created = await robustCreate({
+      hr_name: name, hr_date: date, hr_description: String(req.body.description || ''),
+      hr_type: String(req.body.type || ''), hr_department: String(req.body.department || ''),
+      hr_status: String(req.body.status || 'active'), hr_remarks: String(req.body.remarks || ''),
+    });
     await holidayService.refresh(true);   // calculations exclude it immediately
-    // NOTE: no activity.record here — the feed derives "Holiday Added" from the
-    // table (activity.service.fromHolidays), so recording here too would double it.
+    audit({ category: 'Holiday', type: 'holiday_added', title: 'Holiday added', name, meta: { date, type: req.body.type || '', by: req.user?.name } });
     res.status(201).json({ data: { id: created.hr_holidayid, name, date } });
   } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
+
+// PUT /api/holidays/:id — HR edits a holiday (name/date/type/department/status/remarks).
+router.put('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const patch = {};
+    if (req.body.name !== undefined) patch.hr_name = String(req.body.name).trim();
+    if (req.body.date !== undefined) patch.hr_date = String(req.body.date).slice(0, 10);
+    if (req.body.description !== undefined) patch.hr_description = String(req.body.description || '');
+    if (req.body.type !== undefined) patch.hr_type = String(req.body.type || '');
+    if (req.body.department !== undefined) patch.hr_department = String(req.body.department || '');
+    if (req.body.status !== undefined) patch.hr_status = String(req.body.status || 'active');
+    if (req.body.remarks !== undefined) patch.hr_remarks = String(req.body.remarks || '');
+    // Strip any not-yet-provisioned column and retry so an edit never hard-fails.
+    let payload = { ...patch };
+    for (let i = 0; i < 8; i++) {
+      try { await d365.update(HOL, req.params.id, payload); break; }
+      catch (err) {
+        const missing = (err.message || '').match(/property '([^']+)' does not exist/i);
+        if (missing && payload[missing[1]] !== undefined) { await addMissingColumn(missing[1], global.logger || console).catch(() => {}); delete payload[missing[1]]; continue; }
+        throw err;
+      }
+    }
+    await holidayService.refresh(true);
+    audit({ category: 'Holiday', type: 'holiday_updated', title: 'Holiday updated', name: patch.hr_name || '', meta: { id: req.params.id, by: req.user?.name } });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 
 // DELETE /api/holidays/:id — HR removes a holiday.
@@ -66,6 +104,7 @@ router.delete('/:id', requireRole('super_admin', 'hr_manager'), async (req, res,
   try {
     await d365.delete(HOL, req.params.id);
     await holidayService.refresh(true);
+    audit({ category: 'Holiday', type: 'holiday_removed', title: 'Holiday removed', meta: { id: req.params.id, by: req.user?.name } });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

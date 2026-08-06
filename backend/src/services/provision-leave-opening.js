@@ -33,6 +33,7 @@ const OPEN_COLUMNS = [
   str('hr_Year', 'Leave Year', 6),
   str('hr_CasualUsed', 'Casual Leave Already Used', 10),
   str('hr_SickUsed', 'Sick Leave Already Used', 10),
+  str('hr_EarnedUsed', 'Earned Leave Already Used', 10),
   str('hr_LopUsed', 'LOP Already Used', 10),
   str('hr_CompOff', 'Comp Off Opening Balance', 10),
   memo('hr_Remarks', 'Remarks'),

@@ -32,6 +32,7 @@ const NAV = [
   {
     group: 'Attendance', icon: ClockIcon, children: [
       { to: '/attendance',          label: 'Attendance',          icon: ClockIcon },
+      { to: '/historical-attendance', label: 'Historical Attendance', icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
       { to: '/leave',               label: 'Leave',               icon: CalendarDaysIcon },
       { to: '/comp-off',            label: 'Comp Off',            icon: ArrowPathIcon },
@@ -72,6 +73,7 @@ const LABEL_MAP = {
   '/attendance':  'Attendance',
   '/attendance-requests': 'Attendance Requests',
   '/leave':       'Leave',
+  '/historical-attendance': 'Historical Attendance',
   '/comp-off':    'Comp Off',
   '/leave-opening-balance': 'Leave Opening Balance',
   '/holidays':    'Holidays',

@@ -15,6 +15,7 @@ import HolidaysPage from './modules/attendance/HolidaysPage';
 import LeavePage from './modules/attendance/LeavePage';
 import CompOffPage from './modules/attendance/CompOffPage';
 import LeaveOpeningBalancePage from './modules/attendance/LeaveOpeningBalancePage';
+import HistoricalAttendancePage from './modules/attendance/HistoricalAttendancePage';
 import PayrollPage from './modules/payroll/PayrollPage';
 import RecruitmentPage from './modules/recruitment/RecruitmentPage';
 import PerformancePage from './modules/performance/PerformancePage';
@@ -68,6 +69,7 @@ function AppRoutes() {
         <Route path="employees/:id/profile" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ProfilePage /></ProtectedRoute>} />
         <Route path="hr-verification" element={<ProtectedRoute roles={['super_admin','hr_manager']}><HRVerificationPage /></ProtectedRoute>} />
         <Route path="attendance" element={<AttendancePage />} />
+        <Route path="historical-attendance" element={<ProtectedRoute roles={['super_admin','hr_manager']}><HistoricalAttendancePage /></ProtectedRoute>} />
         <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
         <Route path="holidays" element={<HolidaysPage />} />
         <Route path="leave" element={<LeavePage />} />

@@ -59,6 +59,7 @@ function parseBody(body) {
     year: Number(body.year) || new Date().getFullYear(),
     casualUsed: Number(body.casualUsed) || 0,
     sickUsed: Number(body.sickUsed) || 0,
+    earnedUsed: Number(body.earnedUsed) || 0,
     lopUsed: Number(body.lopUsed) || 0,
     compOff: Number(body.compOff) || 0,
     remarks: body.remarks || '',

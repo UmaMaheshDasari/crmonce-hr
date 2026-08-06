@@ -14,19 +14,31 @@ const TTL = 5 * 60 * 1000;   // 5 min
 /** All holidays, newest date first. Degrades to [] if the table isn't there yet. */
 async function listHolidays() {
   try {
-    const { data } = await d365.getList(HOL, { select: 'hr_holidayid,hr_name,hr_date,hr_description', orderby: 'hr_date desc', top: 1000 });
-    return (data || []).map(r => ({ id: r.hr_holidayid, name: r.hr_name || 'Holiday', date: String(r.hr_date || '').slice(0, 10), description: r.hr_description || '' }))
-      .filter(h => h.date);
+    // New columns (type/department/status/remarks) are optional — degrade if the
+    // schema hasn't been extended yet.
+    const { data } = await d365.getListOptional(HOL, {
+      select: 'hr_holidayid,hr_name,hr_date,hr_description',
+      optionalSelect: 'hr_type,hr_department,hr_status,hr_remarks',
+      orderby: 'hr_date desc', top: 1000,
+    });
+    return (data || []).map(r => ({
+      id: r.hr_holidayid, name: r.hr_name || 'Holiday', date: String(r.hr_date || '').slice(0, 10),
+      description: r.hr_description || '', type: r.hr_type || '', department: r.hr_department || '',
+      status: r.hr_status || 'active', remarks: r.hr_remarks || '',
+    })).filter(h => h.date);
   } catch (_) { return []; }
 }
 
-/** Refresh attendance.config's dynamic holiday set from the calendar (cached). */
+/**
+ * Refresh attendance.config's dynamic holiday set from the calendar (cached).
+ * Only ACTIVE holidays are excluded from attendance/payroll/leave calculations.
+ */
 async function refresh(force = false) {
   const now = Date.now();
   if (!force && cache && now - cacheAt < TTL) return cache;
   const holidays = await listHolidays();
   cache = holidays; cacheAt = now;
-  attnCfg.setDynamicHolidays(holidays.map(h => h.date));
+  attnCfg.setDynamicHolidays(holidays.filter(h => h.status !== 'inactive').map(h => h.date));
   return holidays;
 }
 

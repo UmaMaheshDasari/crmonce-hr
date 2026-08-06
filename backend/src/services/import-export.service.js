@@ -102,6 +102,7 @@ const TYPES = {
       { key: 'year', header: 'Leave Year', required: true, kind: 'number' },
       { key: 'casualUsed', header: 'Casual Used', kind: 'number' },
       { key: 'sickUsed', header: 'Sick Used', kind: 'number' },
+      { key: 'earnedUsed', header: 'Earned Used', kind: 'number' },
       { key: 'lopUsed', header: 'LOP Used', kind: 'number' },
       { key: 'compOff', header: 'Comp Off Balance', kind: 'number' },
       { key: 'remarks', header: 'Remarks' },

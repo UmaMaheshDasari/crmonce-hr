@@ -186,6 +186,9 @@ server.listen(PORT, () => {
     require('./services/provision-leave-opening')
       .ensureLeaveOpeningTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] leave-opening tables skipped: ${err.message}`));
+    require('./services/provision-attendance-audit')
+      .ensureAttendanceAuditTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] attendance-audit table skipped: ${err.message}`));
     require('./services/provision-advance')
       .ensureAdvanceTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] advance salary table skipped: ${err.message}`));

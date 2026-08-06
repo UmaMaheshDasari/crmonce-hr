@@ -14,7 +14,10 @@ const OPEN = d365.constructor.entities.leaveOpening;
 const AUDIT = d365.constructor.entities.leaveOpeningAudit;
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const OPEN_SELECT = 'hr_leaveopeningid,hr_employeeid,hr_employeename,hr_year,hr_casualused,hr_sickused,hr_lopused,hr_compoff,hr_remarks,hr_createdby,createdon,modifiedon';
+const OPEN_SELECT = 'hr_leaveopeningid,hr_employeeid,hr_employeename,hr_year,hr_casualused,hr_sickused,hr_earnedused,hr_lopused,hr_compoff,hr_remarks,hr_createdby,createdon,modifiedon';
+// hr_earnedused was added later; drop it automatically if the column isn't provisioned yet.
+const OPEN_BASE = 'hr_leaveopeningid,hr_employeeid,hr_employeename,hr_year,hr_casualused,hr_sickused,hr_lopused,hr_compoff,hr_remarks,hr_createdby,createdon,modifiedon';
+const OPEN_OPT = 'hr_earnedused';
 
 const shape = (r) => ({
   id: r.hr_leaveopeningid,
@@ -23,6 +26,7 @@ const shape = (r) => ({
   year: Number(r.hr_year) || null,
   casualUsed: num(r.hr_casualused),
   sickUsed: num(r.hr_sickused),
+  earnedUsed: num(r.hr_earnedused),
   lopUsed: num(r.hr_lopused),
   compOff: num(r.hr_compoff),
   remarks: r.hr_remarks || '',
@@ -34,8 +38,8 @@ const shape = (r) => ({
 /** Raw opening-balance row for an employee/year, or null. Never throws. */
 async function getOpeningRow(employeeId, year) {
   try {
-    const { data } = await d365.getList(OPEN, {
-      select: OPEN_SELECT,
+    const { data } = await d365.getListOptional(OPEN, {
+      select: OPEN_BASE, optionalSelect: OPEN_OPT,
       filter: `hr_employeeid eq '${employeeId}' and hr_year eq '${year}'`,
       top: 1,
     });
@@ -49,8 +53,8 @@ async function getOpeningRow(employeeId, year) {
  */
 async function getOpening(employeeId, year) {
   const row = await getOpeningRow(employeeId, year);
-  if (!row) return { casualUsed: 0, sickUsed: 0, lopUsed: 0, compOff: 0 };
-  return { casualUsed: num(row.hr_casualused), sickUsed: num(row.hr_sickused), lopUsed: num(row.hr_lopused), compOff: num(row.hr_compoff) };
+  if (!row) return { casualUsed: 0, sickUsed: 0, earnedUsed: 0, lopUsed: 0, compOff: 0 };
+  return { casualUsed: num(row.hr_casualused), sickUsed: num(row.hr_sickused), earnedUsed: num(row.hr_earnedused), lopUsed: num(row.hr_lopused), compOff: num(row.hr_compoff) };
 }
 
 /** List opening balances (optionally filtered by year / employee). */
@@ -58,8 +62,8 @@ async function list({ year, employeeId } = {}) {
   const filters = [];
   if (year) filters.push(`hr_year eq '${year}'`);
   if (employeeId) filters.push(`hr_employeeid eq '${employeeId}'`);
-  const { data } = await d365.getList(OPEN, {
-    select: OPEN_SELECT,
+  const { data } = await d365.getListOptional(OPEN, {
+    select: OPEN_BASE, optionalSelect: OPEN_OPT,
     filter: filters.join(' and ') || undefined,
     orderby: 'createdon desc',
     top: 2000,
@@ -98,6 +102,7 @@ async function readAudit(employeeId, year) {
 const FIELDS = [
   ['casualUsed', 'hr_casualused', 'Casual Used'],
   ['sickUsed', 'hr_sickused', 'Sick Used'],
+  ['earnedUsed', 'hr_earnedused', 'Earned Used'],
   ['lopUsed', 'hr_lopused', 'LOP Used'],
   ['compOff', 'hr_compoff', 'Comp Off'],
   ['remarks', 'hr_remarks', 'Remarks'],
@@ -108,22 +113,30 @@ const FIELDS = [
  * entered only once per year: a second CREATE is rejected; edits go through as
  * updates and are fully audited.
  */
-async function upsert({ employeeId, employeeName, year, casualUsed, sickUsed, lopUsed, compOff, remarks, updatedBy, reason }, { allowUpdate = true } = {}) {
+async function upsert({ employeeId, employeeName, year, casualUsed, sickUsed, earnedUsed, lopUsed, compOff, remarks, updatedBy, reason }, { allowUpdate = true } = {}) {
   const existing = await getOpeningRow(employeeId, year);
   const next = {
-    casualUsed: num(casualUsed), sickUsed: num(sickUsed), lopUsed: num(lopUsed),
+    casualUsed: num(casualUsed), sickUsed: num(sickUsed), earnedUsed: num(earnedUsed), lopUsed: num(lopUsed),
     compOff: num(compOff), remarks: remarks || '',
   };
 
   if (!existing) {
-    const created = await d365.create(OPEN, {
+    let payload = {
       hr_name: `${employeeName || employeeId} · ${year}`.slice(0, 250),
       hr_employeeid: String(employeeId), hr_employeename: employeeName || '', hr_year: String(year),
-      hr_casualused: String(next.casualUsed), hr_sickused: String(next.sickUsed),
+      hr_casualused: String(next.casualUsed), hr_sickused: String(next.sickUsed), hr_earnedused: String(next.earnedUsed),
       hr_lopused: String(next.lopUsed), hr_compoff: String(next.compOff),
       hr_remarks: next.remarks, hr_createdby: updatedBy || '',
-    });
-    await writeAudit({ employeeId, employeeName, year, field: 'Opening Balance', oldValue: '', newValue: `CL ${next.casualUsed} · SL ${next.sickUsed} · LOP ${next.lopUsed} · CompOff ${next.compOff}`, action: 'created', updatedBy, reason: reason || 'Created' });
+    };
+    let created;
+    for (let i = 0; i < 3; i++) {
+      try { created = await d365.create(OPEN, payload); break; }
+      catch (err) {
+        if (d365._isMissingProperty?.(err)) { const p = d365._missingPropertyName?.(err); if (p && payload[p] !== undefined) { delete payload[p]; continue; } }
+        throw err;
+      }
+    }
+    await writeAudit({ employeeId, employeeName, year, field: 'Opening Balance', oldValue: '', newValue: `CL ${next.casualUsed} · SL ${next.sickUsed} · EL ${next.earnedUsed} · LOP ${next.lopUsed} · CompOff ${next.compOff}`, action: 'created', updatedBy, reason: reason || 'Created' });
     return { action: 'created', id: created.hr_leaveopeningid };
   }
 

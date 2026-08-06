@@ -25,7 +25,15 @@ const memo = (schema, display, maxLength = 2000) => ({
   SchemaName: schema, MaxLength: maxLength, Format: 'Text', RequiredLevel: req(), DisplayName: label(display), Description: label(display),
 });
 
-const COLUMNS = [str('hr_Date', 'Date', 10), memo('hr_Description', 'Description')];
+const COLUMNS = [
+  str('hr_Date', 'Date', 10),
+  memo('hr_Description', 'Description'),
+  // Historical-holiday fields (all optional; existing rows keep working).
+  str('hr_Type', 'Holiday Type', 30),          // National | Festival | Company | Optional
+  str('hr_Department', 'Applicable Department', 200),   // blank = all departments
+  str('hr_Status', 'Status', 20),              // active | inactive
+  memo('hr_Remarks', 'Remarks'),
+];
 const ENTITY_BODY = {
   '@odata.type': 'Microsoft.Dynamics.CRM.EntityMetadata',
   SchemaName: ENTITY_SCHEMA, EntitySetName: ENTITY_SET, OwnershipType: 'UserOwned', HasActivities: false, HasNotes: false,

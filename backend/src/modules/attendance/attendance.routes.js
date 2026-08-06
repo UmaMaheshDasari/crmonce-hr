@@ -11,6 +11,7 @@ const leaveRoutes = require('./leave.routes');
 const compOffRoutes = require('./comp-off.routes');
 const activity = require('../../services/activity.service');
 const time = require('../../services/time.util');
+const { ensureAttendanceAuditTable, ENTITY_SET: ATT_AUDIT_SET } = require('../../services/provision-attendance-audit');
 
 router.use('/leave', leaveRoutes);
 router.use('/comp-off', compOffRoutes);
@@ -20,31 +21,51 @@ const ENTITY = d365.constructor.entities.attendance;
 // GET /api/attendance
 router.get('/', requirePermission('attendance:read'), async (req, res, next) => {
   try {
-    const { employeeId, from, to, status, source, page = 1, limit = 30 } = req.query;
+    const { employeeId, from, to, status, source, department, late, missingPunch, month, year, page = 1, limit = 30 } = req.query;
     const filters = [];
+
+    // Derive from/to from month/year when an explicit range wasn't passed (HR filters).
+    let f = from, t = to;
+    if (!f && !t && (month || year)) {
+      const y = Number(year) || new Date().getFullYear();
+      if (month) { const m = Number(month); const last = new Date(y, m, 0).getDate(); f = `${y}-${String(m).padStart(2, '0')}-01`; t = `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`; }
+      else { f = `${y}-01-01`; t = `${y}-12-31`; }
+    }
 
     // Employees can only see their own attendance
     const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
     if (targetId) filters.push(`_hr_hremployee_value eq '${targetId}'`);
-    if (from) filters.push(`hr_date ge ${from}`);
-    if (to) filters.push(`hr_date le ${to}`);
+    if (f) filters.push(`hr_date ge ${f}`);
+    if (t) filters.push(`hr_date le ${t}`);
     if (source) filters.push(`hr_source eq ${toValue('hr_attendance_source', source)}`);
 
     // Present/Half Day/Incomplete are DYNAMIC (computed from punches + shift), so
-    // filter/display them by the computed status — NOT the stored hr_status, which
-    // can be stale (esp. device syncs). This keeps the table in sync with the cards.
+    // filter/display them by the computed status — NOT the stored hr_status.
     const COMPUTED = ['present', 'half_day', 'incomplete'];
     const useComputed = COMPUTED.includes(status);
     if (status && !useComputed) filters.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
+
+    const lateFlag = /^(1|true|yes)$/i.test(String(late || ''));
+    const missFlag = /^(1|true|yes)$/i.test(String(missingPunch || ''));
+
+    // Department filter (HR): resolve the department's employees, filter in-memory.
+    let deptSet = null;
+    if (department && req.user.role !== 'employee') {
+      try {
+        const { data } = await d365.getList(EMP_ENTITY, { select: 'hr_hremployeeid', filter: `hr_department eq '${String(department).replace(/'/g, "''")}'`, top: 5000 });
+        deptSet = new Set((data || []).map(e => e.hr_hremployeeid));
+      } catch { deptSet = new Set(); }
+    }
 
     const SELECT = 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours';
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const lim = Math.max(1, parseInt(limit, 10) || 30);
     const baseFilter = filters.join(' and ') || undefined;
 
-    // Fetch all matching rows when we must compute+filter; otherwise page via $top.
+    // Any computed/in-memory filter → fetch all matching rows; else page via $top.
+    const needsAll = useComputed || lateFlag || missFlag || !!deptSet;
     let recs, storedCount;
-    if (useComputed) {
+    if (needsAll) {
       const { data } = await d365.getAll(ENTITY, { select: SELECT, filter: baseFilter, orderby: 'hr_date desc' }, 10000);
       recs = data || [];
     } else {
@@ -53,22 +74,25 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
       storedCount = count;
     }
 
-    // Override each record's status with the computed value so the badge matches
-    // the cards and the computed filter.
+    // Recompute the session per record (status + late + missing-punch flags).
     const shiftMap = await buildShiftMap();
     for (const r of recs) {
-      r.hr_status = computeSession(punchesFromRecord(r), shiftMap.get(r._hr_hremployee_value) || resolveShift()).status;
+      const c = computeSession(punchesFromRecord(r), shiftMap.get(r._hr_hremployee_value) || resolveShift());
+      r.hr_status = c.status;
+      r._late = (c.lateArrivalMin || 0) > 0;
+      r._incomplete = c.state === 'in' || (c.count % 2 !== 0);
     }
 
+    let filtered = recs;
+    if (deptSet) filtered = filtered.filter(r => deptSet.has(r._hr_hremployee_value));
+    if (useComputed) filtered = filtered.filter(r => r.hr_status === status);
+    if (lateFlag) filtered = filtered.filter(r => r._late);
+    if (missFlag) filtered = filtered.filter(r => r._incomplete);
+
     let out, count;
-    if (useComputed) {
-      const matched = recs.filter(r => r.hr_status === status);
-      count = matched.length;
-      out = matched.slice((pageNum - 1) * lim, pageNum * lim);
-    } else {
-      count = storedCount;
-      out = recs.slice((pageNum - 1) * lim);
-    }
+    if (needsAll) { count = filtered.length; out = filtered.slice((pageNum - 1) * lim, pageNum * lim); }
+    else { count = storedCount; out = filtered.slice((pageNum - 1) * lim); }
+    out.forEach(r => { delete r._late; delete r._incomplete; });
     res.json(labelsForList('hr_hrattendances', { data: out, count }));
   } catch (err) { next(err); }
 });
@@ -335,6 +359,133 @@ router.post('/correction', requireRole('super_admin', 'hr_manager'), async (req,
     global.logger?.info(`Attendance correction by ${req.user.name} on ${rec.hr_date}: checkout ${actualCheckout} — reason: ${reason || '(none)'}`);
     res.json(labelsForEntity('hr_hrattendances', updated));
   } catch (err) { next(err); }
+});
+
+// ── Attendance edit / historical entry / audit (HR / Super Admin) ─────────────
+const safeJson = (v) => { try { return JSON.parse(v || '{}'); } catch { return {}; } };
+// Normalise a requested status label to a stored value; week_off is a derived
+// non-working day (no stored status), lop maps to absent for a stored record.
+function normalizeAttStatus(s) {
+  const k = String(s || '').toLowerCase().replace(/\s+/g, '_');
+  if (['week_off', 'weekoff', 'weekly_off'].includes(k)) return null;   // don't store
+  const map = { present: 'present', absent: 'absent', lop: 'absent', half_day: 'half_day', halfday: 'half_day', holiday: 'holiday', incomplete: 'incomplete' };
+  return map[k] || null;
+}
+function attSnapshot(rec) {
+  return {
+    inTime: rec.hr_intime || '', outTime: rec.hr_outtime || '',
+    status: toLabel('hr_attendance_status', rec.hr_status) || '',
+    workedHours: rec.hr_workedhours ?? '', breakHours: rec.hr_breakduration ?? '',
+    effectiveHours: rec.hr_effectivehours ?? '', overtime: rec.hr_overtime ?? '',
+  };
+}
+async function writeAttendanceAudit(entry) {
+  const payload = {
+    hr_name: `${entry.employeeName || entry.employeeId} · ${entry.date} · ${entry.action}`.slice(0, 250),
+    hr_attendanceid: String(entry.attendanceId || ''), hr_employeeid: String(entry.employeeId || ''),
+    hr_employeename: entry.employeeName || '', hr_date: String(entry.date || '').slice(0, 10),
+    hr_action: entry.action || 'edited', hr_oldvalue: JSON.stringify(entry.oldValues || {}),
+    hr_newvalue: JSON.stringify(entry.newValues || {}), hr_updatedby: entry.updatedBy || '',
+    hr_updatedon: new Date().toISOString(), hr_reason: entry.reason || '',
+  };
+  try { await d365.create(ATT_AUDIT_SET, payload); }
+  catch (err) {
+    if (/Resource not found for the segment|does not exist|Could not find/i.test(err.message)) {
+      await ensureAttendanceAuditTable(global.logger || console).catch(() => {});
+      try { await d365.create(ATT_AUDIT_SET, payload); } catch (_) { /* best-effort */ }
+    }
+  }
+}
+
+// PUT /:id/edit — full HR/Admin attendance edit (in/out/break/status/overtime),
+// with automatic recompute + audit. Works even after a correction request was
+// approved (attendance records carry no lock). Payroll picks up the change on the
+// next DRAFT generation of that month (locked/processed months are unaffected).
+router.put('/:id/edit', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { inTime, outTime, breakHours, workedHours, overtime, status, lateMinutes, reason } = req.body;
+    const rec = await d365.getById(ENTITY, req.params.id, { select: PUNCH_SELECT });
+    const empId = rec._hr_hremployee_value;
+    const shift = await getEmployeeShift(empId);
+    // Rebuild the day from the edited in/out (blanks dropped) and recompute.
+    const times = [inTime, outTime].map(t => String(t ?? '').trim()).filter(Boolean);
+    const c = computeSession(times, shift);
+    const payload = { ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'manual_correction') };
+    // Explicit HR overrides win over the recomputed values.
+    const st = normalizeAttStatus(status);
+    if (status && st) payload.hr_status = toValue('hr_attendance_status', st);
+    if (overtime !== undefined && overtime !== '') payload.hr_overtime = Number(overtime) || 0;
+    if (breakHours !== undefined && breakHours !== '') payload.hr_breakduration = Number(breakHours) || 0;
+    if (workedHours !== undefined && workedHours !== '') payload.hr_workedhours = Number(workedHours) || 0;
+
+    const before = attSnapshot(rec);
+    const updated = await d365.update(ENTITY, req.params.id, payload);
+    let empName = ''; try { const e = await d365.getById(EMP_ENTITY, empId, { select: 'hr_hremployee1' }); empName = e.hr_hremployee1 || ''; } catch {}
+    const after = {
+      inTime: payload.hr_intime, outTime: payload.hr_outtime,
+      status: toLabel('hr_attendance_status', payload.hr_status) || '',
+      workedHours: payload.hr_workedhours, breakHours: payload.hr_breakduration,
+      effectiveHours: payload.hr_effectivehours, overtime: payload.hr_overtime,
+      lateMinutes: (lateMinutes ?? c.lateArrivalMin),
+    };
+    await writeAttendanceAudit({ attendanceId: req.params.id, employeeId: empId, employeeName: empName, date: rec.hr_date, action: 'edited', oldValues: before, newValues: after, updatedBy: req.user.name || req.user.email, reason });
+    activity.record({ category: 'Attendance', type: 'attendance_edited', title: 'Attendance edited', name: empName, meta: { date: rec.hr_date, by: req.user.name } });
+    res.json(labelsForEntity('hr_hrattendances', updated));
+  } catch (err) { next(err); }
+});
+
+// POST /historical — HR/Admin manual historical attendance entry for a PAST date.
+// Recomputes hours/status; warns (409) on a duplicate unless overwrite=true.
+router.post('/historical', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { employeeId, date, inTime, outTime, status, remarks, overwrite } = req.body;
+    if (!employeeId || !date) return res.status(400).json({ error: 'Employee and date are required.' });
+    const ds = String(date).slice(0, 10);
+    const existing = await d365.getList(ENTITY, { select: PUNCH_SELECT, filter: `_hr_hremployee_value eq '${employeeId}' and hr_date eq ${ds}`, top: 1 });
+    const dup = existing.data && existing.data[0];
+    if (dup && !overwrite) {
+      return res.status(409).json({ error: `Attendance already exists for this employee on ${ds}. Enable overwrite to replace it.`, duplicate: true, existing: labelsForEntity('hr_hrattendances', dup) });
+    }
+    const shift = await getEmployeeShift(employeeId);
+    const times = [inTime, outTime].map(t => String(t ?? '').trim()).filter(Boolean);
+    const c = computeSession(times, shift);
+    const payload = { ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'manual_correction') };
+    const st = normalizeAttStatus(status);
+    if (status && st) payload.hr_status = toValue('hr_attendance_status', st);
+
+    let saved, action;
+    let empName = ''; try { const e = await d365.getById(EMP_ENTITY, employeeId, { select: 'hr_hremployee1' }); empName = e.hr_hremployee1 || ''; } catch {}
+    if (dup) {
+      const before = attSnapshot(dup);
+      saved = await d365.update(ENTITY, dup.hr_hrattendanceid, payload); action = 'historical_update';
+      await writeAttendanceAudit({ attendanceId: dup.hr_hrattendanceid, employeeId, employeeName: empName, date: ds, action, oldValues: before, newValues: { inTime: payload.hr_intime, outTime: payload.hr_outtime, status: toLabel('hr_attendance_status', payload.hr_status) || '' }, updatedBy: req.user.name || req.user.email, reason: remarks });
+    } else {
+      saved = await d365.create(ENTITY, { 'hr_hremployee@odata.bind': `/hr_hremployees(${employeeId})`, hr_date: ds, ...payload }); action = 'historical_entry';
+      await writeAttendanceAudit({ attendanceId: saved.hr_hrattendanceid, employeeId, employeeName: empName, date: ds, action, oldValues: {}, newValues: { inTime: payload.hr_intime, outTime: payload.hr_outtime, status: toLabel('hr_attendance_status', payload.hr_status) || '' }, updatedBy: req.user.name || req.user.email, reason: remarks });
+    }
+    activity.record({ category: 'Attendance', type: action, title: dup ? 'Historical attendance updated' : 'Historical attendance added', name: empName, meta: { date: ds, by: req.user.name } });
+    res.status(dup ? 200 : 201).json(labelsForEntity('hr_hrattendances', saved));
+  } catch (err) { next(err); }
+});
+
+// GET /audit — attendance edit history (HR / Super Admin). Filter by ?attendanceId / ?employeeId / ?date.
+router.get('/audit', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { attendanceId, employeeId, date } = req.query;
+    const filters = [];
+    if (attendanceId) filters.push(`hr_attendanceid eq '${attendanceId}'`);
+    if (employeeId) filters.push(`hr_employeeid eq '${employeeId}'`);
+    if (date) filters.push(`hr_date eq '${String(date).slice(0, 10)}'`);
+    const { data } = await d365.getList(ATT_AUDIT_SET, {
+      select: 'hr_attendanceauditid,hr_attendanceid,hr_employeename,hr_date,hr_action,hr_oldvalue,hr_newvalue,hr_updatedby,hr_updatedon,hr_reason',
+      filter: filters.join(' and ') || undefined, orderby: 'createdon desc', top: 500,
+    });
+    res.json({ data: (data || []).map(r => ({
+      id: r.hr_attendanceauditid, attendanceId: r.hr_attendanceid, employeeName: r.hr_employeename,
+      date: r.hr_date, action: r.hr_action, oldValues: safeJson(r.hr_oldvalue), newValues: safeJson(r.hr_newvalue),
+      updatedBy: r.hr_updatedby, updatedOn: r.hr_updatedon, reason: r.hr_reason || '',
+    })) });
+  } catch (_) { res.json({ data: [] }); }
 });
 
 // Build the full session view returned to clients (facts computed on read).

@@ -31,6 +31,9 @@ export const attendanceApi = {
   summary: (params) => api.get('/attendance/summary', { params }),
   sync: (from, to) => api.post('/attendance/sync', { from, to }),
   update: (id, data) => api.patch(`/attendance/${id}`, data),
+  edit: (id, data) => api.put(`/attendance/${id}/edit`, data),          // HR full edit + recompute + audit
+  historical: (data) => api.post('/attendance/historical', data),       // HR manual historical entry
+  audit: (params) => api.get('/attendance/audit', { params }),          // attendance edit history
   checkin: () => api.post('/attendance/checkin'),
   checkout: () => api.post('/attendance/checkout'),
   myStatus: () => api.get('/attendance/my-status'),
@@ -108,6 +111,7 @@ export const leaveOpeningApi = {
 export const holidayApi = {
   list: () => api.get('/holidays'),
   add: (data) => api.post('/holidays', data),
+  update: (id, data) => api.put(`/holidays/${id}`, data),
   remove: (id) => api.delete(`/holidays/${id}`),
 };
 

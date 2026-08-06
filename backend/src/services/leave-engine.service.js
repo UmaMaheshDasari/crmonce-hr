@@ -87,6 +87,7 @@ function computeBalance({ leaves = [], ledger = [], policy = {}, opening = {} })
 
   const openCasual = r2(Number(opening.casualUsed) || 0);
   const openSick = r2(Number(opening.sickUsed) || 0);
+  const openEarned = r2(Number(opening.earnedUsed) || 0);
   const openLop = r2(Number(opening.lopUsed) || 0);
   const openComp = r2(Number(opening.compOff) || 0);
 
@@ -94,7 +95,9 @@ function computeBalance({ leaves = [], ledger = [], policy = {}, opening = {} })
   const sickUsed = r2(sumDays(leaves, 'sick') + openSick);
   const paidUsed = r2(casualUsed + sickUsed);
   const explicitLop = r2(sumDays(leaves, 'lop') + openLop);
-  const otherUsed = r2(sumDays(leaves, 'other'));
+  // Earned Leave is uncapped ('other', always paid) — opening earned used is folded
+  // into the reported total for reports; it does not consume the CL/SL cap.
+  const otherUsed = r2(sumDays(leaves, 'other') + openEarned);
 
   const casualLop = Math.max(0, casualUsed - casualEnt);
   const sickLop = Math.max(0, sickUsed - sickEnt);
@@ -110,7 +113,8 @@ function computeBalance({ leaves = [], ledger = [], policy = {}, opening = {} })
     compOff: { earned: compEarned, used: compUsed, balance: clamp0(compEarned - compUsed) },
     lop: { fromLeave: r2(casualLop + sickLop + explicitLop) },
     otherPaidUsed: otherUsed,
-    opening: { casualUsed: openCasual, sickUsed: openSick, lopUsed: openLop, compOff: openComp },
+    earned: { used: otherUsed, openingUsed: openEarned },
+    opening: { casualUsed: openCasual, sickUsed: openSick, earnedUsed: openEarned, lopUsed: openLop, compOff: openComp },
     adjustments: adj,
   };
 }

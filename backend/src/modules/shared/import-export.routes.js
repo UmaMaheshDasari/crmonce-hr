@@ -9,6 +9,8 @@ const ie = require('../../services/import-export.service');
 const salaryStructure = require('../../services/salary-structure.service');
 const leaveEngine = require('../../services/leave-engine.service');
 const leaveOpening = require('../../services/leave-opening.service');
+const { computeSession } = require('../../services/attendance.util');
+const attnCfg = require('../../services/attendance.config');
 const { buildReport } = require('../../services/payroll-reports.service');
 const activity = require('../../services/activity.service');
 
@@ -83,7 +85,7 @@ const WRITERS = {
     // One-time opening balance per employee/year. Reject a second one for the same year.
     await leaveOpening.upsert({
       employeeId: r._guid, employeeName: r._empName, year: Number(d.year),
-      casualUsed: Number(d.casualUsed) || 0, sickUsed: Number(d.sickUsed) || 0,
+      casualUsed: Number(d.casualUsed) || 0, sickUsed: Number(d.sickUsed) || 0, earnedUsed: Number(d.earnedUsed) || 0,
       lopUsed: Number(d.lopUsed) || 0, compOff: Number(d.compOff) || 0,
       remarks: d.remarks || 'Imported from Excel', updatedBy: 'Import', reason: 'Imported',
     }, { allowUpdate: false });
@@ -98,8 +100,20 @@ const WRITERS = {
   },
   attendance: async (d, r) => {
     const existing = await d365.getList(E.attendance, { select: 'hr_hrattendanceid', filter: `_hr_hremployee_value eq '${r._guid}' and hr_date eq '${d.date}'`, top: 1 });
-    const body = { hr_date: d.date, hr_intime: d.inTime || '', hr_outtime: d.outTime || '' };
-    if (d.status) { try { body.hr_status = toValue('hr_attendance_status', String(d.status).toLowerCase()); } catch { /* leave unset */ } }
+    // Recompute hours/overtime/status from the in/out so historical imports are
+    // consistent with live attendance (not just raw in/out strings).
+    const times = [d.inTime, d.outTime].map(t => String(t || '').trim()).filter(Boolean);
+    let body = { hr_date: d.date, hr_intime: d.inTime || '', hr_outtime: d.outTime || '' };
+    if (times.length) {
+      const c = computeSession(times, attnCfg.resolveShift());
+      body = {
+        hr_date: d.date, hr_intime: c.firstPunch || '', hr_outtime: c.state === 'out' ? c.lastPunch : '',
+        hr_workedhours: c.totalSpanHours, hr_overtime: c.overtimeHours, hr_breakduration: c.breakHours,
+        hr_effectivehours: c.effectiveHours, hr_punchcount: c.count,
+        hr_allpunches: JSON.stringify(c.punches.map(p => p.t)), hr_status: toValue('hr_attendance_status', c.status),
+      };
+    }
+    if (d.status) { try { body.hr_status = toValue('hr_attendance_status', String(d.status).toLowerCase()); } catch { /* leave computed */ } }
     if (existing.data?.[0]) { await d365.update(E.attendance, existing.data[0].hr_hrattendanceid, body); return 'updated'; }
     await d365.create(E.attendance, { 'hr_hremployee@odata.bind': `/hr_hremployees(${r._guid})`, ...body }); return 'created';
   },

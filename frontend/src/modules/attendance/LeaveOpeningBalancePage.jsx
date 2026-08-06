@@ -44,7 +44,7 @@ function AuditModal({ employeeId, year, employeeName, onClose }) {
 export default function LeaveOpeningBalancePage() {
   const qc = useQueryClient();
   const [year, setYear] = useState(nowYear);
-  const [form, setForm] = useState({ employeeId: '', casualUsed: 0, sickUsed: 0, lopUsed: 0, compOff: 0, remarks: '', reason: '' });
+  const [form, setForm] = useState({ employeeId: '', casualUsed: 0, sickUsed: 0, earnedUsed: 0, lopUsed: 0, compOff: 0, remarks: '', reason: '' });
   const [auditFor, setAuditFor] = useState(null);
 
   const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500 }) });
@@ -60,8 +60,8 @@ export default function LeaveOpeningBalancePage() {
   // Prefill when picking an employee who already has an opening balance for the year.
   const pickEmployee = (id) => {
     const ex = rows.find(r => r.employeeId === id);
-    if (ex) setForm({ employeeId: id, casualUsed: ex.casualUsed, sickUsed: ex.sickUsed, lopUsed: ex.lopUsed, compOff: ex.compOff, remarks: ex.remarks, reason: '' });
-    else setForm({ employeeId: id, casualUsed: 0, sickUsed: 0, lopUsed: 0, compOff: 0, remarks: '', reason: '' });
+    if (ex) setForm({ employeeId: id, casualUsed: ex.casualUsed, sickUsed: ex.sickUsed, earnedUsed: ex.earnedUsed || 0, lopUsed: ex.lopUsed, compOff: ex.compOff, remarks: ex.remarks, reason: '' });
+    else setForm({ employeeId: id, casualUsed: 0, sickUsed: 0, earnedUsed: 0, lopUsed: 0, compOff: 0, remarks: '', reason: '' });
   };
 
   const save = useMutation({
@@ -118,6 +118,8 @@ export default function LeaveOpeningBalancePage() {
             <input type="number" step="0.5" min="0" className={inp} value={form.casualUsed} onChange={e => setForm(p => ({ ...p, casualUsed: e.target.value }))} /></div>
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Sick Leave Already Used</label>
             <input type="number" step="0.5" min="0" className={inp} value={form.sickUsed} onChange={e => setForm(p => ({ ...p, sickUsed: e.target.value }))} /></div>
+          <div><label className="block text-xs font-semibold text-gray-600 mb-1">Earned Leave Already Used</label>
+            <input type="number" step="0.5" min="0" className={inp} value={form.earnedUsed} onChange={e => setForm(p => ({ ...p, earnedUsed: e.target.value }))} /></div>
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">LOP Already Used</label>
             <input type="number" step="0.5" min="0" className={inp} value={form.lopUsed} onChange={e => setForm(p => ({ ...p, lopUsed: e.target.value }))} /></div>
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Comp Off Balance</label>
@@ -144,6 +146,7 @@ export default function LeaveOpeningBalancePage() {
                 <th className="px-4 py-3 font-semibold">Employee</th>
                 <th className="px-4 py-3 font-semibold">Casual Used</th>
                 <th className="px-4 py-3 font-semibold">Sick Used</th>
+                <th className="px-4 py-3 font-semibold">Earned Used</th>
                 <th className="px-4 py-3 font-semibold">LOP Used</th>
                 <th className="px-4 py-3 font-semibold">Comp Off</th>
                 <th className="px-4 py-3 font-semibold">Remarks</th>
@@ -152,14 +155,15 @@ export default function LeaveOpeningBalancePage() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {isLoading ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">No opening balances for {year}.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">No opening balances for {year}.</td></tr>
               ) : rows.map(r => (
                 <tr key={r.id} className="hover:bg-gray-50/50">
                   <td className="px-4 py-3 font-medium text-gray-800">{r.employeeName || empName(r.employeeId) || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{r.casualUsed}</td>
                   <td className="px-4 py-3 text-gray-600">{r.sickUsed}</td>
+                  <td className="px-4 py-3 text-gray-600">{r.earnedUsed || 0}</td>
                   <td className="px-4 py-3 text-gray-600">{r.lopUsed}</td>
                   <td className="px-4 py-3 text-gray-600">{r.compOff}</td>
                   <td className="px-4 py-3 text-gray-500 max-w-[14rem] truncate">{r.remarks || '—'}</td>

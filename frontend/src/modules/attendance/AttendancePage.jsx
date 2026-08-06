@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { format, startOfMonth, endOfMonth, subDays, subMonths, startOfYear } from 'date-fns';
 import { formatDuration } from '../../utils/formatDuration';
 import Button from '../../components/Button';
+import AttendanceEditModal from './AttendanceEditModal';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 
@@ -26,17 +27,23 @@ export default function AttendancePage() {
   const [empId, setEmpId] = useState('');
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
+  const [department, setDepartment] = useState('');   // HR filter
+  const [late, setLate] = useState(false);            // HR filter — late arrivals
+  const [missingPunch, setMissingPunch] = useState(false);   // HR filter — odd/open punches
   const [view, setView] = useState('');       // computed filter for export (late/early/overtime/…)
   const [exporting, setExporting] = useState(false);
+  const [editRec, setEditRec] = useState(null);       // HR: attendance record being edited
   const [page, setPage] = useState(1);
   const limit = 20;
 
+  // Any HR filter that needs server-side computed filtering forces the paged path.
+  const hrFilterActive = !!department || late || missingPunch;
   // In the "All" view we fetch all rows for the range (up to 2000) so records and
   // synthesized absentees can be merged and sorted DATE-WISE on the client.
-  const allView = status === '';
+  const allView = status === '' && !hrFilterActive;
   const { data, isLoading } = useQuery({
-    queryKey: ['attendance', empId, from, to, status, source, allView ? 'all' : page],
-    queryFn: () => attendanceApi.list({ employeeId: empId, from, to, status, source, page: allView ? 1 : page, limit: allView ? 2000 : limit }),
+    queryKey: ['attendance', empId, from, to, status, source, department, late, missingPunch, allView ? 'all' : page],
+    queryFn: () => attendanceApi.list({ employeeId: empId, from, to, status, source, department: department || undefined, late: late || undefined, missingPunch: missingPunch || undefined, page: allView ? 1 : page, limit: allView ? 2000 : limit }),
     placeholderData: (prev) => prev,
   });
 
@@ -72,12 +79,9 @@ export default function AttendancePage() {
   const startDate = firstDateData?.data?.firstDate || null;   // 'YYYY-MM-DD' or null
   const clampFrom = (d) => (startDate && d && d < startDate ? startDate : d);
 
-  // Default the From date to the employee's Attendance Start Date (the "Available
-  // from" date) once it resolves / the selected employee changes — so the view
-  // opens showing all attendance from the first punch, not just this month.
-  useEffect(() => {
-    if (startDate) { setFrom(startDate); setRange('custom'); setPage(1); }
-  }, [startDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The view opens on the CURRENT MONTH by default (employees should not initially
+  // see every record). `startDate` is still used to clamp the pickers so nothing
+  // before the first punch is selectable — but it no longer auto-expands the range.
 
   const guardDate = (v) => {
     if (startDate && v && v < startDate) {
@@ -121,7 +125,7 @@ export default function AttendancePage() {
     setRange('this_month');
     setFrom(clampFrom(format(startOfMonth(today), 'yyyy-MM-dd')));
     setTo(format(endOfMonth(today), 'yyyy-MM-dd'));
-    setEmpId(''); setStatus(''); setSource(''); setView(''); setPage(1);
+    setEmpId(''); setStatus(''); setSource(''); setView(''); setDepartment(''); setLate(false); setMissingPunch(false); setPage(1);
   };
 
   const { data: empData } = useQuery({
@@ -129,6 +133,22 @@ export default function AttendancePage() {
     queryFn: () => employeeApi.list({ limit: 200, status: 'active' }),
     enabled: isHR(),
   });
+
+  // Departments for the HR department filter.
+  const { data: deptData } = useQuery({
+    queryKey: ['departments-list'],
+    queryFn: () => employeeApi.departments(),
+    enabled: isHR(),
+  });
+  const departments = (deptData?.data?.data || deptData?.data || []).map(d => (typeof d === 'string' ? d : (d?.name || d?.hr_name || d?.department))).filter(Boolean);
+
+  // Year quick-filter → sets the range to a full calendar year.
+  const applyYear = (y) => {
+    if (!y) return;
+    setRange('custom'); setPage(1);
+    setFrom(clampFrom(`${y}-01-01`)); setTo(`${y}-12-31`);
+  };
+  const yearOptions = (() => { const y = today.getFullYear(); return [y, y - 1, y - 2, y - 3]; })();
 
   const syncMutation = useMutation({
     mutationFn: () => attendanceApi.sync(from, to),
@@ -255,10 +275,18 @@ export default function AttendancePage() {
           )}
         </td>
         <td className="px-5 py-4">
-          <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
-            <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-            {cfg.label}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+              <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+              {cfg.label}
+            </span>
+            {isHR() && (
+              <button onClick={() => setEditRec(r)} title="Edit attendance"
+                className="p-1 rounded-md text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">
+                <PencilSquareIcon className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </td>
       </tr>
     );
@@ -331,7 +359,13 @@ export default function AttendancePage() {
               <option value="this_month">This Month</option>
               <option value="last_month">Last Month</option>
               <option value="this_year">This Year</option>
-              <option value="custom">Custom</option>
+              <option value="custom">Custom Range</option>
+            </select>
+          </div>
+          <div className="min-w-[110px]">
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">Year</label>
+            <select className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none cursor-pointer" value={to.slice(0, 4)} onChange={e => applyYear(e.target.value)}>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">
@@ -378,6 +412,28 @@ export default function AttendancePage() {
               <option value="web_checkin">Web</option>
             </select>
           </div>
+          {isHR() && (
+            <div className="min-w-[170px]">
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">Department</label>
+              <select className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none" value={department} onChange={e => { setDepartment(e.target.value); setPage(1); }}>
+                <option value="">All Departments</option>
+                {departments.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
+          {isHR() && (
+            <div className="flex items-end gap-3 pb-0.5">
+              <label className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={late} onChange={e => { setLate(e.target.checked); setPage(1); }} /> Late Entry
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={missingPunch} onChange={e => { setMissingPunch(e.target.checked); setPage(1); }} /> Missing Punch
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={status === 'absent'} onChange={e => { setStatus(e.target.checked ? 'absent' : ''); setPage(1); }} /> LOP / Absent
+              </label>
+            </div>
+          )}
           <div className="min-w-[170px]">
             <label className="block text-xs font-medium text-gray-500 mb-1.5">Export filter</label>
             <select className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none" value={view} onChange={e => setView(e.target.value)} title="Applies to the Excel export">
@@ -448,6 +504,8 @@ export default function AttendancePage() {
           </div>
         )}
       </div>
+
+      {editRec && <AttendanceEditModal record={editRec} onClose={() => setEditRec(null)} />}
     </div>
   );
 }
