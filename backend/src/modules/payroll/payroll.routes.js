@@ -4,7 +4,9 @@ const payrollRouter = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { notifyPayrollProcessed, broadcast, notifyUser } = require('../../services/notification.service');
-const { toValue, labelsForList } = require('../../services/picklist');
+const { toValue, toLabel, labelsForList } = require('../../services/picklist');
+const { resolveDays } = require('../../services/leave-summary.util');
+const payrollDashboard = require('../../services/payroll-dashboard.service');
 const { rangeCounts } = require('../../services/attendance-summary.util');
 const { computePayroll, round2 } = require('../../services/payroll.calc');
 const { computePayrollEngine } = require('../../services/payroll-engine.calc');
@@ -250,6 +252,54 @@ payrollRouter.patch('/:id/release', requireRole('super_admin', 'hr_manager'), as
   } catch (err) {
     console.error('[payroll/release] FAILED:', err.message);
     res.status(err.status || 400).json({ error: err.message || 'Failed to release payroll' });
+  }
+});
+
+// GET /dashboard  — aggregated payroll analytics (HR). Filters: year, month,
+// department, employeeId. Powers cards, charts and the status pipeline.
+payrollRouter.get('/dashboard', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const filters = {
+      month: req.query.month ? Number(req.query.month) : undefined,
+      department: req.query.department || undefined,
+      employeeId: req.query.employeeId || undefined,
+    };
+
+    // Employees (active) — for the total count + department map.
+    const { data: emps } = await d365.getList(E.employee, {
+      select: 'hr_hremployeeid,hr_hremployee1,hr_department',
+      filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
+    });
+    const employees = (emps || []).map(e => ({ id: e.hr_hremployeeid, department: e.hr_department || 'Unassigned', name: e.hr_hremployee1 }));
+    const deptOf = new Map(employees.map(e => [e.id, e.department]));
+
+    // Payroll rows for the whole year (trends need all 12 months).
+    const pr = await d365.getListOptional(PAYROLL, {
+      select: BASE_SELECT, optionalSelect: OPT_SELECT, filter: `hr_year eq ${year}`, top: 5000,
+    });
+    const rows = (pr.data || []).map(r => ({
+      month: r.hr_month, gross: r.hr_gross, net: r.hr_netpay, lop: r.hr_lop, advance: r.hr_advance,
+      status: toLabel('hr_payroll_status', r.hr_status), locked: r.hr_locked === 'true',
+      employeeId: r._hr_hremployee_value, department: deptOf.get(r._hr_hremployee_value),
+    }));
+
+    // Approved leaves in the year → month/days for the Leave Trend.
+    let leaves = [];
+    try {
+      const { data } = await d365.getList(E.leave, {
+        select: 'hr_days,hr_fromdate,hr_todate,hr_status,_hr_hremployee_value',
+        filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`, top: 5000,
+      });
+      leaves = (data || [])
+        .filter(l => String(l.hr_fromdate || '').slice(0, 4) === String(year))
+        .map(l => ({ month: Number(String(l.hr_fromdate).slice(5, 7)) || 0, days: Number(resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate)) || 0, employeeId: l._hr_hremployee_value, department: deptOf.get(l._hr_hremployee_value) }));
+    } catch { /* leave trend is best-effort */ }
+
+    res.json({ year, filters, ...payrollDashboard.aggregate({ rows, employees, leaves, filters }) });
+  } catch (err) {
+    console.error('[payroll/dashboard] FAILED:', err.message);
+    res.status(err.status || 500).json({ error: err.message || 'Failed to load payroll dashboard' });
   }
 });
 

@@ -97,6 +97,7 @@ export const payrollApi = {
   payslipData: (id) => api.get(`/payroll/${id}/payslip-data`),
   emailPayslip: (id) => api.post(`/payroll/${id}/email`),
   report: (type, params) => api.get(`/payroll/reports/${type}`, { params, responseType: 'blob' }),
+  dashboard: (params) => api.get('/payroll/dashboard', { params }),
 };
 
 // ── Payroll Settings (admin-configurable payroll parameters) ─────
