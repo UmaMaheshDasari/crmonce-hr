@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { leaveApi } from '../../api/endpoints';
-import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import Button from '../../components/Button';
 import LeaveBalance from './LeaveBalance';
 import { useAuth } from '../../context/AuthContext';
@@ -403,6 +403,18 @@ function ApplyLeaveModal({ onClose }) {
 
   const days = form.from && form.to ? differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1 : 0;
 
+  // Current leave balance (self) — shown before applying (req 5) and used to block
+  // a leave type whose balance is exhausted (req 6).
+  const { data: balRes } = useQuery({ queryKey: ['leave-balance', 'self', new Date().getFullYear()], queryFn: () => leaveApi.balance({}) });
+  const bal = balRes?.data;
+  const casualRem = bal?.casual?.remaining;
+  const sickRem = bal?.sick?.remaining;
+  const compRem = bal?.compOff?.balance;
+  const exhausted =
+    (form.type === 'Casual Leave' && casualRem !== undefined && casualRem <= 0) ? 'You have exhausted your Casual Leave balance.'
+    : (form.type === 'Sick Leave' && sickRem !== undefined && sickRem <= 0) ? 'You have exhausted your Sick Leave balance.'
+    : '';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[calc(100dvh-2rem)] overflow-hidden my-auto">
@@ -423,6 +435,25 @@ function ApplyLeaveModal({ onClose }) {
         </div>
 
         <div className="flex-1 overflow-y-auto overscroll-contain p-6 space-y-5">
+          {/* Available leave balance (req 5) */}
+          {bal && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-2">Available Leave Balance ({bal.year})</p>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'Casual', val: casualRem, num: 'text-sky-700', bg: 'bg-sky-50' },
+                  { label: 'Sick', val: sickRem, num: 'text-rose-700', bg: 'bg-rose-50' },
+                  { label: 'Comp Off', val: compRem, num: 'text-emerald-700', bg: 'bg-emerald-50' },
+                ].map(c => (
+                  <div key={c.label} className={`rounded-xl px-3 py-2 text-center ${c.bg}`}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{c.label}</p>
+                    <p className={`text-lg font-bold ${c.num}`}>{Number(c.val || 0)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Leave Type Visual Selector */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2.5">Leave Type</label>
@@ -447,6 +478,11 @@ function ApplyLeaveModal({ onClose }) {
                 );
               })}
             </div>
+            {exhausted && (
+              <div className="mt-2 flex items-center gap-2 text-xs font-medium text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" /> {exhausted}
+              </div>
+            )}
           </div>
 
           {/* Date Range Side by Side */}
@@ -571,7 +607,7 @@ function ApplyLeaveModal({ onClose }) {
             fullWidth
             onClick={() => mutation.mutate()}
             loading={mutation.isPending}
-            disabled={!form.from || !form.to || !approverId || form.from < todayStr}
+            disabled={!form.from || !form.to || !approverId || form.from < todayStr || !!exhausted}
           >
             Submit Application
           </Button>

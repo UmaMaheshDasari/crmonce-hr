@@ -4,6 +4,7 @@ import { employeeApi, attendanceApi, documentApi } from '../../api/endpoints';
 import { PencilIcon, ChevronRightIcon, EnvelopeIcon, PhoneIcon, MapPinIcon, CalendarIcon, BuildingOfficeIcon, BriefcaseIcon, IdentificationIcon, ClockIcon, DocumentTextIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { useDocumentViewer } from '../../components/DocumentViewer';
+import LeaveBalance from '../attendance/LeaveBalance';
 import { formatDuration } from '../../utils/formatDuration';
 import { fmtTime, fmtVal, fmtDate } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
@@ -310,6 +311,9 @@ export default function EmployeeDetail() {
           </table>
         </div>
       </div>
+
+      {/* Leave Balance summary (auto-calculated from approved leave) */}
+      <LeaveBalance employeeId={id} employeeName={emp.hr_hremployee1} />
 
       {/* Documents */}
       <div className="bg-white rounded-xl border border-gray-100 p-6 hover:shadow-md transition-shadow duration-300">

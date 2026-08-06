@@ -8,7 +8,7 @@ import {
   CurrencyDollarIcon, SunIcon, ArrowRightOnRectangleIcon,
   ArrowLeftOnRectangleIcon, DocumentCheckIcon, BellAlertIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import { dashboardApi, attendanceApi, employeeApi, documentApi } from '../../api/endpoints';
+import { dashboardApi, attendanceApi, employeeApi, documentApi, leaveApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import MissingPunchModal from '../attendance/MissingPunchModal';
@@ -105,6 +105,9 @@ export default function EmployeeDashboard() {
   const completion = prof?._completion || { percent: 0, missing: [] };
   const vstatus = prof?._verifystatus || prof?.hr_verifystatus || 'verified';
   const { data: myDocsRes } = useQuery({ queryKey: ['documents', user?.id], queryFn: () => documentApi.list({ employeeId: user.id }), enabled: !!user?.id });
+  // Allocation-based leave balance (auto-calculated from approved leave) — req 8.
+  const { data: leaveBalRes } = useQuery({ queryKey: ['leave-balance', 'self', new Date().getFullYear()], queryFn: () => leaveApi.balance({}) });
+  const lb = leaveBalRes?.data;
   const REQUIRED_DOCS = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
   const uploadedNames = new Set((myDocsRes?.data?.data || []).map(x => x.hr_name));
   const missingDocs = REQUIRED_DOCS.filter(n => !uploadedNames.has(n));
@@ -323,6 +326,29 @@ export default function EmployeeDashboard() {
           </div>
         </div>
       </div>
+
+      {/* ── Leave Balance (allocation-based, auto-calculated) ─────────────── */}
+      {lb && (
+        <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold text-gray-900">Leave Balance · {lb.year}</h2>
+            <Link to="/leave" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">Details →</Link>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {[
+              { label: 'Casual (CL)', value: `${Number(lb.casual?.remaining || 0)}/${Number(lb.casual?.entitled || 0)}`, tone: 'bg-sky-50 text-sky-700' },
+              { label: 'Sick (SL)', value: `${Number(lb.sick?.remaining || 0)}/${Number(lb.sick?.entitled || 0)}`, tone: 'bg-rose-50 text-rose-700' },
+              { label: 'Comp Off', value: `${Number(lb.compOff?.balance || 0)}`, tone: 'bg-emerald-50 text-emerald-700' },
+              { label: 'LOP', value: `${Number(lb.lop?.fromLeave || 0)}`, tone: 'bg-amber-50 text-amber-700' },
+            ].map(c => (
+              <div key={c.label} className={`rounded-xl px-3 py-2.5 ${c.tone}`}>
+                <p className="text-xl font-extrabold tabular-nums leading-none">{c.value}</p>
+                <p className="text-[12px] font-semibold mt-1 leading-tight">{c.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Recent Activity ───────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-100 p-5">

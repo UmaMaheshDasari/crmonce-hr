@@ -255,6 +255,21 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'To date cannot be before From date.' });
     }
 
+    // Balance guard (req 6): block a fully-exhausted Casual/Sick leave. The UI also
+    // blocks it, but never trust the client. Best-effort — a lookup failure never
+    // blocks a legitimate application. Uses the leave engine (approved leaves only).
+    const typeLabel = String(body.hr_leavetype || '');
+    if (typeLabel === 'Casual Leave' || typeLabel === 'Sick Leave') {
+      try {
+        const yr = Number(String(fromDate).slice(0, 4)) || new Date().getFullYear();
+        const balance = await leaveEngine.getBalance(req.user.id, yr);
+        const rem = typeLabel === 'Casual Leave' ? balance.casual?.remaining : balance.sick?.remaining;
+        if (typeof rem === 'number' && rem <= 0) {
+          return res.status(400).json({ error: `You have exhausted your ${typeLabel} balance.` });
+        }
+      } catch (_) { /* engine unavailable — don't block */ }
+    }
+
     if (body.hr_leavetype) body.hr_leavetype = toValue('hr_leave_type', body.hr_leavetype);
 
     // Set initial approval status

@@ -14,6 +14,7 @@ import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRu
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
 import DocumentsManager from '../../components/DocumentsManager';
+import LeaveBalance from '../attendance/LeaveBalance';
 
 const GENDERS = ['Male', 'Female'];
 const MARITAL = ['Single', 'Married'];
@@ -337,6 +338,9 @@ export default function ProfilePage() {
           )}
         </div>
       </div>
+
+      {/* Leave Balance summary (auto-calculated from approved leave) */}
+      <LeaveBalance employeeId={id} employeeName={emp?.hr_hremployee1} />
     </div>
   );
 }

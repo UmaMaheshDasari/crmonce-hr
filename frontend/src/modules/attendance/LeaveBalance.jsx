@@ -102,20 +102,28 @@ function ManageModal({ employeeId, employeeName, onClose }) {
   );
 }
 
-export default function LeaveBalance() {
+// `employeeId` fixes the summary to one person (My Profile / HR Employee Details);
+// omit it for the Leave page, where HR gets an employee picker and the default is
+// the signed-in user.
+export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedName }) {
   const { user, isHR } = useAuth();
   const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
   const [selectedEmp, setSelectedEmp] = useState('');
   const [showManage, setShowManage] = useState(false);
+  const nowYear = new Date().getFullYear();
+  const [year, setYear] = useState(nowYear);
+  const years = [nowYear + 1, nowYear, nowYear - 1, nowYear - 2];   // history (req 10)
 
-  const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500 }), enabled: hr });
+  const showPicker = hr && !fixedId;
+  const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500 }), enabled: showPicker });
   const employees = empRes?.data?.data || empRes?.data || [];
-  const targetId = hr ? (selectedEmp || undefined) : undefined;   // undefined → self on the backend
-  const targetName = hr && selectedEmp ? (employees.find(e => e.hr_hremployeeid === selectedEmp)?.hr_hremployee1 || 'Employee') : (user?.name || 'You');
+  const targetId = fixedId || (hr ? (selectedEmp || undefined) : undefined);   // undefined → self on the backend
+  const manageEmpId = fixedId || selectedEmp;   // a concrete employee HR can manage
+  const targetName = fixedName || (fixedId ? '' : (hr && selectedEmp ? (employees.find(e => e.hr_hremployeeid === selectedEmp)?.hr_hremployee1 || 'Employee') : (user?.name || 'You')));
 
   const { data: bal, isLoading } = useQuery({
-    queryKey: ['leave-balance', targetId || 'self'],
-    queryFn: () => leaveApi.balance(targetId ? { employeeId: targetId } : {}),
+    queryKey: ['leave-balance', targetId || 'self', year],
+    queryFn: () => leaveApi.balance({ ...(targetId ? { employeeId: targetId } : {}), year }),
   });
   const b = bal?.data;
 
@@ -136,23 +144,30 @@ export default function LeaveBalance() {
     <div className="bg-gray-50/60 rounded-2xl border border-gray-100 p-4 sm:p-5 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold text-gray-900">Leave Balance {b?.year ? `· ${b.year}` : ''}</h2>
-          <p className="text-xs text-gray-400">Policy: 12 Casual + 6 Sick = 18 paid/year. Beyond that becomes LOP.</p>
+          <h2 className="text-sm font-bold text-gray-900">Leave Balance · {year}</h2>
+          <p className="text-xs text-gray-400">Leave year Jan–Dec. Policy: 12 Casual + 6 Sick = 18 paid/year. Beyond that becomes LOP (unpaid).</p>
         </div>
-        {hr && (
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          {/* Year history (req 10) */}
+          <select value={year} onChange={e => setYear(Number(e.target.value))}
+            className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          {showPicker && (
             <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)}
               className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
               <option value="">Me</option>
               {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
             </select>
-            <button onClick={() => setShowManage(true)} disabled={!selectedEmp}
-              className="inline-flex items-center gap-1.5 h-9 px-3 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-40"
-              title={selectedEmp ? 'Adjust balance / comp-off' : 'Select an employee first'}>
+          )}
+          {hr && manageEmpId && (
+            <button onClick={() => setShowManage(true)}
+              className="inline-flex items-center gap-1.5 h-9 px-3 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700"
+              title="Adjust balance / comp-off">
               <AdjustmentsHorizontalIcon className="w-4 h-4" /> Manage
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {isLoading ? (
@@ -163,7 +178,7 @@ export default function LeaveBalance() {
         </div>
       )}
 
-      {showManage && selectedEmp && <ManageModal employeeId={selectedEmp} employeeName={targetName} onClose={() => setShowManage(false)} />}
+      {showManage && manageEmpId && <ManageModal employeeId={manageEmpId} employeeName={targetName || fixedName || 'Employee'} onClose={() => setShowManage(false)} />}
     </div>
   );
 }
