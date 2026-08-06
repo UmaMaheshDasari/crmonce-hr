@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leaveApi } from '../../api/endpoints';
+import { leaveApi, employeeApi } from '../../api/endpoints';
 import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import Button from '../../components/Button';
 import LeaveBalance from './LeaveBalance';
@@ -17,6 +17,7 @@ const LEAVE_TYPE_ICONS = {
   'Earned Leave': { emoji: '\u2b50', color: 'bg-amber-50 text-amber-700 border-amber-200' },
   'Maternity Leave': { emoji: '\ud83d\udc76', color: 'bg-pink-50 text-pink-700 border-pink-200' },
   'Paternity Leave': { emoji: '\ud83d\udc68\u200d\ud83d\udc76', color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  'Comp Off': { emoji: '\ud83d\udd01', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   'LOP': { emoji: '\u26a0\ufe0f', color: 'bg-gray-50 text-gray-700 border-gray-200' },
 };
 
@@ -377,7 +378,14 @@ function LeaveActions({ leave, user, isHR }) {
 
 function ApplyLeaveModal({ onClose }) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const todayStr = format(new Date(), 'yyyy-MM-dd');   // leave can start today or later, never in the past
+
+  // Employee profile drives gender/marital eligibility for Maternity / Paternity.
+  const { data: meRes } = useQuery({ queryKey: ['employee', user?.id], queryFn: () => employeeApi.get(user.id), enabled: !!user?.id });
+  const me = meRes?.data;
+  const gender = String(me?.hr_gender || '').toLowerCase();
+  const isMarried = String(me?.hr_maritalstatus || '').toLowerCase() === 'married';
   const [form, setForm] = useState({ type: 'Casual Leave', from: '', to: '', reason: '' });
   const [approverId, setApproverId] = useState('');
   const [cc, setCc] = useState([]);              // selected employee ids
@@ -429,27 +437,48 @@ function ApplyLeaveModal({ onClose }) {
 
   const days = form.from && form.to ? differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1 : 0;
 
-  // Current leave balance (self) — shown before applying (req 5) and used to block
-  // a leave type whose balance is exhausted (req 6).
+  // Current leave balance (self) — shown before applying (req 5) and used to build
+  // the dynamic leave-type dropdown / block exhausted types (req 6, req 3).
   const { data: balRes } = useQuery({ queryKey: ['leave-balance', 'self', new Date().getFullYear()], queryFn: () => leaveApi.balance({}) });
   const bal = balRes?.data;
   const casualRem = bal?.casual?.remaining;
   const sickRem = bal?.sick?.remaining;
   const compRem = bal?.compOff?.balance;
-  const exhausted =
-    (form.type === 'Casual Leave' && casualRem !== undefined && casualRem <= 0) ? 'You have exhausted your Casual Leave balance.'
-    : (form.type === 'Sick Leave' && sickRem !== undefined && sickRem <= 0) ? 'You have exhausted your Sick Leave balance.'
-    : '';
 
-  // Medical Certificate policy (configurable; never hardcoded) — a Sick Leave longer
-  // than the threshold requires a certificate before it can be submitted (req 1).
-  const { data: certPolicy } = useQuery({
-    queryKey: ['medcert-policy'],
-    queryFn: () => leaveApi.medCertPolicy().then(r => r.data),
-    staleTime: 5 * 60 * 1000,
+  // Dynamic leave types (req 3): a balance-tracked type disappears when exhausted;
+  // Comp Off appears only when there is a comp-off balance. Policy leaves (Earned/
+  // Maternity/Paternity) and LOP are always available.
+  const availableTypes = LEAVE_TYPES.filter(t => {
+    // Maternity/Paternity depend on gender + marital status (hidden for unmarried).
+    if (t === 'Maternity Leave') return gender === 'female' && isMarried;
+    if (t === 'Paternity Leave') return gender === 'male' && isMarried;
+    if (!bal) return true;
+    if (t === 'Casual Leave') return (casualRem ?? 1) > 0;
+    if (t === 'Sick Leave') return (sickRem ?? 1) > 0;
+    return true;
   });
-  const certRequired = !!certPolicy?.required && form.type === 'Sick Leave' && days > (Number(certPolicy?.afterDays) || 1);
-  const certThreshold = Number(certPolicy?.threshold) || 2;
+  if (bal && (compRem ?? 0) > 0) availableTypes.splice(Math.min(2, availableTypes.length), 0, 'Comp Off');
+
+  // If the selected type is no longer available, fall back to the first available.
+  useEffect(() => {
+    if (bal && availableTypes.length && !availableTypes.includes(form.type)) {
+      setForm(p => ({ ...p, type: availableTypes[0] }));
+    }
+  }, [bal, form.type]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const compShort = form.type === 'Comp Off' && (compRem ?? 0) < days
+    ? `Insufficient Comp Off balance. Available: ${Number(compRem || 0)} day(s), requested ${days}.` : '';
+  const exhausted = compShort;
+
+  // Medical Certificate — dynamic per-request check based on the employee's
+  // consecutive Sick-Leave working-day run (req 1; ignores weekly-offs/holidays).
+  const { data: certChk } = useQuery({
+    queryKey: ['medcert-check', form.from, form.to, form.type],
+    queryFn: () => leaveApi.medCertCheck({ from: form.from, to: form.to }).then(r => r.data),
+    enabled: form.type === 'Sick Leave' && !!form.from && !!form.to,
+  });
+  const certRequired = form.type === 'Sick Leave' && !!certChk?.required;
+  const certThreshold = Number(certChk?.threshold) || 2;
   const certMissing = certRequired && !certDoc;
 
   return (
@@ -472,21 +501,31 @@ function ApplyLeaveModal({ onClose }) {
         </div>
 
         <div className="flex-1 overflow-y-auto overscroll-contain p-6 space-y-5">
-          {/* Available leave balance (req 5) */}
+          {/* Available leave balance — allocated · used · remaining (req 2) */}
           {bal && (
             <div>
-              <p className="text-xs font-semibold text-gray-500 mb-2">Available Leave Balance ({bal.year})</p>
-              <div className="grid grid-cols-3 gap-2">
+              <p className="text-xs font-semibold text-gray-500 mb-2">Leave Balance ({bal.year})</p>
+              <div className="grid grid-cols-2 gap-2">
                 {[
-                  { label: 'Casual', val: casualRem, num: 'text-sky-700', bg: 'bg-sky-50' },
-                  { label: 'Sick', val: sickRem, num: 'text-rose-700', bg: 'bg-rose-50' },
-                  { label: 'Comp Off', val: compRem, num: 'text-emerald-700', bg: 'bg-emerald-50' },
+                  { label: 'Casual Leave', b: bal.casual, num: 'text-sky-700', bg: 'bg-sky-50' },
+                  { label: 'Sick Leave', b: bal.sick, num: 'text-rose-700', bg: 'bg-rose-50' },
                 ].map(c => (
-                  <div key={c.label} className={`rounded-xl px-3 py-2 text-center ${c.bg}`}>
+                  <div key={c.label} className={`rounded-xl px-3 py-2 ${c.bg}`}>
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{c.label}</p>
-                    <p className={`text-lg font-bold ${c.num}`}>{Number(c.val || 0)}</p>
+                    <p className={`text-lg font-bold ${c.num}`}>{Number(c.b?.remaining || 0)} <span className="text-[11px] font-medium text-gray-400">left</span></p>
+                    <p className="text-[10px] text-gray-500">Allocated {Number(c.b?.entitled || 0)} · Used {Number(c.b?.used || 0)}</p>
                   </div>
                 ))}
+                <div className="rounded-xl px-3 py-2 bg-emerald-50">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Comp Off</p>
+                  <p className="text-lg font-bold text-emerald-700">{Number(compRem || 0)} <span className="text-[11px] font-medium text-gray-400">available</span></p>
+                  <p className="text-[10px] text-gray-500">Earned {Number(bal.compOff?.earned || 0)} · Used {Number(bal.compOff?.used || 0)}</p>
+                </div>
+                <div className="rounded-xl px-3 py-2 bg-amber-50">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">LOP (this year)</p>
+                  <p className="text-lg font-bold text-amber-700">{Number(bal.lop?.fromLeave || 0)} <span className="text-[11px] font-medium text-gray-400">unpaid</span></p>
+                  <p className="text-[10px] text-gray-500">Loss-of-pay days used</p>
+                </div>
               </div>
             </div>
           )}
@@ -495,7 +534,7 @@ function ApplyLeaveModal({ onClose }) {
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2.5">Leave Type</label>
             <div className="grid grid-cols-3 gap-2">
-              {LEAVE_TYPES.map(t => {
+              {availableTypes.map(t => {
                 const cfg = LEAVE_TYPE_ICONS[t] || LEAVE_TYPE_ICONS['LOP'];
                 const isSelected = form.type === t;
                 return (
@@ -761,7 +800,8 @@ export default function LeavePage() {
           leaves.map(leave => {
             const statusBorder = getStatusBorderClass(leave);
             const statusInfo = getOverallStatusLabel(leave);
-            const typeConfig = LEAVE_TYPE_ICONS[leave.hr_leavetype] || LEAVE_TYPE_ICONS['LOP'];
+            const displayType = leave.hr_usecompoff === 'true' ? 'Comp Off' : leave.hr_leavetype;
+            const typeConfig = LEAVE_TYPE_ICONS[displayType] || LEAVE_TYPE_ICONS['LOP'];
             return (
               <div key={leave.hr_hrleaveid} className={`bg-white rounded-xl border border-gray-100 border-l-4 ${statusBorder} shadow-sm hover:shadow-md transition-all duration-200`}>
                 <div className="p-5">
@@ -775,7 +815,7 @@ export default function LeavePage() {
                           </h3>
                         )}
                         <span className={`inline-flex items-center gap-1 text-xs font-medium border px-2.5 py-0.5 rounded-full ${typeConfig.color}`}>
-                          <span className="text-xs">{typeConfig.emoji}</span> {leave.hr_leavetype}
+                          <span className="text-xs">{typeConfig.emoji}</span> {displayType}
                         </span>
                         <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${statusInfo.text}`}>
                           <span className={`w-2 h-2 rounded-full ${statusInfo.dot}`} />

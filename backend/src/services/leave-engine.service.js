@@ -17,6 +17,7 @@ const d365 = require('./d365.service');
 const { toValue, toLabel } = require('./picklist');
 const { resolveDays } = require('./leave-summary.util');
 const payrollSettings = require('./payroll-settings.service');
+const leaveOpening = require('./leave-opening.service');
 
 const LEAVE = d365.constructor.entities.leave;
 const LEDGER = d365.constructor.entities.leaveLedger;
@@ -73,33 +74,43 @@ function adjustmentsByCategory(ledger) {
 
 /**
  * Full leave-balance picture for a year. Pure.
- * @param {{leaves:Array, ledger:Array, policy:{casual:number,sick:number}}} p
+ *
+ * `opening` folds in the historical (Excel-migrated) opening balance so that
+ *   Current Used = Opening Used + in-system leaves.
+ * @param {{leaves:Array, ledger:Array, policy:{casual:number,sick:number}, opening?:object}} p
  */
-function computeBalance({ leaves = [], ledger = [], policy = {} }) {
+function computeBalance({ leaves = [], ledger = [], policy = {}, opening = {} }) {
   const adj = adjustmentsByCategory(ledger);
   const casualEnt = r2((policy.casual ?? 12) + adj.casual);
   const sickEnt = r2((policy.sick ?? 6) + adj.sick);
   const paidEnt = r2(casualEnt + sickEnt);
 
-  const casualUsed = r2(sumDays(leaves, 'casual'));
-  const sickUsed = r2(sumDays(leaves, 'sick'));
+  const openCasual = r2(Number(opening.casualUsed) || 0);
+  const openSick = r2(Number(opening.sickUsed) || 0);
+  const openLop = r2(Number(opening.lopUsed) || 0);
+  const openComp = r2(Number(opening.compOff) || 0);
+
+  const casualUsed = r2(sumDays(leaves, 'casual') + openCasual);
+  const sickUsed = r2(sumDays(leaves, 'sick') + openSick);
   const paidUsed = r2(casualUsed + sickUsed);
-  const explicitLop = r2(sumDays(leaves, 'lop'));
+  const explicitLop = r2(sumDays(leaves, 'lop') + openLop);
   const otherUsed = r2(sumDays(leaves, 'other'));
 
   const casualLop = Math.max(0, casualUsed - casualEnt);
   const sickLop = Math.max(0, sickUsed - sickEnt);
 
-  const compEarned = r2(sumLedger(ledger, 'comp_off_earned'));
+  // Opening comp-off is credited as if earned; comp-off usage stays in the ledger.
+  const compEarned = r2(sumLedger(ledger, 'comp_off_earned') + openComp);
   const compUsed = r2(sumLedger(ledger, 'comp_off_used'));
 
   return {
-    casual: { entitled: casualEnt, used: casualUsed, remaining: clamp0(casualEnt - casualUsed) },
-    sick: { entitled: sickEnt, used: sickUsed, remaining: clamp0(sickEnt - sickUsed) },
+    casual: { entitled: casualEnt, used: casualUsed, remaining: clamp0(casualEnt - casualUsed), openingUsed: openCasual },
+    sick: { entitled: sickEnt, used: sickUsed, remaining: clamp0(sickEnt - sickUsed), openingUsed: openSick },
     paid: { entitled: paidEnt, used: paidUsed, remaining: clamp0(paidEnt - paidUsed) },
     compOff: { earned: compEarned, used: compUsed, balance: clamp0(compEarned - compUsed) },
     lop: { fromLeave: r2(casualLop + sickLop + explicitLop) },
     otherPaidUsed: otherUsed,
+    opening: { casualUsed: openCasual, sickUsed: openSick, lopUsed: openLop, compOff: openComp },
     adjustments: adj,
   };
 }
@@ -109,13 +120,15 @@ function computeBalance({ leaves = [], ledger = [], policy = {} }) {
  * cap consumed by earlier months (chronological consumption). Pure.
  * @returns {{paidLeaveDays:number, lopLeaveDays:number}}
  */
-function computeMonthSplit({ leaves = [], policy = {}, adjustments = {}, month }) {
+function computeMonthSplit({ leaves = [], policy = {}, adjustments = {}, month, opening = {} }) {
   const paidEnt = r2((policy.casual ?? 12) + (policy.sick ?? 6) + (adjustments.casual || 0) + (adjustments.sick || 0));
   const paidLeaves = leaves
     .filter((l) => l.category === 'casual' || l.category === 'sick')
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-  let consumed = 0, monthPaid = 0, monthLop = 0;
+  // Opening (historical) CL+SL already consumed part of the annual paid cap.
+  let consumed = r2((Number(opening.casualUsed) || 0) + (Number(opening.sickUsed) || 0));
+  let monthPaid = 0, monthLop = 0;
   for (const l of paidLeaves) {
     const remaining = Math.max(0, paidEnt - consumed);
     const paidPart = Math.min(l.days, remaining);
@@ -162,12 +175,13 @@ async function getPolicy() {
 async function getBalance(employeeId, year) {
   const y = year || new Date().getFullYear();
   try {
-    const [leaves, ledger, policy] = await Promise.all([
+    const [leaves, ledger, policy, opening] = await Promise.all([
       fetchApprovedLeaves(employeeId, y).catch(() => []),
       fetchLedger(employeeId, y),
       getPolicy(),
+      leaveOpening.getOpening(employeeId, y).catch(() => ({})),
     ]);
-    return { employeeId, year: Number(y), ...computeBalance({ leaves, ledger, policy }) };
+    return { employeeId, year: Number(y), ...computeBalance({ leaves, ledger, policy, opening }) };
   } catch (e) {
     global.logger?.warn?.(`[leave-engine] getBalance failed for ${employeeId}: ${e.message}`);
     const policy = await getPolicy();
@@ -182,13 +196,14 @@ async function getBalance(employeeId, year) {
  */
 async function splitMonthLeave(employeeId, { year, month }) {
   try {
-    const [leaves, ledger, policy] = await Promise.all([
+    const [leaves, ledger, policy, opening] = await Promise.all([
       fetchApprovedLeaves(employeeId, year),
       fetchLedger(employeeId, year),
       getPolicy(),
+      leaveOpening.getOpening(employeeId, year).catch(() => ({})),
     ]);
     const adjustments = adjustmentsByCategory(ledger);
-    return computeMonthSplit({ leaves, policy, adjustments, month: Number(month) });
+    return computeMonthSplit({ leaves, policy, adjustments, month: Number(month), opening });
   } catch (e) {
     global.logger?.warn?.(`[leave-engine] splitMonthLeave fallback for ${employeeId}: ${e.message}`);
     // Legacy fallback: sum approved leave in the month, all treated as paid.

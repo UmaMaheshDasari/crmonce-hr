@@ -13,6 +13,8 @@ import AttendancePage from './modules/attendance/AttendancePage';
 import AttendanceRequestsPage from './modules/attendance/AttendanceRequestsPage';
 import HolidaysPage from './modules/attendance/HolidaysPage';
 import LeavePage from './modules/attendance/LeavePage';
+import CompOffPage from './modules/attendance/CompOffPage';
+import LeaveOpeningBalancePage from './modules/attendance/LeaveOpeningBalancePage';
 import PayrollPage from './modules/payroll/PayrollPage';
 import RecruitmentPage from './modules/recruitment/RecruitmentPage';
 import PerformancePage from './modules/performance/PerformancePage';
@@ -69,6 +71,8 @@ function AppRoutes() {
         <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
         <Route path="holidays" element={<HolidaysPage />} />
         <Route path="leave" element={<LeavePage />} />
+        <Route path="comp-off" element={<CompOffPage />} />
+        <Route path="leave-opening-balance" element={<ProtectedRoute roles={['super_admin','hr_manager']}><LeaveOpeningBalancePage /></ProtectedRoute>} />
         <Route path="payroll" element={<PayrollPage />} />
         <Route path="payroll-dashboard" element={<ProtectedRoute roles={['super_admin','hr_manager']}><PayrollDashboardPage /></ProtectedRoute>} />
         <Route path="payroll-automation" element={<ProtectedRoute roles={['super_admin','hr_manager']}><AutomationPage /></ProtectedRoute>} />

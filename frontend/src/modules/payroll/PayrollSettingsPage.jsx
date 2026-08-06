@@ -53,10 +53,19 @@ const SECTIONS = [
   },
   {
     title: 'Sick Leave — Medical Certificate',
-    hint: 'Require a medical certificate (hospital report) when a Sick Leave exceeds the threshold. A certificate becomes mandatory when Sick Leave days is greater than the value below (e.g. 1 → mandatory for 2+ days).',
+    hint: 'Require a medical certificate (hospital report) when the CONSECUTIVE working-day Sick-Leave run (across history, ignoring weekly-offs/holidays) exceeds the threshold. e.g. 1 → mandatory for 2+ consecutive working days.',
     fields: [
       { name: 'hr_medcertrequired', label: 'Medical Certificate Required for Sick Leave', toggle: true },
-      { name: 'hr_medcertafterdays', label: 'Medical Certificate Required After (days)', type: 'number', hint: 'Mandatory when Sick Leave days is more than this' },
+      { name: 'hr_medcertafterdays', label: 'Medical Certificate Required After (days)', type: 'number', hint: 'Mandatory when the consecutive run is more than this' },
+    ],
+  },
+  {
+    title: 'Comp Off',
+    hint: 'Comp-off is earned by working a holiday / weekly-off (auto-detected, HR-approved) or granted manually. It is paid leave — never LOP.',
+    fields: [
+      { name: 'hr_compoffautoearn', label: 'Auto-earn on Holiday / Weekly-off Work', toggle: true },
+      { name: 'hr_compoffemployeeraise', label: 'Allow Employees to Raise Comp Off', toggle: true },
+      { name: 'hr_compoffexpirydays', label: 'Comp Off Expiry (days after worked date)', type: 'number', hint: '0 = never expires' },
     ],
   },
 ];

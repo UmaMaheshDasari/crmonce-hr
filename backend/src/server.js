@@ -117,6 +117,7 @@ app.use('/api/activity',    authenticateToken, activityRoutes);
 app.use('/api/dashboard',   authenticateToken, dashboardRoutes);
 app.use('/api/attendance-requests', authenticateToken, attendanceRequestRoutes);
 app.use('/api/holidays',    authenticateToken, holidayRoutes);
+app.use('/api/leave-opening', authenticateToken, require('./modules/attendance/leave-opening.routes'));
 app.use('/api/company',     authenticateToken, require('./modules/company/company.routes'));
 app.use('/api/import-export', authenticateToken, require('./modules/shared/import-export.routes'));
 
@@ -179,6 +180,12 @@ server.listen(PORT, () => {
     require('./services/provision-leave-columns')
       .ensureLeaveColumns(logger, { retry: true })
       .catch(err => logger.warn(`[provision] leave columns skipped: ${err.message}`));
+    require('./services/provision-comp-off')
+      .ensureCompOffTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] comp-off table skipped: ${err.message}`));
+    require('./services/provision-leave-opening')
+      .ensureLeaveOpeningTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] leave-opening tables skipped: ${err.message}`));
     require('./services/provision-advance')
       .ensureAdvanceTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] advance salary table skipped: ${err.message}`));

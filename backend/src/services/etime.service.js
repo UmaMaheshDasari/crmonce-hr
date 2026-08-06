@@ -175,6 +175,15 @@ class ZKDeviceService {
           await d365.create(d365.constructor.entities.attendance, payload);
         }
         results.synced++;
+
+        // Auto comp-off: a full/half day worked on a holiday or weekly-off raises a
+        // pending comp-off (HR approval is the verification gate). Best-effort.
+        try {
+          require('./comp-off.service').maybeAutoCompOff({
+            employeeId: employee.hr_hremployeeid, employeeName: employee.hr_hremployee1,
+            date: entry.date, statusLabel: status, workedHours: entry.workedHours,
+          });
+        } catch (_) { /* never block attendance sync */ }
       } catch (err) {
         results.errors.push({ userId: entry.deviceUserId, date: entry.date, error: err.message });
         global.logger?.error(`ZK sync error for user ${entry.deviceUserId} on ${entry.date}: ${err.message}`);

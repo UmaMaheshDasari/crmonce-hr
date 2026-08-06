@@ -76,6 +76,32 @@ export const leaveApi = {
   adjust: (data) => api.post('/attendance/leave/adjust', data),
   // Sick-leave Medical Certificate policy (configurable; not hardcoded in the UI).
   medCertPolicy: () => api.get('/attendance/leave/medcert-policy'),
+  // Dynamic per-request check: is a certificate required for THESE dates given the
+  // employee's consecutive Sick-Leave run (across history, ignoring offs/holidays)?
+  medCertCheck: (params) => api.get('/attendance/leave/medcert-check', { params }),
+};
+
+// ── Comp Off ─────────────────────────────────────────────────────
+export const compOffApi = {
+  list: (params) => api.get('/attendance/comp-off', { params }),
+  balance: (params) => api.get('/attendance/comp-off/balance', { params }),
+  policy: () => api.get('/attendance/comp-off/policy'),
+  create: (data) => api.post('/attendance/comp-off', data),
+  approve: (id) => api.patch(`/attendance/comp-off/${id}/approve`),
+  reject: (id, remarks) => api.patch(`/attendance/comp-off/${id}/reject`, { remarks }),
+  cancel: (id, remarks) => api.patch(`/attendance/comp-off/${id}/cancel`, { remarks }),
+  expire: (id) => api.patch(`/attendance/comp-off/${id}/expire`),
+  edit: (id, data) => api.patch(`/attendance/comp-off/${id}`, data),
+  scan: (data) => api.post('/attendance/comp-off/scan', data),
+};
+
+// ── Leave Opening Balance (historical migration) ─────────────────
+export const leaveOpeningApi = {
+  list: (params) => api.get('/leave-opening', { params }),
+  audit: (params) => api.get('/leave-opening/audit', { params }),
+  create: (data) => api.post('/leave-opening', data),
+  update: (data) => api.put('/leave-opening', data),
+  remove: (id) => api.delete(`/leave-opening/${id}`),
 };
 
 // ── Holiday Calendar (HR-managed) ────────────────────────────────

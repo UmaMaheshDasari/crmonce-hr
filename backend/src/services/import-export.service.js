@@ -95,6 +95,21 @@ const TYPES = {
     dedupe: (r) => `${S(r.employeeCode).toLowerCase()}|${toDateStr(r.date)}|${S(r.days)}`,
     dupePolicy: 'allow',
   },
+  leaveopening: {
+    label: 'Leave Opening Balance', employeeKey: 'employeeCode',
+    columns: [
+      { key: 'employeeCode', header: 'Employee ID', required: true },
+      { key: 'year', header: 'Leave Year', required: true, kind: 'number' },
+      { key: 'casualUsed', header: 'Casual Used', kind: 'number' },
+      { key: 'sickUsed', header: 'Sick Used', kind: 'number' },
+      { key: 'lopUsed', header: 'LOP Used', kind: 'number' },
+      { key: 'compOff', header: 'Comp Off Balance', kind: 'number' },
+      { key: 'remarks', header: 'Remarks' },
+    ],
+    // One opening balance per employee per year — reject duplicates.
+    dedupe: (r) => `${S(r.employeeCode).toLowerCase()}|${S(r.year)}`,
+    dupePolicy: 'skip',
+  },
   holidays: {
     label: 'Holiday Calendar',
     columns: [

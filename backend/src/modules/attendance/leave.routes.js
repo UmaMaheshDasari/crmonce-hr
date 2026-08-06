@@ -12,6 +12,7 @@ const { leaveSummary, resolveDays } = require('../../services/leave-summary.util
 const leaveEngine = require('../../services/leave-engine.service');
 const { ensureLeaveLedgerTable } = require('../../services/provision-leave-ledger');
 const payrollSettings = require('../../services/payroll-settings.service');
+const sickRun = require('../../services/sick-run.service');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
 const audit = (payload) => { try { activity?.record?.(payload); } catch (_) {} };
 
@@ -44,8 +45,9 @@ async function medCertPolicy(typeLabel, days) {
 async function assertCertOkToApprove(leaveRecord) {
   try {
     const typeLabel = toLabel('hr_leave_type', leaveRecord.hr_leavetype);
-    const days = resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate);
-    const policy = await medCertPolicy(typeLabel, days);
+    // Consecutive-working-day run (across history), not just this request's span.
+    const runDays = await sickRun.sickLeaveRunDays(leaveRecord._hr_hremployee_value, leaveRecord.hr_fromdate, leaveRecord.hr_todate, { excludeLeaveId: leaveRecord.hr_hrleaveid });
+    const policy = await medCertPolicy(typeLabel, runDays);
     if (!policy.required) return;
     const docId = leaveRecord.hr_medcertdocid;
     let ok = false;
@@ -61,6 +63,23 @@ async function assertCertOkToApprove(leaveRecord) {
       e.status = 400; throw e;
     }
   } catch (e) { if (e.status) throw e; /* lookup failure — don't block */ }
+}
+
+// Comp-off leave usage: when a comp-off leave transitions to APPROVED, reduce the
+// comp-off balance with a `comp_off_used` ledger entry (exactly once). Best-effort
+// so it never blocks approval. `alreadyApproved` guards the HR-override re-approve
+// path from double-deducting.
+async function applyCompOffUsageOnApprove(current, { alreadyApproved = false } = {}) {
+  try {
+    if (current.hr_usecompoff !== 'true' || alreadyApproved) return;
+    const days = resolveDays(current.hr_days, current.hr_fromdate, current.hr_todate);
+    const yr = Number(String(current.hr_fromdate || '').slice(0, 4)) || new Date().getFullYear();
+    await leaveEngine.addLedgerEntry({
+      employeeId: current._hr_hremployee_value, employeeName: '', year: yr,
+      kind: 'comp_off_used', category: 'compoff', days,
+      effectiveDate: String(current.hr_fromdate || '').slice(0, 10), reason: 'Comp Off leave', createdBy: 'Leave',
+    });
+  } catch (e) { global.logger?.warn?.(`[leave] comp-off usage ledger skipped: ${e.message}`); }
 }
 
 /**
@@ -124,7 +143,7 @@ router.get('/', async (req, res, next) => {
 
     const result = await d365.getListOptional(ENTITY, {
       select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date',
-      optionalSelect: 'hr_medcertdocid',   // present once the leave column is provisioned
+      optionalSelect: 'hr_medcertdocid,hr_usecompoff',   // present once the leave columns are provisioned
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
     });
@@ -249,8 +268,9 @@ router.get('/cc-candidates', async (req, res, next) => {
 async function applyHrOverride(user, id, status, remarks, { enforcePending = false } = {}) {
   const current = await d365.getByIdOptional(ENTITY, id, {
     select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
-    optionalSelect: 'hr_medcertdocid',
+    optionalSelect: 'hr_medcertdocid,hr_usecompoff',
   });
+  const wasApproved = toLabel('hr_leave_status', current.hr_status) === 'approved';
 
   if (enforcePending) {
     const label = toLabel('hr_leave_status', current.hr_status);
@@ -274,6 +294,9 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
     hr_l1date: now,
     hr_l2status: 'not_required',
   });
+
+  // Comp-off leave: deduct the comp-off balance once, on transition to approved.
+  if (status === 'approved') await applyCompOffUsageOnApprove(current, { alreadyApproved: wasApproved });
 
   const employeeId = leave._hr_hremployee_value || current._hr_hremployee_value;
   if (employeeId) {
@@ -340,11 +363,30 @@ router.post('/', async (req, res, next) => {
       } catch (_) { /* engine unavailable — don't block */ }
     }
 
-    // Medical Certificate gate (req 1) — mandatory for a Sick Leave longer than the
-    // configured threshold. Enforced on the backend regardless of the UI. The cert
-    // is a normal document (hr_hrdocuments) uploaded first; we store its id here.
+    // Comp Off leave — paid from the comp-off balance, never LOP. Stored as a paid
+    // 'Earned Leave' (the engine already treats it as paid, not vs the CL/SL cap)
+    // plus a flag; on approval a `comp_off_used` ledger entry reduces the balance.
+    if (typeLabel === 'Comp Off') {
+      const coDays = resolveDays(body.hr_days, fromDate, toDate);
+      try {
+        const yr = Number(String(fromDate).slice(0, 4)) || new Date().getFullYear();
+        const bal = await leaveEngine.getBalance(req.user.id, yr);
+        if ((bal.compOff?.balance || 0) < coDays) {
+          return res.status(400).json({ error: `Insufficient Comp Off balance. Available: ${bal.compOff?.balance || 0} day(s), requested ${coDays}.` });
+        }
+      } catch (_) { /* balance unavailable — don't hard-block */ }
+      body.hr_usecompoff = 'true';
+      body.hr_leavetype = 'Earned Leave';   // placeholder: paid, not counted vs CL/SL, never LOP
+    }
+
+    // Medical Certificate gate (req 1) — mandatory when the CONSECUTIVE working-day
+    // Sick-Leave run (across the employee's history, ignoring weekly-offs/holidays)
+    // reaches the configured threshold. Enforced on the backend regardless of the UI.
     const leaveDays = resolveDays(body.hr_days, fromDate, toDate);
-    const certPolicy = await medCertPolicy(typeLabel, leaveDays);
+    const runDays = typeLabel === 'Sick Leave'
+      ? await sickRun.sickLeaveRunDays(req.user.id, fromDate, toDate)
+      : leaveDays;
+    const certPolicy = await medCertPolicy(typeLabel, runDays);
     if (certPolicy.required && !medCertDocId) {
       return res.status(400).json({ error: certPolicy.message });
     }
@@ -490,7 +532,7 @@ router.patch('/:id/l1', async (req, res, next) => {
     const { action, remarks } = req.body; // action: 'approved' or 'rejected'
     const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
-      optionalSelect: 'hr_medcertdocid',
+      optionalSelect: 'hr_medcertdocid,hr_usecompoff',
     });
 
     // Verify this user is the L1 manager of the leave employee
@@ -537,6 +579,11 @@ router.patch('/:id/l1', async (req, res, next) => {
 
     const leave = await d365.update(ENTITY, req.params.id, updatePayload);
 
+    // Comp-off leave: deduct on final L1 approval (pending → approved, once).
+    if (updatePayload.hr_status === toValue('hr_leave_status', 'approved')) {
+      await applyCompOffUsageOnApprove(leaveRecord);
+    }
+
     // Notify employee (only when L1 produced a FINAL decision)
     if (action === 'rejected' || (!chain.l2Manager && action === 'approved')) {
       const finalStatus = action === 'approved' ? 'approved' : 'rejected';
@@ -571,7 +618,7 @@ router.patch('/:id/l2', async (req, res, next) => {
     const { action, remarks } = req.body;
     const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
-      optionalSelect: 'hr_medcertdocid',
+      optionalSelect: 'hr_medcertdocid,hr_usecompoff',
     });
 
     if (leaveRecord.hr_l1status !== 'approved') {
@@ -606,6 +653,9 @@ router.patch('/:id/l2', async (req, res, next) => {
     }
 
     const leave = await d365.update(ENTITY, req.params.id, updatePayload);
+
+    // Comp-off leave: deduct on final L2 approval (once).
+    if (action === 'approved') await applyCompOffUsageOnApprove(leaveRecord);
 
     // Notify employee of final decision (in-app + email)
     const l2Final = action === 'approved' ? 'approved' : 'rejected';
@@ -747,6 +797,21 @@ router.get('/medcert-policy', async (req, res, next) => {
     res.json({ required: !!medCert?.required, afterDays, threshold: afterDays + 1 });
   } catch (_) {
     res.json({ required: false, afterDays: 1, threshold: 2 });
+  }
+});
+
+// GET /medcert-check?from=&to=  — is a certificate required for THIS Sick-Leave
+// request, given the employee's consecutive-run history? Powers the Apply UI.
+router.get('/medcert-check', async (req, res, next) => {
+  try {
+    const from = String(req.query.from || '').slice(0, 10);
+    const to = String(req.query.to || from).slice(0, 10);
+    if (!from) return res.json({ required: false, runDays: 0, threshold: 2 });
+    const runDays = await sickRun.sickLeaveRunDays(req.user.id, from, to);
+    const policy = await medCertPolicy('Sick Leave', runDays);
+    res.json({ required: policy.required, runDays, threshold: policy.threshold, message: policy.message });
+  } catch (_) {
+    res.json({ required: false, runDays: 0, threshold: 2 });
   }
 });
 

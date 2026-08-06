@@ -278,6 +278,9 @@ class D365Service {
     ptSlab: 'hr_ptslabs',                         // Professional Tax Master (configurable slabs)
     attendanceRequest: 'hr_attendancerequests',   // Missing Punch / Attendance correction requests
     holiday:     'hr_holidays',                   // HR-managed holiday calendar
+    compOff:     'hr_compoffs',                   // Comp-off credits (auto from holiday work + manual grants)
+    leaveOpening: 'hr_leaveopenings',             // One-time historical leave opening balance per employee/year
+    leaveOpeningAudit: 'hr_leaveopeningaudits',   // Edit-audit trail for opening-balance changes
   };
 }
 

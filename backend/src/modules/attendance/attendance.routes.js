@@ -8,10 +8,12 @@ const ExcelJS = require('exceljs');
 const { computeFromPunches, computeSession, punchesFromRecord } = require('../../services/attendance.util');
 const attnCfg = require('../../services/attendance.config');
 const leaveRoutes = require('./leave.routes');
+const compOffRoutes = require('./comp-off.routes');
 const activity = require('../../services/activity.service');
 const time = require('../../services/time.util');
 
 router.use('/leave', leaveRoutes);
+router.use('/comp-off', compOffRoutes);
 
 const ENTITY = d365.constructor.entities.attendance;
 

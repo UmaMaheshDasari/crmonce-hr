@@ -10,7 +10,7 @@ import {
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, ChevronDownIcon, PencilSquareIcon,
   BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
-  Squares2X2Icon,
+  Squares2X2Icon, ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 
 // Grouped navigation. Standalone items have `to`; groups have `group` + `children`.
@@ -25,6 +25,7 @@ const NAV = [
       { to: '/employees',       label: 'Employees',       icon: UsersIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/hr-verification', label: 'HR Verification', icon: ShieldCheckIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/documents',       label: 'Documents',       icon: DocumentTextIcon },
+      { to: '/leave-opening-balance', label: 'Leave Opening Balance', icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/recruitment',     label: 'Recruitment',     icon: BriefcaseIcon },
     ],
   },
@@ -33,6 +34,7 @@ const NAV = [
       { to: '/attendance',          label: 'Attendance',          icon: ClockIcon },
       { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
       { to: '/leave',               label: 'Leave',               icon: CalendarDaysIcon },
+      { to: '/comp-off',            label: 'Comp Off',            icon: ArrowPathIcon },
       { to: '/holidays',            label: 'Holidays',            icon: CalendarDaysIcon },
     ],
   },
@@ -70,6 +72,8 @@ const LABEL_MAP = {
   '/attendance':  'Attendance',
   '/attendance-requests': 'Attendance Requests',
   '/leave':       'Leave',
+  '/comp-off':    'Comp Off',
+  '/leave-opening-balance': 'Leave Opening Balance',
   '/holidays':    'Holidays',
   '/payroll':     'Payroll',
   '/payroll-dashboard': 'Payroll Dashboard',
@@ -138,13 +142,14 @@ function NavGroup({ item, open, onToggle, containsActive, onNavigate }) {
         <span className="truncate flex-1 text-left">{item.group}</span>
         <ChevronDownIcon className={`w-4 h-4 flex-shrink-0 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden />
       </button>
-      {open && (
-        <div className="mt-1 space-y-1">
+      {/* Accordion body — smooth 250ms open/close via grid-rows 0fr→1fr. */}
+      <div className={`grid transition-all duration-[250ms] ease-in-out ${open ? 'grid-rows-[1fr] opacity-100 mt-1' : 'grid-rows-[0fr] opacity-0'}`}>
+        <div className="overflow-hidden space-y-1">
           {item.children.map(child => (
             <NavItem key={child.to} item={child} collapsed={false} indented onClick={onNavigate} />
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -154,7 +159,7 @@ export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   const toggleCollapsed = () => setCollapsed(c => { localStorage.setItem('sidebarCollapsed', c ? '0' : '1'); return !c; });
-  const [openGroups, setOpenGroups] = useState({});   // { [groupLabel]: bool } — user overrides
+  const [expandedMenu, setExpandedMenu] = useState(null);   // accordion: at most ONE open group
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -185,13 +190,16 @@ export default function AppShell() {
   const currentPath = '/' + location.pathname.split('/')[1];
   const pageLabel = LABEL_MAP[currentPath] || 'Page';
 
-  // Group expand/collapse. On navigation, reset overrides so the group holding the
-  // active route auto-opens (classic accordion). A user toggle overrides until the
-  // next navigation.
-  useEffect(() => { setOpenGroups({}); }, [currentPath]);
+  // Accordion: exactly one group open at a time. On navigation, auto-open the group
+  // that holds the active route (and collapse all others). A user toggle switches
+  // the single open group; clicking the open one collapses it.
   const groupContainsActive = (item) => item.children.some(c => c.to === currentPath);
-  const isGroupOpen = (item) => openGroups[item.group] ?? groupContainsActive(item);
-  const toggleGroup = (item) => setOpenGroups(g => ({ ...g, [item.group]: !(g[item.group] ?? groupContainsActive(item)) }));
+  useEffect(() => {
+    const active = NAV.find(i => i.children && i.children.some(c => c.to === currentPath));
+    setExpandedMenu(active ? active.group : null);
+  }, [currentPath]);
+  const isGroupOpen = (item) => expandedMenu === item.group;
+  const toggleGroup = (item) => setExpandedMenu(cur => (cur === item.group ? null : item.group));
 
   const Sidebar = ({ mobile = false }) => {
     const isCollapsed = collapsed && !mobile;   // collapse only on desktop; drawer is always full

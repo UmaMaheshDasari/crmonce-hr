@@ -8,6 +8,7 @@ const { toValue } = require('../../services/picklist');
 const ie = require('../../services/import-export.service');
 const salaryStructure = require('../../services/salary-structure.service');
 const leaveEngine = require('../../services/leave-engine.service');
+const leaveOpening = require('../../services/leave-opening.service');
 const { buildReport } = require('../../services/payroll-reports.service');
 const activity = require('../../services/activity.service');
 
@@ -62,6 +63,12 @@ async function existingKeys(type, empIndex) {
     } else if (type === 'payroll') {
       const { data } = await d365.getList(E.payroll, { select: 'hr_month,hr_year,_hr_hremployee_value', top: 5000 });
       for (const p of data || []) { const code = empIndex.codeByGuid.get(p._hr_hremployee_value); if (code) keys.add(`${code}|${p.hr_month}|${p.hr_year}`); }
+    } else if (type === 'leaveopening') {
+      // One opening balance per employee per year.
+      try {
+        const { data } = await d365.getList(E.leaveOpening, { select: 'hr_employeeid,hr_year', top: 5000 });
+        for (const o of data || []) { const code = empIndex.codeByGuid.get(o.hr_employeeid); if (code) keys.add(`${code}|${o.hr_year}`); }
+      } catch { /* table not provisioned yet → no existing keys */ }
     }
   } catch { /* best-effort */ }
   return keys;
@@ -72,6 +79,16 @@ const WRITERS = {
   holidays: async (d) => { await d365.create(E.holiday, { hr_name: d.name, hr_date: d.date, hr_description: d.description || '' }); return 'created'; },
   compoff: async (d, r) => { await leaveEngine.addLedgerEntry({ employeeId: r._guid, employeeName: r._empName, year: Number((d.date || today()).slice(0, 4)), kind: 'comp_off_earned', category: 'compoff', days: Math.abs(Number(d.days)), effectiveDate: d.date || today(), reason: d.reason || 'Imported', createdBy: 'Import' }); return 'created'; },
   leavebalance: async (d, r) => { await leaveEngine.addLedgerEntry({ employeeId: r._guid, employeeName: r._empName, year: Number(today().slice(0, 4)), kind: 'adjustment', category: d.category, days: Number(d.days), effectiveDate: today(), reason: d.reason || 'Imported', createdBy: 'Import' }); return 'created'; },
+  leaveopening: async (d, r) => {
+    // One-time opening balance per employee/year. Reject a second one for the same year.
+    await leaveOpening.upsert({
+      employeeId: r._guid, employeeName: r._empName, year: Number(d.year),
+      casualUsed: Number(d.casualUsed) || 0, sickUsed: Number(d.sickUsed) || 0,
+      lopUsed: Number(d.lopUsed) || 0, compOff: Number(d.compOff) || 0,
+      remarks: d.remarks || 'Imported from Excel', updatedBy: 'Import', reason: 'Imported',
+    }, { allowUpdate: false });
+    return 'created';
+  },
   salarystructure: async (d, r) => {
     const { ok, errors, value } = salaryStructure.validate({ ...d, employeeId: r._guid }, { requireEmployee: true });
     if (!ok) throw new Error(errors[0]);

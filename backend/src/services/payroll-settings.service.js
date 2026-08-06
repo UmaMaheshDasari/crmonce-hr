@@ -41,6 +41,10 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   // ── Sick-leave medical certificate policy (configurable — never hardcoded) ──
   hr_medcertrequired: 'true',     // require a certificate for longer sick leaves
   hr_medcertafterdays: '1',       // mandatory when Sick Leave days > this (i.e. 2+ days)
+  // ── Comp-off policy ──
+  hr_compoffexpirydays: '90',     // a comp-off credit expires N days after the worked date (0 = never)
+  hr_compoffautoearn: 'true',     // auto-detect comp-off when an employee works a holiday / weekly-off
+  hr_compoffemployeeraise: 'true',// allow employees to raise a comp-off request themselves
   // ── Default salary components applied to a new employee's Salary Structure.
   //    JSON: [{ name, type: 'percent'|'fixed', value }]. percent = % of Basic. ──
   hr_defaultallowances: JSON.stringify([
@@ -111,6 +115,12 @@ function resolve(settings = null) {
     },
     // Sick-leave medical-certificate policy.
     medCert: { required: bool(g.hr_medcertrequired), afterDays: num(g.hr_medcertafterdays, 1) },
+    // Comp-off policy.
+    compOff: {
+      expiryDays: num(g.hr_compoffexpirydays, 90),
+      autoEarn: bool(g.hr_compoffautoearn),
+      employeeRaise: bool(g.hr_compoffemployeeraise),
+    },
     defaultAllowances: parseJson(g.hr_defaultallowances, []),
     defaultDeductions: parseJson(g.hr_defaultdeductions, []),
   };
