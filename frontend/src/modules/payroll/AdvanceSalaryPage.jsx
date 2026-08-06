@@ -7,6 +7,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate } from '../../utils/format';
+import Dialog, { ModalBody, ModalFooter } from '../../components/Modal';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -19,18 +20,10 @@ const STATUS = {
 };
 const inputCls = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
 
-function Modal({ title, subtitle, onClose, children }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl shadow-2xl my-0 sm:my-8">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div><h2 className="text-lg font-bold text-gray-900">{title}</h2>{subtitle && <p className="text-xs text-gray-400">{subtitle}</p>}</div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
+// Enterprise dialog wrapper — centered, capped at 90vh, header fixed, body scrolls,
+// footer sticky, page behind scroll-locked. Forms use ModalBody + ModalFooter.
+function Modal({ title, subtitle, onClose, size = 'md', children }) {
+  return <Dialog title={title} subtitle={subtitle} onClose={onClose} size={size}>{children}</Dialog>;
 }
 
 function ApplyModal({ isHR, employees, onClose }) {
@@ -43,7 +36,8 @@ function ApplyModal({ isHR, employees, onClose }) {
   });
   return (
     <Modal title="Apply for Advance Salary" subtitle="Your request goes to HR for approval." onClose={onClose}>
-      <form onSubmit={handleSubmit(v => mut.mutate(v))} className="p-6 space-y-4">
+      <form onSubmit={handleSubmit(v => mut.mutate(v))} className="flex flex-col min-h-0 flex-1">
+        <ModalBody className="space-y-4">
         {isHR && (
           <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Employee (optional — defaults to you)</label>
             <select className={inputCls} {...register('employeeId')}>
@@ -61,10 +55,11 @@ function ApplyModal({ isHR, employees, onClose }) {
           <input type="number" min="0" className={inputCls} placeholder="Blank = recover in one payroll; HR can change" {...register('emi')} /></div>
         <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Reason<span className="text-red-500">*</span></label>
           <textarea rows={3} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 resize-none" placeholder="Why do you need this advance?" {...register('reason', { required: true })} /></div>
-        <div className="flex justify-end gap-3 pt-2">
+        </ModalBody>
+        <ModalFooter>
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
           <button type="submit" disabled={mut.isPending} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50">{mut.isPending ? 'Submitting…' : 'Submit Request'}</button>
-        </div>
+        </ModalFooter>
       </form>
     </Modal>
   );
@@ -83,7 +78,8 @@ function ApproveModal({ record, onClose }) {
   });
   return (
     <Modal title="Approve Advance" subtitle={`${record.employeeName} · ${inr(record.amount)}`} onClose={onClose}>
-      <form onSubmit={handleSubmit(v => mut.mutate(v))} className="p-6 space-y-4">
+      <form onSubmit={handleSubmit(v => mut.mutate(v))} className="flex flex-col min-h-0 flex-1">
+        <ModalBody className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Monthly EMI</label>
             <input type="number" min="0" className={inputCls} placeholder="0 = one payroll" {...register('emi')} /></div>
@@ -95,10 +91,11 @@ function ApproveModal({ record, onClose }) {
         </p>
         <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Remarks (optional)</label>
           <input className={inputCls} {...register('remarks')} /></div>
-        <div className="flex justify-end gap-3 pt-2">
+        </ModalBody>
+        <ModalFooter>
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
           <button type="submit" disabled={mut.isPending} className="px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-700 disabled:opacity-50">{mut.isPending ? 'Approving…' : 'Approve'}</button>
-        </div>
+        </ModalFooter>
       </form>
     </Modal>
   );
@@ -114,13 +111,15 @@ function RejectModal({ record, onClose }) {
   });
   return (
     <Modal title="Reject Advance" subtitle={`${record.employeeName} · ${inr(record.amount)}`} onClose={onClose}>
-      <form onSubmit={handleSubmit(v => mut.mutate(v))} className="p-6 space-y-4">
+      <form onSubmit={handleSubmit(v => mut.mutate(v))} className="flex flex-col min-h-0 flex-1">
+        <ModalBody className="space-y-4">
         <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Reason for rejection</label>
           <textarea rows={3} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 resize-none" {...register('remarks')} /></div>
-        <div className="flex justify-end gap-3 pt-2">
+        </ModalBody>
+        <ModalFooter>
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
           <button type="submit" disabled={mut.isPending} className="px-5 py-2.5 bg-red-600 text-white text-sm font-medium rounded-xl hover:bg-red-700 disabled:opacity-50">{mut.isPending ? 'Rejecting…' : 'Reject'}</button>
-        </div>
+        </ModalFooter>
       </form>
     </Modal>
   );

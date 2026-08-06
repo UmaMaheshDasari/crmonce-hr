@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { fmtDate } from '../../utils/format';
 import { calculateProfessionalTax } from '../../utils/professionalTax';
 import SearchSelect from '../../components/SearchSelect';
+import Modal, { ModalBody, ModalFooter } from '../../components/Modal';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -90,17 +91,12 @@ function SalaryFormModal({ record, employees, onClose }) {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl shadow-2xl my-0 sm:my-8">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white sm:rounded-t-2xl z-10">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">{isEdit ? 'Edit Salary Structure' : 'New Salary Structure'}</h2>
-            <p className="text-xs text-gray-400">{isEdit ? `${record.employeeName} · revision effective ${fmtDate(record.effectiveFrom)}` : 'Creates a new version — previous salary history is preserved.'}</p>
-          </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
-        </div>
-
-        <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6">
+    <Modal
+      title={isEdit ? 'Edit Salary Structure' : 'New Salary Structure'}
+      subtitle={isEdit ? `${record.employeeName} · revision effective ${fmtDate(record.effectiveFrom)}` : 'Creates a new version — previous salary history is preserved.'}
+      onClose={onClose} size="lg">
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col min-h-0 flex-1">
+        <ModalBody className="space-y-6">
           {/* Employee + effective date */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
@@ -186,16 +182,16 @@ function SalaryFormModal({ record, employees, onClose }) {
             </div>
           </div>
 
-          <div className="flex gap-3 justify-end pt-2 border-t border-gray-100">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800">Cancel</button>
-            <button type="submit" disabled={mutation.isPending}
-              className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-50 shadow-lg shadow-indigo-500/25">
-              {mutation.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Revision'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </ModalBody>
+        <ModalFooter>
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800">Cancel</button>
+          <button type="submit" disabled={mutation.isPending}
+            className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-50 shadow-lg shadow-indigo-500/25">
+            {mutation.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Revision'}
+          </button>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 }
 
@@ -204,16 +200,8 @@ function HistoryModal({ employeeId, employeeName, onClose }) {
   const { data, isLoading } = useQuery({ queryKey: ['salary-history', employeeId], queryFn: () => salaryStructureApi.history(employeeId) });
   const rows = data?.data?.data || [];
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl my-0 sm:my-8">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white sm:rounded-t-2xl">
-          <div className="flex items-center gap-2">
-            <ClockIcon className="w-5 h-5 text-indigo-600" />
-            <div><h2 className="text-lg font-bold text-gray-900">Salary History</h2><p className="text-xs text-gray-400">{employeeName}</p></div>
-          </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
-        </div>
-        <div className="p-6">
+    <Modal title="Salary History" subtitle={employeeName} onClose={onClose} size="md">
+      <ModalBody>
           {isLoading ? <p className="text-center text-gray-400 py-8">Loading…</p> : rows.length === 0 ? (
             <p className="text-center text-gray-400 py-8">No salary history yet.</p>
           ) : (
@@ -240,9 +228,8 @@ function HistoryModal({ employeeId, employeeName, onClose }) {
               ))}
             </ol>
           )}
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+    </Modal>
   );
 }
 

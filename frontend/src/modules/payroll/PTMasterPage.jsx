@@ -6,6 +6,7 @@ import {
   ScaleIcon, PlusIcon, XMarkIcon, PencilSquareIcon, CheckCircleIcon, NoSymbolIcon, BeakerIcon,
 } from '@heroicons/react/24/outline';
 import { fmtDate } from '../../utils/format';
+import Dialog, { ModalBody, ModalFooter } from '../../components/Modal';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -28,13 +29,9 @@ function SlabModal({ slab, onClose }) {
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to save slab'),
   });
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl shadow-2xl my-0 sm:my-8">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-bold text-gray-900">{isEdit ? 'Edit PT Slab' : 'Add PT Slab'}</h2>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={handleSubmit(v => mut.mutate(v))} className="p-6 space-y-4">
+    <Dialog title={isEdit ? 'Edit PT Slab' : 'Add PT Slab'} onClose={onClose} size="md">
+      <form onSubmit={handleSubmit(v => mut.mutate(v))} className="flex flex-col min-h-0 flex-1">
+        <ModalBody className="space-y-4">
           <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">State<span className="text-red-500">*</span></label>
             <input className={inputCls} placeholder="e.g. Andhra Pradesh" {...register('state', { required: true })} /></div>
           <div className="grid grid-cols-2 gap-3">
@@ -58,13 +55,13 @@ function SlabModal({ slab, onClose }) {
             <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Remarks</label>
               <input className={inputCls} {...register('remarks')} /></div>
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
-            <button type="submit" disabled={mut.isPending} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50">{mut.isPending ? 'Saving…' : isEdit ? 'Save' : 'Add Slab'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </ModalBody>
+        <ModalFooter>
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
+          <button type="submit" disabled={mut.isPending} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50">{mut.isPending ? 'Saving…' : isEdit ? 'Save' : 'Add Slab'}</button>
+        </ModalFooter>
+      </form>
+    </Dialog>
   );
 }
 
