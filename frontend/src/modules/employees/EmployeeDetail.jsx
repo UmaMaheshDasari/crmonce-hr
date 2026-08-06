@@ -1,8 +1,9 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { employeeApi, attendanceApi, documentApi } from '../../api/endpoints';
-import { PencilIcon, ChevronRightIcon, EnvelopeIcon, PhoneIcon, MapPinIcon, CalendarIcon, BuildingOfficeIcon, BriefcaseIcon, IdentificationIcon, ClockIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import { PencilIcon, ChevronRightIcon, EnvelopeIcon, PhoneIcon, MapPinIcon, CalendarIcon, BuildingOfficeIcon, BriefcaseIcon, IdentificationIcon, ClockIcon, DocumentTextIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
+import { useDocumentViewer } from '../../components/DocumentViewer';
 import { formatDuration } from '../../utils/formatDuration';
 import { fmtTime, fmtVal, fmtDate } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
@@ -40,6 +41,7 @@ export default function EmployeeDetail() {
   const { isHR, user } = useAuth();
   const isSelf = user?.id === id;
   const canEdit = isHR() || isSelf;
+  const { view, download, viewer } = useDocumentViewer();   // authenticated document view/download
 
   const { data, isLoading } = useQuery({ queryKey: ['employee', id], queryFn: () => employeeApi.get(id) });
   const { data: docsData } = useQuery({ queryKey: ['documents', id], queryFn: () => documentApi.list({ employeeId: id }) });
@@ -318,16 +320,18 @@ export default function EmployeeDetail() {
         {docsData?.data?.data?.length ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {docsData.data.data.map(doc => (
-              <a key={doc.hr_hrdocumentid} href={doc.hr_fileurl} target="_blank" rel="noreferrer"
-                className="flex items-center gap-3 p-4 border border-gray-100 rounded-xl hover:bg-gray-50 hover:border-gray-200 hover:shadow-sm transition-all duration-200 group">
-                <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-indigo-100 transition-colors">
-                  <DocumentTextIcon className="w-5 h-5 text-indigo-500" />
-                </div>
-                <div className="overflow-hidden">
-                  <p className="font-semibold text-gray-800 truncate text-sm">{doc.hr_name}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">{doc.hr_type}</p>
-                </div>
-              </a>
+              <div key={doc.id} className="flex items-center gap-3 p-4 border border-gray-100 rounded-xl hover:bg-gray-50 hover:border-gray-200 hover:shadow-sm transition-all duration-200 group">
+                <button onClick={() => view(doc)} title="View" className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                  <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-indigo-100 transition-colors">
+                    <DocumentTextIcon className="w-5 h-5 text-indigo-500" />
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="font-semibold text-gray-800 truncate text-sm">{doc.name}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{doc.type}</p>
+                  </div>
+                </button>
+                <button onClick={() => download(doc)} title="Download" className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg shrink-0"><ArrowDownTrayIcon className="w-4 h-4" /></button>
+              </div>
             ))}
           </div>
         ) : (
@@ -337,6 +341,7 @@ export default function EmployeeDetail() {
           </div>
         )}
       </div>
+      {viewer}
     </div>
   );
 }

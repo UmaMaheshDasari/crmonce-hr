@@ -6,13 +6,12 @@ import {
   DocumentTextIcon, ArrowDownTrayIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { fmtVal, fmtDate } from '../../utils/format';
+import { useDocumentViewer } from '../../components/DocumentViewer';
 import toast from 'react-hot-toast';
-
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
-const docUrl = (u) => (u ? (u.startsWith('http') ? u : API_BASE + u) : '');
 
 function PendingDocuments() {
   const qc = useQueryClient();
+  const { view, download, viewer } = useDocumentViewer();   // authenticated view/download
   const { data, isLoading } = useQuery({ queryKey: ['pending-documents'], queryFn: () => documentApi.pending(), refetchInterval: 30000 });
   const rows = data?.data?.data || [];
   const verify = useMutation({
@@ -47,8 +46,8 @@ function PendingDocuments() {
                 <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">{fmtVal(d.uploadedBy)}</td>
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <a href={docUrl(d.fileUrl)} target="_blank" rel="noreferrer" className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Preview"><EyeIcon className="w-4 h-4" /></a>
-                    <a href={docUrl(d.fileUrl)} download target="_blank" rel="noreferrer" className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Download"><ArrowDownTrayIcon className="w-4 h-4" /></a>
+                    <button onClick={() => view(d)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="View"><EyeIcon className="w-4 h-4" /></button>
+                    <button onClick={() => download(d)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Download"><ArrowDownTrayIcon className="w-4 h-4" /></button>
                     <button onClick={() => verify.mutate({ id: d.id, action: 'approve' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckCircleIcon className="w-3.5 h-3.5" /> Approve</button>
                     <button onClick={() => verify.mutate({ id: d.id, action: 'reject', hrRemarks: window.prompt('Reason for rejection:') || '' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XCircleIcon className="w-3.5 h-3.5" /> Reject</button>
                     <button onClick={() => verify.mutate({ id: d.id, action: 'reupload', hrRemarks: window.prompt('What needs re-uploading?') || '' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-orange-700 bg-orange-50 rounded-lg hover:bg-orange-100"><ArrowPathIcon className="w-3.5 h-3.5" /> Re-upload</button>
@@ -59,6 +58,7 @@ function PendingDocuments() {
           </tbody>
         </table>
       </div>
+      {viewer}
     </div>
   );
 }
