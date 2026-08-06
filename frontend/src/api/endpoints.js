@@ -100,6 +100,17 @@ export const payrollSettingsApi = {
   update: (data) => api.put('/payroll/settings', data),
 };
 
+// ── Advance Salary (request → approve → EMI recovery) ──
+export const advanceApi = {
+  list: (params) => api.get('/payroll/advances', { params }),
+  pending: () => api.get('/payroll/advances/pending'),
+  balance: (params) => api.get('/payroll/advances/balance', { params }),
+  apply: (data) => api.post('/payroll/advances', data),
+  approve: (id, data) => api.patch(`/payroll/advances/${id}/approve`, data),
+  reject: (id, data) => api.patch(`/payroll/advances/${id}/reject`, data),
+  delete: (id) => api.delete(`/payroll/advances/${id}`),
+};
+
 // ── Salary Structure (effective-dated salary revisions per employee) ──
 export const salaryStructureApi = {
   list: (params) => api.get('/payroll/salary-structures', { params }),

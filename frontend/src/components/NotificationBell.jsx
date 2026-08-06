@@ -63,7 +63,7 @@ export default function NotificationBell() {
     socketRef.current = socket;
     socket.emit('register', user.id);
 
-    const events = ['leave:updated', 'payroll:processed', 'recruitment:new_applicant', 'attendance:anomaly', 'request:new', 'goal:assigned', 'goal:reassigned', 'profile:updated', 'profile:verification', 'profile:verified', 'document:pending', 'document:verified'];
+    const events = ['leave:updated', 'payroll:processed', 'recruitment:new_applicant', 'attendance:anomaly', 'request:new', 'goal:assigned', 'goal:reassigned', 'profile:updated', 'profile:verification', 'profile:verified', 'document:pending', 'document:verified', 'advance:requested', 'advance:approved', 'advance:rejected'];
     events.forEach(evt => {
       socket.on(evt, (payload) => {
         const notif = { id: Date.now(), event: evt, payload, time: new Date(), read: false };
@@ -104,6 +104,9 @@ export default function NotificationBell() {
       const s = payload.status === 'verified' ? 'approved' : payload.status === 'rejected' ? 'rejected' : 'sent back for changes';
       return `Your profile was ${s}`;
     }
+    if (evt === 'advance:requested') return `Advance salary request${payload.employeeName ? ` from ${payload.employeeName}` : ''}${payload.amount ? ` — ₹${Number(payload.amount).toLocaleString('en-IN')}` : ''}`;
+    if (evt === 'advance:approved') return `Your advance salary was approved${payload.amount ? ` — ₹${Number(payload.amount).toLocaleString('en-IN')}` : ''}`;
+    if (evt === 'advance:rejected') return `Your advance salary request was rejected`;
     if (evt === 'document:pending') return `Document to verify: ${payload.docName || 'a document'} from ${payload.employeeName || 'an employee'}`;
     if (evt === 'document:verified') {
       const s = payload.status === 'verified' ? 'approved' : payload.status === 'rejected' ? 'rejected' : 're-upload requested';

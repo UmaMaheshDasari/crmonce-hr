@@ -8,6 +8,7 @@ const { toValue, labelsForList } = require('../../services/picklist');
 const { rangeCounts } = require('../../services/attendance-summary.util');
 const { computePayroll, round2 } = require('../../services/payroll.calc');
 const leaveEngine = require('../../services/leave-engine.service');
+const advanceService = require('../../services/advance.service');
 const { buildPayslipPdf } = require('../../services/payslip.service');
 const { emailPayslip } = require('../../services/payslip-notify.service');
 const { buildReport } = require('../../services/payroll-reports.service');
@@ -112,10 +113,16 @@ async function generatePayroll(req, res, next) {
       const att = await attendanceFacts(emp.hr_hremployeeid, month, year);
       const c = computePayroll({ basic, allowances, fixedDeductions, salaryWorkingDays: att.workingDays, lopDays: att.lopDays, overtimeHours: att.overtimeHours });
 
+      // Advance Salary recovery for the month (EMI). Idempotent + never throws
+      // (returns 0 on any failure), so payroll is never blocked. The payslip reads
+      // hr_advance as the "Advance Salary" deduction; net is reduced to match.
+      const advanceRecovery = await advanceService.applyMonthlyRecovery(emp.hr_hremployeeid, { year, month });
+
       const record = {
         hr_month: month, hr_year: year,
         hr_basic: round2(basic), hr_allowances: round2(allowances),
-        hr_deductions: c.totalDeductions, hr_netpay: c.netSalary,
+        hr_deductions: c.totalDeductions, hr_netpay: round2(c.netSalary - advanceRecovery),
+        hr_advance: Math.round(advanceRecovery),
         hr_gross: Math.round(c.grossSalary), hr_overtime: Math.round(c.overtimePay), hr_lop: Math.round(c.lopDeduction),
         hr_presentdays: att.presentDays, hr_absentdays: att.absentDays,
         hr_workingdays: att.workingDays, hr_paydays: Math.round(c.payableDays),
