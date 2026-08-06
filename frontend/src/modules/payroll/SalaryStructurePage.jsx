@@ -9,6 +9,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate } from '../../utils/format';
 import { calculateProfessionalTax } from '../../utils/professionalTax';
+import SearchSelect from '../../components/SearchSelect';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -107,11 +108,14 @@ function SalaryFormModal({ record, employees, onClose }) {
               {isEdit ? (
                 <div className="h-10 px-3 flex items-center bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-700">{record.employeeName || '—'}</div>
               ) : (
-                <select className={`w-full h-10 px-3 bg-gray-50 border ${errors.employeeId ? 'border-red-300' : 'border-gray-200'} rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400`}
-                  {...register('employeeId', { required: true })}>
-                  <option value="">Select employee…</option>
-                  {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}{e.hr_employeeid ? ` (${e.hr_employeeid})` : ''}</option>)}
-                </select>
+                <>
+                  <SearchSelect
+                    value={w.employeeId}
+                    onChange={(v) => setValue('employeeId', v, { shouldDirty: true, shouldValidate: true })}
+                    options={employees.map(e => ({ value: e.hr_hremployeeid, label: `${e.hr_hremployee1}${e.hr_employeeid ? ` (${e.hr_employeeid})` : ''}` }))}
+                    placeholder="Select employee…" error={!!errors.employeeId} />
+                  <input type="hidden" {...register('employeeId', { required: true })} />
+                </>
               )}
             </div>
             <div className="space-y-1">
@@ -169,10 +173,12 @@ function SalaryFormModal({ record, employees, onClose }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-gray-600">Status</label>
-              <select className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" {...register('status')}>
-                <option value="active">Active</option>
-                <option value="draft">Draft</option>
-              </select>
+              <SearchSelect
+                value={w.status}
+                onChange={(v) => setValue('status', v, { shouldDirty: true })}
+                options={[{ value: 'active', label: 'Active' }, { value: 'draft', label: 'Draft' }]}
+                searchable={false} />
+              <input type="hidden" {...register('status')} />
             </div>
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-gray-600">Remarks</label>
