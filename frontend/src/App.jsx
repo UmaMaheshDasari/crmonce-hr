@@ -18,6 +18,7 @@ import RecruitmentPage from './modules/recruitment/RecruitmentPage';
 import PerformancePage from './modules/performance/PerformancePage';
 import DocumentsPage from './modules/documents/DocumentsPage';
 import TaxDeclarationPage from './modules/payroll/TaxDeclarationPage';
+import PayrollSettingsPage from './modules/payroll/PayrollSettingsPage';
 import GoalsPage from './modules/performance/GoalsPage';
 import ApprovalAction from './modules/attendance/ApprovalAction';
 import ActivitiesPage from './modules/activity/ActivitiesPage';
@@ -63,6 +64,7 @@ function AppRoutes() {
         <Route path="holidays" element={<HolidaysPage />} />
         <Route path="leave" element={<LeavePage />} />
         <Route path="payroll" element={<PayrollPage />} />
+        <Route path="payroll-settings" element={<ProtectedRoute roles={['super_admin']}><PayrollSettingsPage /></ProtectedRoute>} />
         <Route path="recruitment" element={<RecruitmentPage />} />
         <Route path="performance" element={<PerformancePage />} />
         <Route path="goals" element={<GoalsPage />} />

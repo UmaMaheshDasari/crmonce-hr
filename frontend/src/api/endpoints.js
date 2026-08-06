@@ -89,6 +89,12 @@ export const payrollApi = {
   report: (type, params) => api.get(`/payroll/reports/${type}`, { params, responseType: 'blob' }),
 };
 
+// ── Payroll Settings (admin-configurable payroll parameters) ─────
+export const payrollSettingsApi = {
+  get: () => api.get('/payroll/settings'),
+  update: (data) => api.put('/payroll/settings', data),
+};
+
 // ── Recruitment ──────────────────────────────────────────────────
 export const recruitmentApi = {
   jobs: (params) => api.get('/recruitment/jobs', { params }),
