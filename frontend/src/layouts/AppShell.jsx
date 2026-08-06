@@ -24,7 +24,7 @@ const NAV = [
     group: 'Employees', icon: UsersIcon, children: [
       { to: '/employees',       label: 'Employees',       icon: UsersIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/hr-verification', label: 'HR Verification', icon: ShieldCheckIcon, roles: ['super_admin', 'hr_manager'] },
-      { to: '/documents',       label: 'Documents',       icon: DocumentTextIcon },
+      { to: '/documents',       label: 'Documents',       icon: DocumentTextIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/leave-opening-balance', label: 'Leave Opening Balance', icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/recruitment',     label: 'Recruitment',     icon: BriefcaseIcon },
     ],

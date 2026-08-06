@@ -86,7 +86,7 @@ function AppRoutes() {
         <Route path="performance" element={<PerformancePage />} />
         <Route path="goals" element={<GoalsPage />} />
         <Route path="tax-declarations" element={<TaxDeclarationPage />} />
-        <Route path="documents" element={<DocumentsPage />} />
+        <Route path="documents" element={<ProtectedRoute roles={['super_admin','hr_manager']}><DocumentsPage /></ProtectedRoute>} />
         <Route path="activities" element={<ActivitiesPage />} />
         <Route path="company-settings" element={<ProtectedRoute roles={['super_admin']}><CompanySettingsPage /></ProtectedRoute>} />
         <Route path="import-export" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ImportExportPage /></ProtectedRoute>} />

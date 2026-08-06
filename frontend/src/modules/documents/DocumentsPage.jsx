@@ -1,9 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { documentApi, employeeApi } from '../../api/endpoints';
 import { useDropzone } from 'react-dropzone';
-import { TrashIcon, ArrowDownTrayIcon, CloudArrowUpIcon, XMarkIcon, FunnelIcon } from '@heroicons/react/24/outline';
+import { TrashIcon, ArrowDownTrayIcon, CloudArrowUpIcon, XMarkIcon, FunnelIcon, EyeIcon, MagnifyingGlassIcon, CheckBadgeIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
+import { useDocumentViewer } from '../../components/DocumentViewer';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -73,6 +74,15 @@ const TYPE_TAG_COLORS = {
   'Other': 'bg-gray-50 text-gray-600 border-gray-200/60',
 };
 
+const STATUS_BADGE = {
+  verified: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  pending: 'bg-amber-50 text-amber-700 border-amber-200',
+  rejected: 'bg-red-50 text-red-700 border-red-200',
+  reupload: 'bg-orange-50 text-orange-700 border-orange-200',
+  superseded: 'bg-gray-100 text-gray-500 border-gray-200',
+};
+const STATUS_LABEL = { verified: 'Verified', pending: 'Pending', rejected: 'Rejected', reupload: 'Re-upload', superseded: 'Superseded' };
+
 function UploadModal({ onClose }) {
   const qc = useQueryClient();
   const { user, isHR } = useAuth();
@@ -98,7 +108,7 @@ function UploadModal({ onClose }) {
         const fd = new FormData();
         fd.append('file', file);
         fd.append('employeeId', empId);
-        fd.append('type', type);
+        fd.append('documentType', type);   // backend reads `documentType`
         fd.append('name', file.name);
         await documentApi.upload(fd);
       }
@@ -202,44 +212,61 @@ function UploadModal({ onClose }) {
 export default function DocumentsPage() {
   const { isHR, user } = useAuth();
   const qc = useQueryClient();
+  const { view, download, viewer } = useDocumentViewer();
   const [showModal, setShowModal] = useState(false);
   const [filterType, setFilterType] = useState('');
   const [filterEmp, setFilterEmp] = useState('');
+  const [filterDept, setFilterDept] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterDate, setFilterDate] = useState('');
+  const [search, setSearch] = useState('');
 
+  // Fetch once for the scope (HR: everyone; employee: own), then filter client-side.
   const { data, isLoading } = useQuery({
-    queryKey: ['documents', filterType, filterEmp],
-    queryFn: () => documentApi.list({
-      type: filterType || undefined,
-      employeeId: isHR() ? (filterEmp || undefined) : user.id,
-    }),
+    queryKey: ['documents', 'all'],
+    queryFn: () => documentApi.list({ employeeId: isHR() ? undefined : user.id }),
   });
 
   const { data: empData } = useQuery({
     queryKey: ['employees-all'],
-    queryFn: () => employeeApi.list({ limit: 200, status: 'active' }),
+    queryFn: () => employeeApi.list({ limit: 500, status: 'active' }),
     enabled: isHR(),
   });
+  const { data: deptData } = useQuery({
+    queryKey: ['departments-list'],
+    queryFn: () => employeeApi.departments(),
+    enabled: isHR(),
+  });
+  const departments = (deptData?.data?.data || deptData?.data || []).map(d => (typeof d === 'string' ? d : (d?.name || d?.hr_name || d?.department))).filter(Boolean);
 
   const deleteMutation = useMutation({
     mutationFn: (id) => documentApi.delete(id),
     onSuccess: () => { toast.success('Document deleted'); qc.invalidateQueries({ queryKey: ['documents'] }); },
-    onError: () => toast.error('Delete failed'),
+    onError: (e) => toast.error(e.response?.data?.error || 'Delete failed'),
+  });
+  const verifyMutation = useMutation({
+    mutationFn: ({ id, action, hrRemarks }) => documentApi.verify(id, { action, hrRemarks }),
+    onSuccess: (_, v) => { toast.success(v.action === 'approve' ? 'Verified' : 'Rejected'); qc.invalidateQueries({ queryKey: ['documents'] }); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Action failed'),
   });
 
-  // Download any file type via the authenticated API (correct Content-Type +
-  // original filename; not the old public /uploads link that broke non-PDFs).
-  const downloadDoc = async (doc) => {
-    const id = doc.id || doc.hr_hrdocumentid;
-    const fname = doc.originalName || doc.hr_originalname || doc.name || doc.hr_name || 'document';
-    try {
-      const res = await documentApi.file(id, true);
-      const url = URL.createObjectURL(new Blob([res.data], { type: doc.contentType || doc.hr_contenttype || 'application/octet-stream' }));
-      const a = document.createElement('a'); a.href = url; a.download = fname; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch { toast.error('Download failed — the file may be missing on the server.'); }
-  };
+  const allDocs = data?.data?.data || [];
+  const q = search.trim().toLowerCase();
+  const docs = useMemo(() => allDocs.filter(d => {
+    if (filterType && d.type !== filterType) return false;
+    if (isHR() && filterEmp && d.employeeId !== filterEmp) return false;
+    if (isHR() && filterDept && d.department !== filterDept) return false;
+    if (filterStatus && (d.status || 'pending') !== filterStatus) return false;
+    if (filterDate && String(d.uploadedOn || '').slice(0, 10) !== filterDate) return false;
+    if (q) {
+      const hay = `${d.name || ''} ${d.originalName || ''} ${d.employeeName || ''} ${d.employeeCode || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }), [allDocs, filterType, filterEmp, filterDept, filterStatus, filterDate, q, isHR]);
 
-  const docs = data?.data?.data || [];
+  const clearFilters = () => { setFilterType(''); setFilterEmp(''); setFilterDept(''); setFilterStatus(''); setFilterDate(''); setSearch(''); };
+  const hasFilters = filterType || filterEmp || filterDept || filterStatus || filterDate || search;
 
   return (
     <div className="space-y-6">
@@ -247,7 +274,7 @@ export default function DocumentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Documents</h1>
-          <p className="text-gray-400 text-sm mt-1">{docs.length} files in vault</p>
+          <p className="text-gray-400 text-sm mt-1">{docs.length} of {allDocs.length} document{allDocs.length === 1 ? '' : 's'}</p>
         </div>
         <button onClick={() => setShowModal(true)}
           className="btn-primary flex items-center gap-2 shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:shadow-indigo-500/30 transition-all duration-200">
@@ -255,31 +282,50 @@ export default function DocumentsPage() {
         </button>
       </div>
 
-      {/* Filter Bar */}
-      <div className="bg-white rounded-xl border border-gray-200/60 px-4 py-3 flex flex-wrap items-center gap-3">
-        <FunnelIcon className="w-4 h-4 text-gray-400" />
-        <select className="input w-auto !border-gray-200 !rounded-lg" value={filterType} onChange={e => setFilterType(e.target.value)}>
-          <option value="">All Types</option>
-          {DOC_TYPES.map(t => <option key={t}>{t}</option>)}
-        </select>
-        {isHR() && (
-          <select className="input w-auto !border-gray-200 !rounded-lg" value={filterEmp} onChange={e => setFilterEmp(e.target.value)}>
-            <option value="">All Employees</option>
-            {empData?.data?.data?.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
+      {/* Filter + Search Bar */}
+      <div className="bg-white rounded-xl border border-gray-200/60 p-3 space-y-3">
+        <div className="relative">
+          <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by document name, employee name or employee ID…"
+            className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500/20" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <FunnelIcon className="w-4 h-4 text-gray-400" />
+          <select className="input w-auto !border-gray-200 !rounded-lg" value={filterType} onChange={e => setFilterType(e.target.value)}>
+            <option value="">All Types</option>
+            {DOC_TYPES.map(t => <option key={t}>{t}</option>)}
           </select>
-        )}
-        {(filterType || filterEmp) && (
-          <button onClick={() => { setFilterType(''); setFilterEmp(''); }} className="text-xs text-gray-400 hover:text-gray-600 transition-colors ml-auto">
-            Clear filters
-          </button>
-        )}
+          <select className="input w-auto !border-gray-200 !rounded-lg" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Status</option>
+            <option value="verified">Verified</option>
+            <option value="pending">Pending</option>
+            <option value="rejected">Rejected</option>
+            <option value="reupload">Re-upload</option>
+          </select>
+          {isHR() && (
+            <select className="input w-auto !border-gray-200 !rounded-lg" value={filterEmp} onChange={e => setFilterEmp(e.target.value)}>
+              <option value="">All Employees</option>
+              {empData?.data?.data?.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
+            </select>
+          )}
+          {isHR() && (
+            <select className="input w-auto !border-gray-200 !rounded-lg" value={filterDept} onChange={e => setFilterDept(e.target.value)}>
+              <option value="">All Departments</option>
+              {departments.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          )}
+          <input type="date" className="input w-auto !border-gray-200 !rounded-lg" value={filterDate} onChange={e => setFilterDate(e.target.value)} title="Upload date" />
+          {hasFilters && (
+            <button onClick={clearFilters} className="text-xs text-gray-400 hover:text-gray-600 transition-colors ml-auto">Clear filters</button>
+          )}
+        </div>
       </div>
 
       {/* Document Grid */}
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {Array(6).fill(0).map((_, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-gray-200/60 h-36 animate-pulse">
+            <div key={i} className="bg-white rounded-2xl border border-gray-200/60 h-40 animate-pulse">
               <div className="p-5 flex gap-4">
                 <div className="w-12 h-12 bg-gray-100 rounded-xl" />
                 <div className="flex-1 space-y-2">
@@ -297,52 +343,78 @@ export default function DocumentsPage() {
             <CloudArrowUpIcon className="w-8 h-8 text-gray-300" />
           </div>
           <p className="text-gray-400 font-medium">No documents found</p>
-          <p className="text-gray-300 text-sm mt-1">Upload your first document to get started</p>
+          <p className="text-gray-300 text-sm mt-1">{hasFilters ? 'Try adjusting your filters' : 'Upload your first document to get started'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {docs.map(doc => (
-            <div key={doc.hr_hrdocumentid}
-              className="group bg-white rounded-2xl border border-gray-200/60 p-5 hover:shadow-lg hover:shadow-gray-200/50 hover:-translate-y-0.5 transition-all duration-300">
-              <div className="flex items-start gap-4">
-                {/* File Icon */}
-                <FileIcon name={doc.hr_originalname || doc.hr_name} className="w-12 h-12" />
-
-                {/* File Info */}
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-900 truncate text-sm" title={doc.hr_name}>{doc.hr_name}</p>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${TYPE_TAG_COLORS[doc.hr_type] || TYPE_TAG_COLORS['Other']}`}>
-                      {doc.hr_type}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
-                    {doc.hr_filesize && <span>{formatSize(doc.hr_filesize)}</span>}
-                    {doc.createdon && <span>{format(new Date(doc.createdon), 'dd MMM yyyy')}</span>}
+          {docs.map(doc => {
+            const st = doc.status || 'pending';
+            return (
+              <div key={doc.id}
+                className="group bg-white rounded-2xl border border-gray-200/60 p-5 hover:shadow-lg hover:shadow-gray-200/50 transition-all duration-300 flex flex-col">
+                <div className="flex items-start gap-4">
+                  <FileIcon name={doc.originalName || doc.name} className="w-12 h-12" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 truncate text-sm" title={doc.name}>{doc.name}</p>
+                    {(doc.employeeName || doc.employeeCode) && (
+                      <p className="text-xs text-gray-500 mt-1 truncate">
+                        {doc.employeeCode ? `${doc.employeeCode} · ` : ''}{doc.employeeName || 'Employee'}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${TYPE_TAG_COLORS[doc.type] || TYPE_TAG_COLORS['Other']}`}>
+                        {doc.type || 'Other'}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border ${STATUS_BADGE[st] || STATUS_BADGE.pending}`}>
+                        <CheckBadgeIcon className="w-3 h-3" /> {STATUS_LABEL[st] || st}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 text-xs text-gray-400 flex-wrap">
+                      {doc.department && <span>{doc.department}</span>}
+                      {doc.fileSize ? <span>{formatSize(doc.fileSize)}</span> : null}
+                      {doc.uploadedOn && <span>{format(new Date(doc.uploadedOn), 'dd MMM yyyy')}</span>}
+                    </div>
+                    {doc.uploadedBy && <p className="text-[11px] text-gray-400 mt-1">Uploaded by {doc.uploadedBy}</p>}
                   </div>
                 </div>
 
                 {/* Actions */}
-                <div className="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                  <button onClick={() => downloadDoc(doc)} title="Download"
-                    className="p-2 text-indigo-500 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all">
-                    <ArrowDownTrayIcon className="w-4 h-4" />
+                <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-gray-50">
+                  <button onClick={() => view(doc)} title="View"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-all">
+                    <EyeIcon className="w-4 h-4" /> View
                   </button>
+                  <button onClick={() => download(doc)} title="Download"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-all">
+                    <ArrowDownTrayIcon className="w-4 h-4" /> Download
+                  </button>
+                  {isHR() && st !== 'verified' && (
+                    <button onClick={() => verifyMutation.mutate({ id: doc.id, action: 'approve' })} title="Verify"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-all">
+                      Verify
+                    </button>
+                  )}
+                  {isHR() && st !== 'rejected' && (
+                    <button onClick={() => { const r = window.prompt('Reason for rejection (optional):', ''); if (r !== null) verifyMutation.mutate({ id: doc.id, action: 'reject', hrRemarks: r }); }} title="Reject"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all">
+                      Reject
+                    </button>
+                  )}
                   {isHR() && (
-                    <button title="Delete" onClick={() => {
-                      if (confirm('Delete this document?')) deleteMutation.mutate(doc.hr_hrdocumentid);
-                    }} className="p-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-xl transition-all">
+                    <button title="Delete" onClick={() => { if (confirm('Delete this document?')) deleteMutation.mutate(doc.id); }}
+                      className="p-1.5 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-all ml-auto">
                       <TrashIcon className="w-4 h-4" />
                     </button>
                   )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {showModal && <UploadModal onClose={() => setShowModal(false)} />}
+      {viewer}
     </div>
   );
 }

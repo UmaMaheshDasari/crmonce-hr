@@ -120,14 +120,35 @@ async function notifyHRDocument(employeeName, docName) {
 }
 
 const shape = (d) => ({
-  id: d.hr_hrdocumentid, name: d.hr_name, type: d.hr_documenttype || d.hr_name, fileUrl: d.hr_fileurl,
+  id: d.hr_hrdocumentid, name: d.hr_name || d.hr_originalname || 'Document', type: d.hr_documenttype || 'Other', fileUrl: d.hr_fileurl,
   fileSize: d.hr_filesize, originalName: d.hr_originalname, contentType: d.hr_contenttype,
   remarks: d.hr_remarks || '', status: d.hr_status || 'pending', uploadedBy: d.hr_uploadedby || '',
   verifiedBy: d.hr_verifiedby || '', verifiedOn: d.hr_verifiedon || '', hrRemarks: d.hr_hrremarks || '',
   uploadedOn: d.createdon, employeeId: d._hr_hremployee_value,
   employeeName: d['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '',
+  employeeCode: '', department: '',   // enriched below from the employee record
   version: d.hr_version || 1, docGroup: d.hr_docgroup || d.hr_hrdocumentid,   // group = version chain
 });
+
+// Enrich shaped docs with the employee's code + department + name (not stored on
+// the document row). One lookup for a single-employee view; all employees for HR.
+async function enrichEmployees(rows, targetId) {
+  try {
+    const empMap = new Map();
+    if (targetId) {
+      const e = await d365.getByIdOptional(EMP, targetId, { select: 'hr_hremployeeid,hr_hremployee1', optionalSelect: 'hr_employeeid,hr_department' });
+      if (e?.hr_hremployeeid) empMap.set(e.hr_hremployeeid, e);
+    } else {
+      const { data } = await d365.getListOptional(EMP, { select: 'hr_hremployeeid,hr_hremployee1', optionalSelect: 'hr_employeeid,hr_department', top: 5000 });
+      (data || []).forEach(e => empMap.set(e.hr_hremployeeid, e));
+    }
+    for (const r of rows) {
+      const e = empMap.get(r.employeeId);
+      if (e) { r.employeeCode = e.hr_employeeid || ''; r.department = e.hr_department || ''; if (!r.employeeName) r.employeeName = e.hr_hremployee1 || ''; }
+    }
+  } catch (_) { /* enrichment is best-effort */ }
+  return rows;
+}
 
 // GET /  — list documents (employee sees own; HR passes ?employeeId=)
 docRouter.get('/', requirePermission('document:read'), async (req, res, next) => {
@@ -135,7 +156,8 @@ docRouter.get('/', requirePermission('document:read'), async (req, res, next) =>
     const targetId = isHR(req.user) ? req.query.employeeId : req.user.id;
     const filter = targetId ? `_hr_hremployee_value eq '${targetId}'` : undefined;
     const result = await d365.getListOptional(DOC, { select: DOC_SELECT, optionalSelect: DOC_OPT, filter, orderby: 'createdon desc' });
-    res.json({ data: (result.data || []).map(shape) });
+    const rows = await enrichEmployees((result.data || []).map(shape), targetId);
+    res.json({ data: rows });
   } catch (err) { next(err); }
 });
 
