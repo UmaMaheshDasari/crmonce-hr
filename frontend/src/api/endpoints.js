@@ -95,6 +95,16 @@ export const payrollSettingsApi = {
   update: (data) => api.put('/payroll/settings', data),
 };
 
+// ── Salary Structure (effective-dated salary revisions per employee) ──
+export const salaryStructureApi = {
+  list: (params) => api.get('/payroll/salary-structures', { params }),
+  history: (employeeId) => api.get(`/payroll/salary-structures/employee/${employeeId}`),
+  get: (id) => api.get(`/payroll/salary-structures/${id}`),
+  create: (data) => api.post('/payroll/salary-structures', data),
+  update: (id, data) => api.patch(`/payroll/salary-structures/${id}`, data),
+  delete: (id) => api.delete(`/payroll/salary-structures/${id}`),
+};
+
 // ── Recruitment ──────────────────────────────────────────────────
 export const recruitmentApi = {
   jobs: (params) => api.get('/recruitment/jobs', { params }),

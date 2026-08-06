@@ -271,6 +271,7 @@ class D365Service {
     department:  'hr_hrdepartments',
     designation: 'hr_hrdesignations',
     goal:        'hr_hrgoals',
+    salaryStructure: 'hr_salarystructures',       // Effective-dated salary revisions per employee
     attendanceRequest: 'hr_attendancerequests',   // Missing Punch / Attendance correction requests
     holiday:     'hr_holidays',                   // HR-managed holiday calendar
   };

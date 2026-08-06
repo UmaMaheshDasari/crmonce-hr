@@ -19,6 +19,7 @@ const employeeRoutes   = require('./modules/employees/employee.routes');
 const attendanceRoutes = require('./modules/attendance/attendance.routes');
 const payrollRoutes    = require('./modules/payroll/payroll.routes');
 const payrollSettingsRoutes = require('./modules/payroll/payroll-settings.routes');
+const salaryStructureRoutes = require('./modules/payroll/salary-structure.routes');
 const taxDeclarationRoutes = require('./modules/payroll/tax-declaration.routes');
 const recruitmentRoutes= require('./modules/recruitment/recruitment.routes');
 const goalsRoutes      = require('./modules/performance/goals.routes');
@@ -100,6 +101,7 @@ app.use('/api/employees',   authenticateToken, employeeRoutes);
 app.use('/api/attendance',  authenticateToken, attendanceRoutes);
 app.use('/api/payroll/tax-declarations', authenticateToken, taxDeclarationRoutes);
 app.use('/api/payroll/settings', authenticateToken, payrollSettingsRoutes);
+app.use('/api/payroll/salary-structures', authenticateToken, salaryStructureRoutes);
 app.use('/api/payroll',     authenticateToken, payrollRoutes);
 app.use('/api/recruitment', authenticateToken, recruitmentRoutes);
 app.use('/api/performance/goals', authenticateToken, goalsRoutes);
@@ -161,6 +163,9 @@ server.listen(PORT, () => {
     require('./services/provision-payroll-settings')
       .ensurePayrollSettingsTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] payroll settings table skipped: ${err.message}`));
+    require('./services/provision-salary-structure')
+      .ensureSalaryStructureTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] salary structure table skipped: ${err.message}`));
     require('./services/provision-profile-audit')
       .ensureProfileAuditTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] profile-audit table skipped: ${err.message}`));

@@ -9,7 +9,7 @@ import {
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
-  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon,
+  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
@@ -22,6 +22,7 @@ const NAV = [
   { to: '/leave',       label: 'Leave',        icon: CalendarDaysIcon },
   { to: '/holidays',    label: 'Holidays',     icon: CalendarDaysIcon },
   { to: '/payroll',     label: 'Payroll',      icon: CurrencyDollarIcon },
+  { to: '/salary-structure', label: 'Salary Structure', icon: BanknotesIcon },
   { to: '/payroll-settings', label: 'Payroll Settings', icon: Cog6ToothIcon, roles: ['super_admin'] },
   { to: '/tax-declarations', label: 'Tax Declarations', icon: DocumentTextIcon },
   { to: '/recruitment', label: 'Recruitment',  icon: BriefcaseIcon },
@@ -41,6 +42,7 @@ const LABEL_MAP = {
   '/leave':       'Leave',
   '/holidays':    'Holidays',
   '/payroll':     'Payroll',
+  '/salary-structure': 'Salary Structure',
   '/payroll-settings': 'Payroll Settings',
   '/tax-declarations': 'Tax Declarations',
   '/recruitment': 'Recruitment',
