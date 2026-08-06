@@ -2,11 +2,50 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { payrollApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
-import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon, CheckCircleIcon, LockClosedIcon, LockOpenIcon, EyeIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
+
+// Professional salary-breakdown preview: Gross → itemised deductions → Net.
+function BreakdownModal({ record, onClose }) {
+  const r = record;
+  const earnings = [
+    ['Basic', r.hr_basic], ['HRA', r.hr_hra], ['Special Allowance', r.hr_special],
+    ['Medical', r.hr_medical], ['Conveyance', r.hr_conveyance], ['Other Allowances', r.hr_allowances], ['Overtime', r.hr_overtime],
+  ].filter(([, v]) => Number(v) > 0);
+  const deductions = [
+    ['Provident Fund (PF)', r.hr_pf], ['Professional Tax', r.hr_professionaltax], ['Income Tax (TDS)', r.hr_incometax],
+    ['LOP', r.hr_lop], ['Advance Salary', r.hr_advance], ['Other Deductions', r.hr_deductions],
+  ].filter(([, v]) => Number(v) > 0);
+  const Row = ({ label, val, neg }) => (
+    <div className="flex items-center justify-between py-1.5 text-sm"><span className="text-gray-600">{label}</span><span className={`font-medium tabular-nums ${neg ? 'text-red-600' : 'text-gray-900'}`}>{neg ? '−' : ''}{inr(val)}</span></div>
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
+      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl shadow-2xl my-0 sm:my-8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div><h2 className="text-lg font-bold text-gray-900">Salary Breakdown</h2><p className="text-xs text-gray-400">{MONTHS[(r.hr_month || 1) - 1]} {r.hr_year}{r.hr_locked === 'true' ? ' · Locked' : ''}</p></div>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">Earnings</p>
+            {earnings.length ? earnings.map(([l, v]) => <Row key={l} label={l} val={v} />) : <p className="text-sm text-gray-400">—</p>}
+            <div className="flex items-center justify-between pt-2 mt-1 border-t border-gray-100 text-sm font-bold"><span>Gross Salary</span><span className="text-indigo-600 tabular-nums">{inr(r.hr_gross)}</span></div>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">Deductions</p>
+            {deductions.length ? deductions.map(([l, v]) => <Row key={l} label={l} val={v} neg />) : <p className="text-sm text-gray-400">None</p>}
+          </div>
+          <div className="flex items-center justify-between bg-indigo-50 rounded-xl px-4 py-3"><span className="text-sm font-bold text-indigo-700">Net Salary</span><span className="text-xl font-bold text-indigo-700 tabular-nums">{inr(r.hr_netpay)}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ProcessPayrollModal({ onClose }) {
   const qc = useQueryClient();
@@ -112,9 +151,11 @@ function ProcessPayrollModal({ onClose }) {
 }
 
 export default function PayrollPage() {
-  const { isHR } = useAuth();
+  const { isHR, user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
   const qc = useQueryClient();
   const [showModal, setShowModal] = useState(false);
+  const [viewRec, setViewRec] = useState(null);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [page, setPage] = useState(1);
   const limit = 20;
@@ -138,6 +179,16 @@ export default function PayrollPage() {
     mutationFn: (id) => payrollApi.release(id),
     onSuccess: () => { toast.success('Payroll released'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
     onError: (err) => toast.error(err.response?.data?.error || 'Release failed'),
+  });
+  const lockMutation = useMutation({
+    mutationFn: (id) => payrollApi.lock(id),
+    onSuccess: (res) => { toast.success(res.data?.message || 'Payroll locked'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Lock failed'),
+  });
+  const unlockMutation = useMutation({
+    mutationFn: (id) => payrollApi.unlock(id),
+    onSuccess: (res) => { toast.success(res.data?.message || 'Payroll unlocked'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Unlock failed'),
   });
 
   const downloadBlob = (blob, filename) => {
@@ -343,6 +394,7 @@ export default function PayrollPage() {
                           <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
                             <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
                             <span className={cfg.text}>{cfg.label}</span>
+                            {r.hr_locked === 'true' && <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded ml-1"><LockClosedIcon className="w-3 h-3" /> Locked</span>}
                           </span>
                         );
                       })()}
@@ -352,6 +404,10 @@ export default function PayrollPage() {
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                        <button onClick={() => setViewRec(r)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-600 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                          <EyeIcon className="w-3.5 h-3.5" /> View
+                        </button>
                         {isHR() && r.hr_status === 'draft' && (
                           <button onClick={() => approveMutation.mutate(r.hr_hrpayrollid)} disabled={approveMutation.isPending}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors">
@@ -362,6 +418,18 @@ export default function PayrollPage() {
                           <button onClick={() => releaseMutation.mutate(r.hr_hrpayrollid)} disabled={releaseMutation.isPending}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 disabled:opacity-50 transition-colors">
                             <BanknotesIcon className="w-3.5 h-3.5" /> Release
+                          </button>
+                        )}
+                        {isHR() && (r.hr_status === 'processed' || r.hr_status === 'paid') && r.hr_locked !== 'true' && (
+                          <button onClick={() => lockMutation.mutate(r.hr_hrpayrollid)} disabled={lockMutation.isPending}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors" title="Lock so this month can never be regenerated">
+                            <LockClosedIcon className="w-3.5 h-3.5" /> Lock
+                          </button>
+                        )}
+                        {isSuperAdmin && r.hr_locked === 'true' && (
+                          <button onClick={() => unlockMutation.mutate(r.hr_hrpayrollid)} disabled={unlockMutation.isPending}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition-colors">
+                            <LockOpenIcon className="w-3.5 h-3.5" /> Unlock
                           </button>
                         )}
                         {(r.hr_status === 'processed' || r.hr_status === 'paid') && (
@@ -398,6 +466,7 @@ export default function PayrollPage() {
       </div>
 
       {showModal && <ProcessPayrollModal onClose={() => setShowModal(false)} />}
+      {viewRec && <BreakdownModal record={viewRec} onClose={() => setViewRec(null)} />}
     </div>
   );
 }

@@ -136,7 +136,27 @@ const SELECT = [
   'hr_status', 'hr_remarks', 'hr_createdby', 'createdon', 'modifiedon',
 ].join(',');
 
+/**
+ * The salary structure in effect for an employee AS OF a date — the latest
+ * revision whose Effective From is on/before the date (any status). Returns a
+ * shaped object or null. Used by the payroll engine to source earnings.
+ * @param {object} d365  the d365 service (injected to keep this module I/O-light)
+ */
+async function getEffectiveStructure(d365, employeeId, asOfDate) {
+  const ENTITY = d365.constructor.entities.salaryStructure;
+  const q = `'${String(employeeId).replace(/'/g, "''")}'`;
+  const asOf = String(asOfDate || '').slice(0, 10);
+  try {
+    const { data } = await d365.getListOptional(ENTITY, {
+      select: SELECT,
+      filter: `hr_employeeid eq ${q}${asOf ? ` and hr_effectivefrom le '${asOf}'` : ''}`,
+      orderby: 'hr_effectivefrom desc,createdon desc', top: 1,
+    });
+    return data && data[0] ? shape(data[0]) : null;
+  } catch { return null; }
+}
+
 module.exports = {
   EARNING_FIELDS, DEDUCTION_FIELDS, TO_LOGICAL, SELECT,
-  computeGross, computeTotals, validate, toDataverse, shape,
+  computeGross, computeTotals, validate, toDataverse, shape, getEffectiveStructure,
 };

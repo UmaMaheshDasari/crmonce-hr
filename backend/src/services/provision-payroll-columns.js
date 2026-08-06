@@ -25,6 +25,19 @@ const COLUMNS = [
   int('hr_Overtime', 'Overtime Pay'),
   int('hr_LOP', 'LOP Amount'),
   int('hr_Advance', 'Advance Salary Recovery'),
+  // Itemised earnings (from the Salary Structure) — payslip renders these.
+  int('hr_HRA', 'House Rent Allowance'),
+  int('hr_Special', 'Special Allowance'),
+  int('hr_Medical', 'Medical Allowance'),
+  int('hr_Conveyance', 'Conveyance Allowance'),
+  // Itemised statutory deductions (from Payroll Settings / structure overrides).
+  int('hr_PF', 'Provident Fund'),
+  int('hr_ProfessionalTax', 'Professional Tax'),
+  int('hr_IncomeTax', 'Income Tax (TDS)'),
+  // Payroll process: lock flag + full audit snapshot.
+  str('hr_Locked', 'Locked', 10),
+  str('hr_LockedBy', 'Locked By', 200),
+  str('hr_LockedDate', 'Locked Date', 30),
   int('hr_PresentDays', 'Present Days', 0, 366),
   int('hr_AbsentDays', 'Absent Days', 0, 366),
   int('hr_WorkingDays', 'Salary Working Days', 0, 366),

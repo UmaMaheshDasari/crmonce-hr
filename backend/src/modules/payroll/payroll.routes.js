@@ -7,8 +7,12 @@ const { notifyPayrollProcessed, broadcast, notifyUser } = require('../../service
 const { toValue, labelsForList } = require('../../services/picklist');
 const { rangeCounts } = require('../../services/attendance-summary.util');
 const { computePayroll, round2 } = require('../../services/payroll.calc');
+const { computePayrollEngine } = require('../../services/payroll-engine.calc');
 const leaveEngine = require('../../services/leave-engine.service');
 const advanceService = require('../../services/advance.service');
+const salaryStructure = require('../../services/salary-structure.service');
+const payrollSettings = require('../../services/payroll-settings.service');
+const activity = require('../../services/activity.service');
 const { buildPayslipPdf } = require('../../services/payslip.service');
 const { emailPayslip } = require('../../services/payslip-notify.service');
 const { buildReport } = require('../../services/payroll-reports.service');
@@ -20,7 +24,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 // Base columns always present + computed/workflow columns that may not be
 // provisioned yet (selected/stored optionally so payroll works before migration).
 const BASE_SELECT = 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,hr_processeddate,_hr_hremployee_value';
-const OPT_SELECT = 'hr_gross,hr_overtime,hr_lop,hr_advance,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_approveddate,hr_releasedby,hr_releaseddate,hr_emailsent,hr_emailsenttime';
+const OPT_SELECT = 'hr_gross,hr_overtime,hr_lop,hr_advance,hr_hra,hr_special,hr_medical,hr_conveyance,hr_pf,hr_professionaltax,hr_incometax,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_approveddate,hr_releasedby,hr_releaseddate,hr_emailsent,hr_emailsenttime,hr_locked,hr_lockedby,hr_lockeddate';
 const OPT_FIELDS = OPT_SELECT.split(',');
 
 // create/update that retry WITHOUT the optional (computed/workflow) columns if
@@ -63,7 +67,7 @@ async function attendanceFacts(empId, month, year) {
   const { paidLeaveDays } = await leaveEngine.splitMonthLeave(empId, { year, month });
 
   const lopDays = Math.max(0, workingDays - presentDays - paidLeaveDays);
-  return { workingDays, presentDays, absentDays: lopDays, lopDays, paidLeaveDays, overtimeHours };
+  return { workingDays, presentDays, absentDays: lopDays, lopDays, paidLeaveDays, overtimeHours, calendarDays: lastDay };
 }
 
 // GET /  — list payroll (employees scoped to their own)
@@ -104,50 +108,60 @@ async function generatePayroll(req, res, next) {
       filter,
     });
 
-    const draft = toValue('hr_payroll_status', 'draft');
-    let created = 0, updated = 0, skipped = 0;
-    for (const emp of employees) {
-      const basic = emp.hr_salary || 0;
-      const allowances = emp.hr_allowances || 0;
-      const fixedDeductions = emp.hr_deductions || 0;
-      const att = await attendanceFacts(emp.hr_hremployeeid, month, year);
-      const c = computePayroll({ basic, allowances, fixedDeductions, salaryWorkingDays: att.workingDays, lopDays: att.lopDays, overtimeHours: att.overtimeHours });
+    // Rates come from Payroll Settings — never hardcoded (§15).
+    const settings = await payrollSettings.getResolved().catch(() => payrollSettings.resolve(null));
+    const asOf = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;   // last day of the month
 
-      // Advance Salary recovery for the month (EMI). Idempotent + never throws
-      // (returns 0 on any failure), so payroll is never blocked. The payslip reads
-      // hr_advance as the "Advance Salary" deduction; net is reduced to match.
+    const draft = toValue('hr_payroll_status', 'draft');
+    let created = 0, updated = 0, skipped = 0, locked = 0;
+    for (const emp of employees) {
+      // Skip a locked or finalised month for this employee up front.
+      const existing = await d365.getListOptional(PAYROLL, {
+        select: 'hr_hrpayrollid,hr_status', optionalSelect: 'hr_locked',
+        filter: `_hr_hremployee_value eq '${emp.hr_hremployeeid}' and hr_month eq ${month} and hr_year eq ${year}`, top: 1,
+      });
+      const row = existing.data?.[0];
+      if (row && row.hr_locked === 'true') { locked++; continue; }             // never regenerate locked months
+      if (row && row.hr_status !== draft) { skipped++; continue; }             // don't overwrite approved/released
+
+      // ── Earnings: from the effective Salary Structure; fall back to the
+      //    Employee master (basic + lump allowances) when none exists yet. ──
+      const structure = await salaryStructure.getEffectiveStructure(d365, emp.hr_hremployeeid, asOf);
+      const earnings = structure
+        ? { basic: structure.basic, hra: structure.hra, special: structure.special, medical: structure.medical, conveyance: structure.conveyance, otherAllowance: structure.otherAllowance }
+        : { basic: emp.hr_salary || 0, otherAllowance: emp.hr_allowances || 0 };
+      const overrides = structure
+        ? { pfApplicable: structure.pfApplicable, pfAmount: structure.pfAmount, professionalTax: structure.professionalTax, incomeTax: structure.incomeTax, otherDeductions: structure.otherDeductions }
+        : { otherDeductions: emp.hr_deductions || 0 };
+
+      const att = await attendanceFacts(emp.hr_hremployeeid, month, year);
       const advanceRecovery = await advanceService.applyMonthlyRecovery(emp.hr_hremployeeid, { year, month });
+
+      // The one engine: Gross − PF − PT − TDS − LOP − Advance − Other = Net.
+      const c = computePayrollEngine({
+        earnings, settings, overrides, advance: advanceRecovery,
+        attendance: { salaryWorkingDays: att.workingDays, lopDays: att.lopDays, calendarDays: att.calendarDays, overtimeHours: att.overtimeHours },
+      });
 
       const record = {
         hr_month: month, hr_year: year,
-        hr_basic: round2(basic), hr_allowances: round2(allowances),
-        hr_deductions: c.totalDeductions, hr_netpay: round2(c.netSalary - advanceRecovery),
-        hr_advance: Math.round(advanceRecovery),
-        hr_gross: Math.round(c.grossSalary), hr_overtime: Math.round(c.overtimePay), hr_lop: Math.round(c.lopDeduction),
+        hr_basic: round2(c.basic), hr_hra: c.hra, hr_special: c.special, hr_medical: c.medical, hr_conveyance: c.conveyance,
+        hr_allowances: round2(c.otherAllowance), hr_overtime: c.overtimePay, hr_gross: c.gross,
+        hr_pf: c.pf, hr_professionaltax: c.professionalTax, hr_incometax: c.incomeTax,
+        hr_lop: c.lop, hr_advance: c.advance, hr_deductions: c.otherDeductions,
+        hr_netpay: c.netSalary,
         hr_presentdays: att.presentDays, hr_absentdays: att.absentDays,
-        hr_workingdays: att.workingDays, hr_paydays: Math.round(c.payableDays),
-        hr_status: draft, hr_processeddate: new Date().toISOString(),
+        hr_workingdays: att.workingDays, hr_paydays: Math.max(0, att.workingDays - att.lopDays),
+        hr_status: draft, hr_locked: 'false', hr_processeddate: new Date().toISOString(),
       };
 
-      // Upsert: one payroll row per employee/month/year.
-      const existing = await d365.getList(PAYROLL, {
-        select: 'hr_hrpayrollid,hr_status',
-        filter: `_hr_hremployee_value eq '${emp.hr_hremployeeid}' and hr_month eq ${month} and hr_year eq ${year}`,
-        top: 1,
-      });
-      const row = existing.data?.[0];
-      if (row) {
-        // Don't overwrite an approved/released payroll.
-        if (row.hr_status !== draft) { skipped++; continue; }
-        await updateOpt(row.hr_hrpayrollid, record);
-        updated++;
-      } else {
-        await createOpt({ 'hr_hremployee@odata.bind': `/hr_hremployees(${emp.hr_hremployeeid})`, ...record });
-        created++;
-      }
+      if (row) { await updateOpt(row.hr_hrpayrollid, record); updated++; }
+      else { await createOpt({ 'hr_hremployee@odata.bind': `/hr_hremployees(${emp.hr_hremployeeid})`, ...record }); created++; }
     }
+
+    try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${created + updated} employees${locked ? `, ${locked} locked skipped` : ''}` }); } catch {}
     broadcast('payroll:processed', { month: `${month}/${year}`, count: created + updated });
-    res.json({ message: `Payroll generated for ${created + updated} employees (${skipped} already finalised skipped)`, created, updated, skipped, count: created + updated });
+    res.json({ message: `Payroll generated for ${created + updated} employees (${skipped} finalised, ${locked} locked skipped)`, created, updated, skipped, locked, count: created + updated });
   } catch (err) { next(err); }
 }
 payrollRouter.post('/generate', requireRole('super_admin', 'hr_manager'), generatePayroll);
@@ -174,11 +188,54 @@ payrollRouter.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), as
       hr_emailsenttime: mail.sentAt || '',
     });
     if (empId) notifyUser(empId, 'payroll:processed', { month: `${payroll.hr_month}/${payroll.hr_year}` });
+    try { activity.record({ category: 'Payroll', type: 'payroll_approved', title: 'Payroll Approved', name: req.user?.name, meta: `${req.user?.name || 'Admin'} approved payroll ${payroll.hr_month}/${payroll.hr_year}` }); } catch {}
     res.json({ message: `Payroll approved${mail.success ? ' and payslip emailed' : ' (payslip email failed — will retry)'}`, emailSent: mail.success });
   } catch (err) {
     console.error('[payroll/approve] FAILED:', err.message);
     res.status(err.status || 400).json({ error: err.message || 'Failed to approve payroll' });
   }
+});
+
+// PATCH /:id/lock  — lock a payroll row so it can never be regenerated (HR).
+payrollRouter.patch('/:id/lock', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const p = await d365.getByIdOptional(PAYROLL, req.params.id, { select: 'hr_hrpayrollid,hr_month,hr_year', optionalSelect: 'hr_status' });
+    await updateOpt(req.params.id, { hr_locked: 'true', hr_lockedby: req.user?.name || req.user?.email || 'HR', hr_lockeddate: new Date().toISOString() });
+    try { activity.record({ category: 'Payroll', type: 'payroll_locked', title: 'Payroll Locked', name: req.user?.name, meta: `${req.user?.name || 'Admin'} locked payroll ${p.hr_month}/${p.hr_year}` }); } catch {}
+    res.json({ message: 'Payroll locked — this month can no longer be regenerated.' });
+  } catch (err) { res.status(err.status || 400).json({ error: err.message || 'Failed to lock payroll' }); }
+});
+
+// PATCH /:id/unlock  — unlock (Super Admin only).
+payrollRouter.patch('/:id/unlock', requireRole('super_admin'), async (req, res, next) => {
+  try {
+    const p = await d365.getByIdOptional(PAYROLL, req.params.id, { select: 'hr_hrpayrollid,hr_month,hr_year' });
+    await updateOpt(req.params.id, { hr_locked: 'false', hr_lockedby: '', hr_lockeddate: '' });
+    try { activity.record({ category: 'Payroll', type: 'payroll_unlocked', title: 'Payroll Unlocked', name: req.user?.name, meta: `${req.user?.name || 'Admin'} unlocked payroll ${p.hr_month}/${p.hr_year}` }); } catch {}
+    res.json({ message: 'Payroll unlocked.' });
+  } catch (err) { res.status(err.status || 400).json({ error: err.message || 'Failed to unlock payroll' }); }
+});
+
+// POST /lock-month  — bulk-lock every APPROVED/PAID row for a month (HR).
+payrollRouter.post('/lock-month', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const { month, year } = req.body;
+    if (!month || !year) return res.status(400).json({ error: 'month and year are required.' });
+    const processed = toValue('hr_payroll_status', 'processed');
+    const paid = toValue('hr_payroll_status', 'paid');
+    const { data } = await d365.getListOptional(PAYROLL, {
+      select: 'hr_hrpayrollid,hr_status', optionalSelect: 'hr_locked',
+      filter: `hr_month eq ${month} and hr_year eq ${year} and (hr_status eq ${processed} or hr_status eq ${paid})`,
+    });
+    let n = 0;
+    for (const r of data || []) {
+      if (r.hr_locked === 'true') continue;
+      await updateOpt(r.hr_hrpayrollid, { hr_locked: 'true', hr_lockedby: req.user?.name || 'HR', hr_lockeddate: new Date().toISOString() });
+      n++;
+    }
+    try { activity.record({ category: 'Payroll', type: 'payroll_locked', title: 'Payroll Month Locked', name: req.user?.name, meta: `${req.user?.name || 'Admin'} locked ${n} payroll rows for ${month}/${year}` }); } catch {}
+    res.json({ message: `Locked ${n} payroll record(s) for ${month}/${year}.`, locked: n });
+  } catch (err) { res.status(err.status || 400).json({ error: err.message || 'Failed to lock month' }); }
 });
 
 // PATCH /:id/release  — release payroll → status 'paid'

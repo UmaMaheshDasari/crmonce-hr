@@ -58,14 +58,18 @@ async function buildPayslipPdf({ payroll, employee, company }) {
 
   // ── figures ──
   const basic = Number(p.hr_basic) || 0;
-  const allowances = Number(p.hr_allowances) || 0;
+  const hra = Number(p.hr_hra) || 0;
+  const special = Number(p.hr_special) || 0;
+  const medical = Number(p.hr_medical) || 0;
+  const conveyance = Number(p.hr_conveyance) || 0;
+  const allowances = Number(p.hr_allowances) || 0;   // "Other Allowances" bucket
   const overtime = Number(p.hr_overtime) || 0;
   // The slip shows the FULL monthly gross (the sum of the earning rows) and then
   // lists LOP as an explicit deduction, so it reads transparently as
   // Gross − PF − PT − TDS − LOP − Advance − Other = Net. (Because the stored
   // hr_gross is already LOP-prorated, full gross = hr_gross + LOP, and the net
   // computed here equals hr_netpay minus any advance — no double counting.)
-  const gross = basic + allowances + overtime;
+  const gross = basic + hra + special + medical + conveyance + allowances + overtime;
 
   // Itemised deductions. PF / Professional Tax / Income Tax are read from the
   // payroll record when those columns exist (else 0.00). LOP is the loss-of-pay
@@ -84,8 +88,8 @@ async function buildPayslipPdf({ payroll, employee, company }) {
   // splits aren't itemised, so combined amounts land in "Other" rows and the rest
   // show 0.00 — section totals stay exact.
   const earnings = [
-    ['Basic', basic], ['House Rent Allowance (HRA)', 0], ['Special Allowance', 0],
-    ['Medical Allowance', 0], ['Conveyance', 0], ['Other Allowances', allowances + overtime],
+    ['Basic', basic], ['House Rent Allowance (HRA)', hra], ['Special Allowance', special],
+    ['Medical Allowance', medical], ['Conveyance', conveyance], ['Other Allowances', allowances + overtime],
   ];
   const deductionRows = [
     ['Provident Fund (PF)', pf], ['Professional Tax', professionalTax],

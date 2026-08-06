@@ -90,6 +90,9 @@ export const payrollApi = {
   process: (data) => api.post('/payroll/process', data),   // alias (backward-compat)
   approve: (id) => api.patch(`/payroll/${id}/approve`),
   release: (id) => api.patch(`/payroll/${id}/release`),
+  lock: (id) => api.patch(`/payroll/${id}/lock`),
+  unlock: (id) => api.patch(`/payroll/${id}/unlock`),
+  lockMonth: (data) => api.post('/payroll/lock-month', data),
   downloadPayslip: (id) => api.get(`/payroll/${id}/payslip`, { responseType: 'blob' }),
   report: (type, params) => api.get(`/payroll/reports/${type}`, { params, responseType: 'blob' }),
 };
