@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
@@ -8,33 +8,58 @@ import {
   HomeIcon, UsersIcon, ClockIcon, CurrencyDollarIcon,
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
-  CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
+  CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, ChevronDownIcon, PencilSquareIcon,
   BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 
+// Grouped navigation. Standalone items have `to`; groups have `group` + `children`.
+// Routes, icons and per-item `roles` are unchanged — only the organisation differs.
+// (The existing "Payroll" page is kept as the first Payroll child so its route
+//  stays reachable from the sidebar.)
 const NAV = [
-  { to: '/',            label: 'Dashboard',    icon: HomeIcon,            exact: true },
-  { to: '/profile',     label: 'My Profile',   icon: UserCircleIcon },
-  { to: '/employees',   label: 'Employees',    icon: UsersIcon, roles: ['super_admin', 'hr_manager'] },
-  { to: '/hr-verification', label: 'HR Verification', icon: ShieldCheckIcon, roles: ['super_admin', 'hr_manager'] },
-  { to: '/attendance',  label: 'Attendance',    icon: ClockIcon },
-  { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
-  { to: '/leave',       label: 'Leave',        icon: CalendarDaysIcon },
-  { to: '/holidays',    label: 'Holidays',     icon: CalendarDaysIcon },
-  { to: '/payroll',     label: 'Payroll',      icon: CurrencyDollarIcon },
-  { to: '/payroll-dashboard', label: 'Payroll Dashboard', icon: ChartBarIcon, roles: ['super_admin', 'hr_manager'] },
-  { to: '/payroll-automation', label: 'Payroll Automation', icon: BoltIcon, roles: ['super_admin', 'hr_manager'] },
-  { to: '/salary-structure', label: 'Salary Structure', icon: BanknotesIcon },
-  { to: '/advance-salary', label: 'Advance Salary', icon: BanknotesIcon },
-  { to: '/pt-master', label: 'Professional Tax', icon: ScaleIcon, roles: ['super_admin', 'hr_manager'] },
-  { to: '/payroll-settings', label: 'Payroll Settings', icon: Cog6ToothIcon, roles: ['super_admin'] },
-  { to: '/tax-declarations', label: 'Tax Declarations', icon: DocumentTextIcon },
-  { to: '/recruitment', label: 'Recruitment',  icon: BriefcaseIcon },
-  { to: '/performance', label: 'Performance',  icon: ChartBarIcon },
-  { to: '/goals',       label: 'Goals',        icon: FlagIcon },
-  { to: '/documents',   label: 'Documents',    icon: DocumentTextIcon },
-  { to: '/import-export', label: 'Import / Export', icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
-  { to: '/company-settings', label: 'Company Settings', icon: BuildingOffice2Icon, roles: ['super_admin'] },
+  { to: '/',        label: 'Dashboard',  icon: HomeIcon, exact: true },
+  { to: '/profile', label: 'My Profile', icon: UserCircleIcon },
+  {
+    group: 'Employees', icon: UsersIcon, children: [
+      { to: '/employees',       label: 'Employees',       icon: UsersIcon, roles: ['super_admin', 'hr_manager'] },
+      { to: '/hr-verification', label: 'HR Verification', icon: ShieldCheckIcon, roles: ['super_admin', 'hr_manager'] },
+      { to: '/documents',       label: 'Documents',       icon: DocumentTextIcon },
+      { to: '/recruitment',     label: 'Recruitment',     icon: BriefcaseIcon },
+    ],
+  },
+  {
+    group: 'Attendance', icon: ClockIcon, children: [
+      { to: '/attendance',          label: 'Attendance',          icon: ClockIcon },
+      { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
+      { to: '/leave',               label: 'Leave',               icon: CalendarDaysIcon },
+      { to: '/holidays',            label: 'Holidays',            icon: CalendarDaysIcon },
+    ],
+  },
+  {
+    group: 'Payroll', icon: CurrencyDollarIcon, children: [
+      { to: '/payroll',            label: 'Payroll',            icon: CurrencyDollarIcon },
+      { to: '/payroll-dashboard',  label: 'Payroll Dashboard',  icon: ChartBarIcon, roles: ['super_admin', 'hr_manager'] },
+      { to: '/payroll-automation', label: 'Payroll Automation', icon: BoltIcon, roles: ['super_admin', 'hr_manager'] },
+      { to: '/salary-structure',   label: 'Salary Structure',   icon: BanknotesIcon },
+      { to: '/advance-salary',     label: 'Advance Salary',     icon: BanknotesIcon },
+      { to: '/pt-master',          label: 'Professional Tax',   icon: ScaleIcon, roles: ['super_admin', 'hr_manager'] },
+      { to: '/payroll-settings',   label: 'Payroll Settings',   icon: Cog6ToothIcon, roles: ['super_admin'] },
+      { to: '/tax-declarations',   label: 'Tax Declarations',   icon: DocumentTextIcon },
+    ],
+  },
+  {
+    group: 'Performance', icon: ChartBarIcon, children: [
+      { to: '/performance', label: 'Performance', icon: ChartBarIcon },
+      { to: '/goals',       label: 'Goals',       icon: FlagIcon },
+    ],
+  },
+  {
+    group: 'Administration', icon: Squares2X2Icon, children: [
+      { to: '/import-export',    label: 'Import / Export',  icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
+      { to: '/company-settings', label: 'Company Settings', icon: BuildingOffice2Icon, roles: ['super_admin'] },
+    ],
+  },
 ];
 
 const LABEL_MAP = {
@@ -62,7 +87,7 @@ const LABEL_MAP = {
   '/company-settings': 'Company Settings',
 };
 
-function NavItem({ item, collapsed, onClick }) {
+function NavItem({ item, collapsed, indented, onClick }) {
   return (
     <NavLink
       to={item.to}
@@ -73,7 +98,7 @@ function NavItem({ item, collapsed, onClick }) {
       className={({ isActive }) =>
         `group relative flex items-center h-11 rounded-lg text-[14px] transition-colors duration-200 cursor-pointer ` +
         `outline-none focus-visible:ring-2 focus-visible:ring-[#E84C88]/50 focus-visible:ring-inset ` +
-        `${collapsed ? 'justify-center px-0' : 'gap-3 px-4'} ` +
+        `${collapsed ? 'justify-center px-0' : (indented ? 'gap-3 pl-11 pr-3' : 'gap-3 px-4')} ` +
         (isActive
           ? 'bg-[#E84C88]/[0.12] text-white font-semibold'
           : 'text-slate-300/80 font-medium hover:bg-white/[0.06] hover:text-white')
@@ -95,11 +120,41 @@ function NavItem({ item, collapsed, onClick }) {
   );
 }
 
+// A collapsible parent menu with indented children. Stateless: `open`/`onToggle`
+// are lifted to AppShell so expansion survives re-renders. Highlights when it
+// contains the active route.
+function NavGroup({ item, open, onToggle, containsActive, onNavigate }) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className={`group w-full flex items-center gap-3 h-11 px-4 rounded-lg text-[14px] transition-colors duration-200 cursor-pointer ` +
+          `outline-none focus-visible:ring-2 focus-visible:ring-[#E84C88]/50 focus-visible:ring-inset ` +
+          (containsActive ? 'text-white font-semibold' : 'text-slate-300/80 font-medium hover:bg-white/[0.06] hover:text-white')}
+      >
+        <item.icon className={`w-[18px] h-[18px] flex-shrink-0 ${containsActive ? 'text-[#E84C88]' : 'text-slate-400 group-hover:text-slate-200'}`} aria-hidden />
+        <span className="truncate flex-1 text-left">{item.group}</span>
+        <ChevronDownIcon className={`w-4 h-4 flex-shrink-0 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden />
+      </button>
+      {open && (
+        <div className="mt-1 space-y-1">
+          {item.children.map(child => (
+            <NavItem key={child.to} item={child} collapsed={false} indented onClick={onNavigate} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AppShell() {
   const { user, logout, hasRole } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   const toggleCollapsed = () => setCollapsed(c => { localStorage.setItem('sidebarCollapsed', c ? '0' : '1'); return !c; });
+  const [openGroups, setOpenGroups] = useState({});   // { [groupLabel]: bool } — user overrides
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -109,7 +164,17 @@ export default function AppShell() {
   const companyName = company?.hr_name || 'CRMONCE (OPC) PRIVATE LIMITED';
   const companyLogo = company?.hr_logourl || '/crmonce-logo.png';
 
-  const visibleNav = NAV.filter(item => !item.roles || hasRole(...item.roles));
+  // Role visibility. Groups keep only the children the user may see; a group with
+  // no visible children is hidden entirely. Standalone items filter as before.
+  const visibleNav = NAV.map(item => {
+    if (item.children) {
+      const kids = item.children.filter(c => !c.roles || hasRole(...c.roles));
+      return kids.length ? { ...item, children: kids } : null;
+    }
+    return (!item.roles || hasRole(...item.roles)) ? item : null;
+  }).filter(Boolean);
+  // Flattened leaf items (icons only) for the collapsed rail.
+  const flatNav = visibleNav.flatMap(item => item.children ? item.children : [item]);
 
   const handleLogout = async () => {
     await logout();
@@ -119,6 +184,14 @@ export default function AppShell() {
   /* Determine current page label for breadcrumb */
   const currentPath = '/' + location.pathname.split('/')[1];
   const pageLabel = LABEL_MAP[currentPath] || 'Page';
+
+  // Group expand/collapse. On navigation, reset overrides so the group holding the
+  // active route auto-opens (classic accordion). A user toggle overrides until the
+  // next navigation.
+  useEffect(() => { setOpenGroups({}); }, [currentPath]);
+  const groupContainsActive = (item) => item.children.some(c => c.to === currentPath);
+  const isGroupOpen = (item) => openGroups[item.group] ?? groupContainsActive(item);
+  const toggleGroup = (item) => setOpenGroups(g => ({ ...g, [item.group]: !(g[item.group] ?? groupContainsActive(item)) }));
 
   const Sidebar = ({ mobile = false }) => {
     const isCollapsed = collapsed && !mobile;   // collapse only on desktop; drawer is always full
@@ -167,9 +240,14 @@ export default function AppShell() {
           <p className="px-2 pb-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Menu</p>
         )}
         <div className="space-y-1">
-          {visibleNav.map(item => (
-            <NavItem key={item.to} item={item} collapsed={isCollapsed} onClick={() => mobile && setSidebarOpen(false)} />
-          ))}
+          {isCollapsed
+            ? flatNav.map(item => (
+                <NavItem key={item.to} item={item} collapsed onClick={() => mobile && setSidebarOpen(false)} />
+              ))
+            : visibleNav.map(item => item.children
+                ? <NavGroup key={item.group} item={item} open={isGroupOpen(item)} containsActive={groupContainsActive(item)}
+                    onToggle={() => toggleGroup(item)} onNavigate={() => mobile && setSidebarOpen(false)} />
+                : <NavItem key={item.to} item={item} collapsed={false} onClick={() => mobile && setSidebarOpen(false)} />)}
         </div>
       </div>
 
