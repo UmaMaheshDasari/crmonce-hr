@@ -34,6 +34,7 @@ const COLUMNS = [
   str('hr_PfApplicable', 'PF Applicable', 10),
   str('hr_PtAmount', 'Professional Tax (₹/month)', 15),
   str('hr_PtApplicable', 'Professional Tax Applicable', 10),
+  str('hr_DefaultPtState', 'Default PT State', 80),
   str('hr_ItPercent', 'Income Tax %', 10),
   str('hr_ItApplicable', 'Income Tax Applicable', 10),
   str('hr_LopBasis', 'LOP Basis', 40),

@@ -67,6 +67,15 @@ test('per-employee PF override wins; Professional Tax is ALWAYS slab-based', () 
   assert.strictEqual(r.professionalTax, 200);  // slab on gross 65000 — NOT the 150 override
 });
 
+test('engine uses the PT resolved from the Master when provided (overrides the built-in slab)', () => {
+  // Gross 65000 → built-in slab would be 200, but the Master resolved 250 (e.g. a new FY rate).
+  const r = computePayrollEngine({ earnings: EARN, settings: SETTINGS, professionalTax: 250, attendance: { salaryWorkingDays: 26, lopDays: 0 } });
+  assert.strictEqual(r.professionalTax, 250);
+  // Settings toggle can still switch PT off entirely.
+  const off = computePayrollEngine({ earnings: EARN, settings: { ...SETTINGS, professionalTax: { applicable: false } }, professionalTax: 250, attendance: { salaryWorkingDays: 26, lopDays: 0 } });
+  assert.strictEqual(off.professionalTax, 0);
+});
+
 test('Professional Tax follows the slab across brackets', () => {
   const at = (basic) => computePayrollEngine({ earnings: { basic }, settings: SETTINGS, attendance: { salaryWorkingDays: 26, lopDays: 0 } }).professionalTax;
   assert.strictEqual(at(15000), 0);      // <= 15000

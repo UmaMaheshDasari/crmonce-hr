@@ -21,9 +21,10 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   hr_pfemployerpercent: '12',
   hr_pfwageceiling: '15000',       // statutory PF wage ceiling (₹/month); 0 = no cap
   hr_pfapplicable: 'true',
-  // ── Professional Tax (flat monthly; state slab) ──
-  hr_ptamount: '200',
+  // ── Professional Tax (auto by the PT Master; toggle can switch it off) ──
+  hr_ptamount: '200',           // legacy — no longer used (PT comes from the master)
   hr_ptapplicable: 'true',
+  hr_defaultptstate: 'Andhra Pradesh',   // used when an employee has no PT state set
   // ── Income Tax (optional flat % override; slab-based TDS handled elsewhere) ──
   hr_itpercent: '0',
   hr_itapplicable: 'false',
@@ -94,6 +95,7 @@ function resolve(settings = null) {
       applicable: bool(g.hr_pfapplicable),
     },
     professionalTax: { amount: num(g.hr_ptamount, 200), applicable: bool(g.hr_ptapplicable) },
+    defaultPtState: g.hr_defaultptstate || 'Andhra Pradesh',
     incomeTax: { percent: num(g.hr_itpercent, 0), applicable: bool(g.hr_itapplicable) },
     lopBasis: g.hr_lopbasis || 'salary_working_days',
     workingHoursPerDay: num(g.hr_workinghoursperday, 8),

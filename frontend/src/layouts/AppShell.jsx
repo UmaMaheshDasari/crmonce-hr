@@ -9,7 +9,7 @@ import {
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, PencilSquareIcon,
-  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon, BoltIcon,
+  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
 } from '@heroicons/react/24/outline';
 
 const NAV = [
@@ -26,6 +26,7 @@ const NAV = [
   { to: '/payroll-automation', label: 'Payroll Automation', icon: BoltIcon, roles: ['super_admin', 'hr_manager'] },
   { to: '/salary-structure', label: 'Salary Structure', icon: BanknotesIcon },
   { to: '/advance-salary', label: 'Advance Salary', icon: BanknotesIcon },
+  { to: '/pt-master', label: 'Professional Tax', icon: ScaleIcon, roles: ['super_admin', 'hr_manager'] },
   { to: '/payroll-settings', label: 'Payroll Settings', icon: Cog6ToothIcon, roles: ['super_admin'] },
   { to: '/tax-declarations', label: 'Tax Declarations', icon: DocumentTextIcon },
   { to: '/recruitment', label: 'Recruitment',  icon: BriefcaseIcon },
@@ -50,6 +51,7 @@ const LABEL_MAP = {
   '/payroll-automation': 'Payroll Automation',
   '/salary-structure': 'Salary Structure',
   '/advance-salary': 'Advance Salary',
+  '/pt-master': 'Professional Tax',
   '/payroll-settings': 'Payroll Settings',
   '/tax-declarations': 'Tax Declarations',
   '/recruitment': 'Recruitment',

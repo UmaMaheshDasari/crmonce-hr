@@ -108,6 +108,15 @@ export const automationApi = {
   retry: (id) => api.post(`/payroll/automation/jobs/${id}/retry`),
 };
 
+// ── Professional Tax Master (configurable slabs) ─────────────────
+export const ptMasterApi = {
+  list: () => api.get('/payroll/pt-slabs'),
+  create: (data) => api.post('/payroll/pt-slabs', data),
+  update: (id, data) => api.patch(`/payroll/pt-slabs/${id}`, data),
+  setStatus: (id, status) => api.patch(`/payroll/pt-slabs/${id}/status`, { status }),
+  preview: (params) => api.get('/payroll/pt-slabs/preview', { params }),
+};
+
 // ── Payroll Settings (admin-configurable payroll parameters) ─────
 export const payrollSettingsApi = {
   get: () => api.get('/payroll/settings'),

@@ -34,7 +34,7 @@ function perDaySalary(gross, { lopBasis, salaryWorkingDays, calendarDays }) {
  * @param {number} [p.advance]         advance-salary recovery this month
  * @returns full itemised breakdown
  */
-function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, attendance = {}, advance = 0 } = {}) {
+function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, attendance = {}, advance = 0, professionalTax: resolvedPT = null } = {}) {
   // ── Earnings ──
   const e = {};
   for (const k of EARNING_KEYS) e[k] = round(earnings[k]);
@@ -73,9 +73,12 @@ function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, at
     }
   }
 
-  // Professional Tax is ALWAYS slab-based on the base gross (never a manual/stored
-  // value). The settings toggle can only switch it off entirely (company policy).
-  const professionalTax = ptSet.applicable === false ? 0 : calculateProfessionalTax(baseGross);
+  // Professional Tax: use the amount RESOLVED from the PT Master (state + gross +
+  // month) when the caller provides it; otherwise the built-in slab. Never manual.
+  // The settings toggle can switch PT off entirely (company policy).
+  const ptApplicable = !(settings.professionalTax && settings.professionalTax.applicable === false);
+  const professionalTax = !ptApplicable ? 0
+    : (resolvedPT != null ? round(resolvedPT) : calculateProfessionalTax(baseGross));
 
   const incomeTax = round(overrides.incomeTax) > 0
     ? round(overrides.incomeTax)

@@ -39,6 +39,7 @@ const COLUMNS = [
   str('hr_RelievingDate', 'Relieving Date', 20),
   str('hr_EmploymentType', 'Employment Type', 30),    // Full-time | Part-time | Contract | Intern
   str('hr_WorkLocation', 'Work Location', 120),
+  str('hr_PTState', 'Professional Tax State', 80),    // drives the PT Master slab lookup
   // Personal
   str('hr_AltPhone', 'Alternate Mobile', 20),
   str('hr_PersonalEmail', 'Personal Email', 120),

@@ -275,6 +275,7 @@ class D365Service {
     leaveLedger: 'hr_leaveledgers',               // Comp-off grants + manual leave-balance adjustments
     advanceSalary: 'hr_advancesalaries',          // Advance salary requests + EMI recovery
     payrollJob: 'hr_payrolljobs',                 // Payroll automation run history + logs
+    ptSlab: 'hr_ptslabs',                         // Professional Tax Master (configurable slabs)
     attendanceRequest: 'hr_attendancerequests',   // Missing Punch / Attendance correction requests
     holiday:     'hr_holidays',                   // HR-managed holiday calendar
   };

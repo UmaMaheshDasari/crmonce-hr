@@ -69,7 +69,12 @@ function computeFigures(p = {}) {
   // Professional Tax is ALWAYS shown from the slab on the base gross (the six
   // salary components, excluding overtime) — never a stale stored value.
   const ptBase = basic + hra + special + medical + conveyance + allowances;
-  const professionalTax = calculateProfessionalTax(ptBase);
+  // Professional Tax = the amount STORED at generation (resolved from the PT Master
+  // for that month/state) → historical payslips are immutable. Falls back to the
+  // built-in slab only for legacy rows generated before PT was stored.
+  const professionalTax = (p.hr_professionaltax != null && p.hr_professionaltax !== '')
+    ? (Number(p.hr_professionaltax) || 0)
+    : calculateProfessionalTax(ptBase);
   const incomeTax = Number(p.hr_incometax) || Number(p.hr_tds) || 0;
   const lop = Number(p.hr_lop) || 0;
   const advance = Number(p.hr_advance) || 0;
@@ -77,15 +82,17 @@ function computeFigures(p = {}) {
   const deductions = pf + professionalTax + incomeTax + lop + advance + otherDeductions;
   const net = gross - deductions;
 
+  // DYNAMIC payslip: only components with a value appear — every zero-value row is
+  // hidden (no empty rows). Section totals stay exact regardless.
   const earnings = [
     ['Basic', basic], ['House Rent Allowance (HRA)', hra], ['Special Allowance', special],
     ['Medical Allowance', medical], ['Conveyance', conveyance], ['Other Allowances', allowances + overtime],
-  ];
+  ].filter(([, amt]) => amt > 0);
   const deductionRows = [
     ['Provident Fund (PF)', pf], ['Professional Tax', professionalTax],
     ['Income Tax (TDS)', incomeTax], ['LOP Deduction', lop],
     ['Advance Salary', advance], ['Other Deductions', otherDeductions],
-  ];
+  ].filter(([, amt]) => amt > 0);
   return { gross, deductions, net, earnings, deductionRows };
 }
 

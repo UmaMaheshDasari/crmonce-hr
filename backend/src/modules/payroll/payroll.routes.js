@@ -14,6 +14,7 @@ const leaveEngine = require('../../services/leave-engine.service');
 const advanceService = require('../../services/advance.service');
 const salaryStructure = require('../../services/salary-structure.service');
 const payrollSettings = require('../../services/payroll-settings.service');
+const ptMaster = require('../../services/pt-master.service');
 const activity = require('../../services/activity.service');
 const { buildPayslipPdf, payslipModel } = require('../../services/payslip.service');
 const { emailPayslip } = require('../../services/payslip-notify.service');
@@ -103,14 +104,15 @@ async function runGeneration({ month, year, employeeIds } = {}) {
   const filter = employeeIds?.length
     ? employeeIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ')
     : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
-  const { data: employees } = await d365.getList(E.employee, {
+  const { data: employees } = await d365.getListOptional(E.employee, {
     select: 'hr_hremployeeid,hr_hremployee1,hr_salary,hr_allowances,hr_deductions',
-    filter,
+    optionalSelect: 'hr_ptstate', filter,
   });
 
   // Rates come from Payroll Settings — never hardcoded (§15).
   const settings = await payrollSettings.getResolved().catch(() => payrollSettings.resolve(null));
   const asOf = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;   // last day of the month
+  const payrollDate = `${year}-${pad2(month)}-01`;   // the month PT slabs are resolved against
 
   const draft = toValue('hr_payroll_status', 'draft');
   let created = 0, updated = 0, skipped = 0, locked = 0;
@@ -138,9 +140,15 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       const att = await attendanceFacts(emp.hr_hremployeeid, month, year);
       const advanceRecovery = await advanceService.applyMonthlyRecovery(emp.hr_hremployeeid, { year, month });
 
+      // Professional Tax from the MASTER (state + gross + month). The resolved
+      // amount is stored on the row, so this month's payslip is immutable even if
+      // slabs change later.
+      const baseGross = ['basic', 'hra', 'special', 'medical', 'conveyance', 'otherAllowance'].reduce((s, k) => s + (Number(earnings[k]) || 0), 0);
+      const ptAmount = await ptMaster.getProfessionalTax(emp.hr_ptstate || settings.defaultPtState, baseGross, payrollDate);
+
       // The one engine: Gross − PF − PT − TDS − LOP − Advance − Other = Net.
       const c = computePayrollEngine({
-        earnings, settings, overrides, advance: advanceRecovery,
+        earnings, settings, overrides, advance: advanceRecovery, professionalTax: ptAmount,
         attendance: { salaryWorkingDays: att.workingDays, lopDays: att.lopDays, calendarDays: att.calendarDays, overtimeHours: att.overtimeHours },
       });
 

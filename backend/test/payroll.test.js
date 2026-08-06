@@ -74,19 +74,21 @@ async function renderText({ payroll, employee, company }) {
 const COMP = { hr_name: 'CRMONCE (OPC) PRIVATE LIMITED', hr_gstin: '37AAICC8445J1Z7', hr_cin: 'U72900AP2020OPC115113', hr_addressline: 'Kodurupadu, Nellore, Andhra Pradesh 524314', hr_email: 'info@crmonce.com', hr_website: 'crmonce.com' };
 const EMP = { hr_employeeid: 'EMP1039', hr_hremployee1: 'Jaya Tharuja', hr_pan: 'ABCDE1234F', hr_accountnumber: '123456789012' };
 
-test('payslip: ESI removed; PF/PT/TDS/LOP/Advance/Other rows in order', async () => {
+test('payslip: ESI gone; only NON-ZERO deductions shown, in order (dynamic)', async () => {
   const t = await renderText({ payroll: { hr_month: 8, hr_year: 2026, hr_basic: 40000, hr_allowances: 10000, hr_deductions: 5000, hr_gross: 50000, hr_netpay: 45000, hr_lop: 0 }, employee: EMP, company: COMP });
   assert.ok(!t.some(x => x.includes('ESI')), 'ESI must be gone');
-  const ix = (s) => t.findIndex(x => x.includes(s));
-  const order = ['Provident Fund (PF)', 'Professional Tax', 'Income Tax (TDS)', 'LOP Deduction', 'Advance Salary', 'Other Deductions'].map(ix);
-  assert.ok(order.every(i => i >= 0), 'all deduction rows present');
-  for (let i = 1; i < order.length; i++) assert.ok(order[i - 1] < order[i], 'deduction rows in the specified order');
+  // PT (200, slab) + Other (5000) are the only non-zero deductions → the rest are hidden.
+  assert.ok(t.some(x => x.includes('Professional Tax')), 'PT shown');
+  assert.ok(t.some(x => x.includes('Other Deductions')), 'Other shown');
+  assert.ok(!t.some(x => x.includes('Provident Fund (PF)')), 'zero PF hidden');
+  assert.ok(!t.some(x => x.includes('Advance Salary')), 'zero Advance hidden');
+  assert.ok(!t.some(x => x.includes('LOP Deduction')), 'zero LOP hidden');
+  assert.ok(t.findIndex(x => x.includes('Professional Tax')) < t.findIndex(x => x.includes('Other Deductions')), 'order kept');
 });
 
-test('payslip: no advance → Advance shows Rs. 0.00 and net unchanged', async () => {
+test('payslip: zero-value rows are hidden; net reflects auto PT', async () => {
   const t = await renderText({ payroll: { hr_month: 8, hr_year: 2026, hr_basic: 40000, hr_allowances: 10000, hr_deductions: 5000, hr_gross: 50000, hr_netpay: 45000, hr_lop: 0 }, employee: EMP, company: COMP });
-  assert.ok(t.some(x => x.includes('Advance Salary')));
-  assert.ok(t.some(x => x.includes('Rs. 0.00')), 'zero advance renders Rs. 0.00');
+  assert.ok(!t.some(x => x.includes('Rs. 0.00')), 'no ₹0.00 rows at all (dynamic payslip)');
   assert.ok(t.some(x => x.includes('Rs. 50,000.00')), 'gross');
   assert.ok(t.some(x => x.includes('Rs. 200.00')), 'Professional Tax auto = 200 (gross 50,000 > 20,000)');
   assert.ok(t.some(x => x.includes('Rs. 44,800.00')), 'net = gross - PT 200 - other 5000 = 44,800');
@@ -127,10 +129,11 @@ test('payslipModel: structured data matches the PDF core (itemised, normalised w
   assert.strictEqual(model.gross, 65000);
   assert.strictEqual(model.totalDeductions, 7500);
   assert.strictEqual(model.net, 57500);                                 // 65000 - 7500
-  assert.strictEqual(model.earnings.length, 6);
-  assert.strictEqual(model.deductions.length, 6);
+  assert.strictEqual(model.earnings.length, 6);       // all six earnings are non-zero here
+  assert.strictEqual(model.deductions.length, 4);     // dynamic: PF, PT, Advance, Other (TDS & LOP are 0 → hidden)
   assert.ok(model.earnings.find(e => /HRA/.test(e.label)).amount === 16000);
   assert.ok(model.deductions.find(d => /Advance/.test(d.label)).amount === 5000);
+  assert.ok(!model.deductions.find(d => /Income Tax/.test(d.label)), 'zero TDS hidden');
   assert.match(model.netInWords, /Fifty Seven Thousand Five Hundred/);
 });
 
