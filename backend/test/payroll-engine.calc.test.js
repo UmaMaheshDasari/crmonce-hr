@@ -57,14 +57,22 @@ test('LOP basis fixed_30 uses gross/30', () => {
   assert.strictEqual(r.lop, 3000);
 });
 
-test('per-employee override wins over the global rate', () => {
+test('per-employee PF override wins; Professional Tax is ALWAYS slab-based', () => {
   const r = computePayrollEngine({
     earnings: EARN, settings: SETTINGS,
-    overrides: { pfApplicable: true, pfAmount: 2500, professionalTax: 150 },
+    overrides: { pfApplicable: true, pfAmount: 2500, professionalTax: 150 },   // PT override is ignored
     attendance: { salaryWorkingDays: 26, lopDays: 0 },
   });
-  assert.strictEqual(r.pf, 2500);              // override, not 1800
-  assert.strictEqual(r.professionalTax, 150);  // override, not 200
+  assert.strictEqual(r.pf, 2500);              // PF override honoured
+  assert.strictEqual(r.professionalTax, 200);  // slab on gross 65000 — NOT the 150 override
+});
+
+test('Professional Tax follows the slab across brackets', () => {
+  const at = (basic) => computePayrollEngine({ earnings: { basic }, settings: SETTINGS, attendance: { salaryWorkingDays: 26, lopDays: 0 } }).professionalTax;
+  assert.strictEqual(at(15000), 0);      // <= 15000
+  assert.strictEqual(at(15001), 150);    // 15001..20000
+  assert.strictEqual(at(20000), 150);
+  assert.strictEqual(at(20001), 200);    // > 20000
 });
 
 test('PF not applicable → 0', () => {

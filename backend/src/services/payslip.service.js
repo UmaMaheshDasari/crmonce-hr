@@ -10,6 +10,7 @@
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const companySvc = require('./company.service');
+const { calculateProfessionalTax } = require('./professional-tax');
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -65,7 +66,10 @@ function computeFigures(p = {}) {
   const gross = basic + hra + special + medical + conveyance + allowances + overtime;
 
   const pf = Number(p.hr_pf) || 0;
-  const professionalTax = Number(p.hr_professionaltax) || 0;
+  // Professional Tax is ALWAYS shown from the slab on the base gross (the six
+  // salary components, excluding overtime) — never a stale stored value.
+  const ptBase = basic + hra + special + medical + conveyance + allowances;
+  const professionalTax = calculateProfessionalTax(ptBase);
   const incomeTax = Number(p.hr_incometax) || Number(p.hr_tds) || 0;
   const lop = Number(p.hr_lop) || 0;
   const advance = Number(p.hr_advance) || 0;

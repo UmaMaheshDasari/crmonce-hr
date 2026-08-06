@@ -18,8 +18,8 @@ const SECTIONS = [
   },
   {
     title: 'Professional Tax',
+    hint: 'Auto-calculated by slab — ₹0 up to ₹15,000 · ₹150 for ₹15,001–₹20,000 · ₹200 above ₹20,000. The toggle only switches PT off entirely.',
     fields: [
-      { name: 'hr_ptamount', label: 'Professional Tax (₹/month)', type: 'number' },
       { name: 'hr_ptapplicable', label: 'Applicable', toggle: true },
     ],
   },

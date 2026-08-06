@@ -88,16 +88,18 @@ test('payslip: no advance → Advance shows Rs. 0.00 and net unchanged', async (
   assert.ok(t.some(x => x.includes('Advance Salary')));
   assert.ok(t.some(x => x.includes('Rs. 0.00')), 'zero advance renders Rs. 0.00');
   assert.ok(t.some(x => x.includes('Rs. 50,000.00')), 'gross');
-  assert.ok(t.some(x => x.includes('Rs. 45,000.00')), 'net = gross - deductions');
+  assert.ok(t.some(x => x.includes('Rs. 200.00')), 'Professional Tax auto = 200 (gross 50,000 > 20,000)');
+  assert.ok(t.some(x => x.includes('Rs. 44,800.00')), 'net = gross - PT 200 - other 5000 = 44,800');
 });
 
 test('payslip: advance + LOP reduce net correctly (Net = Gross - PF - PT - TDS - LOP - Advance - Other)', async () => {
-  // full gross 50000; deductions = 0+0+0 + LOP 2000 + Advance 7500 + Other 5000 = 14500; net = 35500.
+  // full gross 50000; PT 200 (slab) + LOP 2000 + Advance 7500 + Other 5000 = 14700; net = 35300.
   const t = await renderText({ payroll: { hr_month: 8, hr_year: 2026, hr_basic: 40000, hr_allowances: 10000, hr_deductions: 5000, hr_gross: 48000, hr_netpay: 45000, hr_lop: 2000, hr_advance: 7500 }, employee: EMP, company: COMP });
   assert.ok(t.some(x => x.includes('Rs. 7,500.00')), 'advance amount shown');
   assert.ok(t.some(x => x.includes('Rs. 2,000.00')), 'LOP amount shown');
-  assert.ok(t.some(x => x.includes('Rs. 14,500.00')), 'total deductions');
-  assert.ok(t.some(x => x.includes('Rs. 35,500.00')), 'net reduced by advance');
+  assert.ok(t.some(x => x.includes('Rs. 200.00')), 'Professional Tax auto = 200');
+  assert.ok(t.some(x => x.includes('Rs. 14,700.00')), 'total deductions incl. auto PT');
+  assert.ok(t.some(x => x.includes('Rs. 35,300.00')), 'net reduced by advance + PT');
 });
 
 test('payslip: website normalised to https://hr.crmonce.com; email labelled', async () => {

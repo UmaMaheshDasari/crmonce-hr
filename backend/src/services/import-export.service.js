@@ -55,7 +55,8 @@ const TYPES = {
       { key: 'medical', header: 'Medical', kind: 'number' }, { key: 'conveyance', header: 'Conveyance', kind: 'number' },
       { key: 'otherAllowance', header: 'Other Allowance', kind: 'number' },
       { key: 'pfApplicable', header: 'PF Applicable', kind: 'bool' }, { key: 'pfAmount', header: 'PF Amount', kind: 'number' },
-      { key: 'professionalTax', header: 'Professional Tax', kind: 'number' }, { key: 'incomeTax', header: 'Income Tax', kind: 'number' },
+      // Professional Tax is auto-calculated by slab — not imported.
+      { key: 'incomeTax', header: 'Income Tax', kind: 'number' },
       { key: 'otherDeductions', header: 'Other Deductions', kind: 'number' },
     ],
     dedupe: (r) => `${S(r.employeeCode).toLowerCase()}|${toDateStr(r.effectiveFrom)}`,

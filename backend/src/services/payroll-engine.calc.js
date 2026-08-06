@@ -10,6 +10,8 @@
  * structure OVERRIDES the global setting; otherwise the setting's rate applies.
  * Pure & unit-tested — no I/O.
  */
+const { calculateProfessionalTax } = require('./professional-tax');
+
 const round = (v) => Math.round(Number(v) || 0);
 const nn = (v) => Math.max(0, Number(v) || 0);
 
@@ -71,9 +73,9 @@ function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, at
     }
   }
 
-  const professionalTax = round(overrides.professionalTax) > 0
-    ? round(overrides.professionalTax)
-    : (ptSet.applicable ? round(ptSet.amount) : 0);
+  // Professional Tax is ALWAYS slab-based on the base gross (never a manual/stored
+  // value). The settings toggle can only switch it off entirely (company policy).
+  const professionalTax = ptSet.applicable === false ? 0 : calculateProfessionalTax(baseGross);
 
   const incomeTax = round(overrides.incomeTax) > 0
     ? round(overrides.incomeTax)

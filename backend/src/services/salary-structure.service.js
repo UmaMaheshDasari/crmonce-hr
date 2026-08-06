@@ -10,6 +10,7 @@
  *
  * Amounts are whole rupees (Integer columns) — rounded on input.
  */
+const { calculateProfessionalTax } = require('./professional-tax');
 
 // The six earning components that sum to Gross (spec §2).
 const EARNING_FIELDS = ['basic', 'hra', 'special', 'medical', 'conveyance', 'otherAllowance'];
@@ -36,13 +37,15 @@ function computeGross(src = {}) {
   return EARNING_FIELDS.reduce((sum, f) => sum + round(src[f]), 0);
 }
 
-/** { gross, totalDeductions, netSalary } from a normalized/earning+deduction source. */
+/** { gross, professionalTax, totalDeductions, netSalary } from a source. PT is
+ *  ALWAYS derived from the slab on gross — never taken from `src.professionalTax`. */
 function computeTotals(src = {}) {
   const gross = computeGross(src);
   const pfApplicable = src.pfApplicable === undefined ? true : bool(src.pfApplicable);
   const pfAmount = pfApplicable ? round(src.pfAmount) : 0;
-  const totalDeductions = pfAmount + round(src.professionalTax) + round(src.incomeTax) + round(src.otherDeductions);
-  return { gross, totalDeductions, netSalary: gross - totalDeductions };
+  const professionalTax = calculateProfessionalTax(gross);
+  const totalDeductions = pfAmount + professionalTax + round(src.incomeTax) + round(src.otherDeductions);
+  return { gross, professionalTax, totalDeductions, netSalary: gross - totalDeductions };
 }
 
 /**
@@ -69,8 +72,9 @@ function validate(input = {}, opts = {}) {
   if (!(basic > 0)) errors.push('Basic Salary is required and must be greater than 0.');
   v.basic = basic;
 
-  // Every amount must be a non-negative number.
-  for (const f of ['hra', 'special', 'medical', 'conveyance', 'otherAllowance', 'pfAmount', 'professionalTax', 'incomeTax', 'otherDeductions']) {
+  // Every amount must be a non-negative number. Professional Tax is intentionally
+  // EXCLUDED — it is never accepted from the client; it is derived from the slab.
+  for (const f of ['hra', 'special', 'medical', 'conveyance', 'otherAllowance', 'pfAmount', 'incomeTax', 'otherDeductions']) {
     const n = round(input[f]);
     if (n < 0) errors.push(`${f} cannot be negative.`);
     v[f] = Math.max(0, n);
@@ -80,6 +84,7 @@ function validate(input = {}, opts = {}) {
   if (!v.pfApplicable) v.pfAmount = 0;   // no PF → force amount to 0
 
   v.gross = computeGross(v);
+  v.professionalTax = calculateProfessionalTax(v.gross);   // auto — slab, never manual
   v.status = ['active', 'superseded', 'draft'].includes(input.status) ? input.status : 'active';
   v.remarks = input.remarks != null ? String(input.remarks) : '';
   if (input.employeeName != null) v.employeeName = String(input.employeeName);
@@ -107,7 +112,7 @@ function shape(row = {}) {
     pfApplicable: row.hr_pfapplicable, pfAmount: row.hr_pfamount,
     professionalTax: row.hr_professionaltax, incomeTax: row.hr_incometax, otherDeductions: row.hr_otherdeductions,
   };
-  const { gross, totalDeductions, netSalary } = computeTotals(src);
+  const { gross, professionalTax, totalDeductions, netSalary } = computeTotals(src);
   return {
     id: row.hr_salarystructureid,
     employeeId: row.hr_employeeid || '',
@@ -118,7 +123,7 @@ function shape(row = {}) {
     gross,
     pfApplicable: bool(row.hr_pfapplicable),
     pfAmount: bool(row.hr_pfapplicable) ? round(row.hr_pfamount) : 0,
-    professionalTax: round(row.hr_professionaltax), incomeTax: round(row.hr_incometax), otherDeductions: round(row.hr_otherdeductions),
+    professionalTax, incomeTax: round(row.hr_incometax), otherDeductions: round(row.hr_otherdeductions),   // PT from slab, not stored
     totalDeductions, netSalary,
     status: row.hr_status || 'active',
     remarks: row.hr_remarks || '',

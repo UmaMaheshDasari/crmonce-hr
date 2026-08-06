@@ -8,6 +8,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate } from '../../utils/format';
+import { calculateProfessionalTax } from '../../utils/professionalTax';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -15,8 +16,9 @@ const EARNINGS = [
   ['basic', 'Basic Salary', true], ['hra', 'House Rent Allowance (HRA)'], ['special', 'Special Allowance'],
   ['medical', 'Medical Allowance'], ['conveyance', 'Conveyance Allowance'], ['otherAllowance', 'Other Allowance'],
 ];
+// Professional Tax is auto-calculated (slab) and read-only — NOT in this list.
 const DEDUCTIONS = [
-  ['professionalTax', 'Professional Tax'], ['incomeTax', 'Income Tax (TDS)'], ['otherDeductions', 'Other Deductions'],
+  ['incomeTax', 'Income Tax (TDS)'], ['otherDeductions', 'Other Deductions'],
 ];
 const STATUS_BADGE = {
   active: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
@@ -43,7 +45,7 @@ function SalaryFormModal({ record, employees, onClose }) {
       basic: record?.basic ?? '', hra: record?.hra ?? 0, special: record?.special ?? 0,
       medical: record?.medical ?? 0, conveyance: record?.conveyance ?? 0, otherAllowance: record?.otherAllowance ?? 0,
       pfApplicable: record ? record.pfApplicable : true, pfAmount: record?.pfAmount ?? 0,
-      professionalTax: record?.professionalTax ?? 200, incomeTax: record?.incomeTax ?? 0, otherDeductions: record?.otherDeductions ?? 0,
+      incomeTax: record?.incomeTax ?? 0, otherDeductions: record?.otherDeductions ?? 0,
       status: record?.status === 'draft' ? 'draft' : 'active', remarks: record?.remarks || '',
     },
   });
@@ -52,7 +54,9 @@ function SalaryFormModal({ record, employees, onClose }) {
   const n = (v) => Number(v) || 0;
   const gross = EARNINGS.reduce((s, [k]) => s + n(w[k]), 0);
   const pfApplicable = !!w.pfApplicable;
-  const totalDeductions = (pfApplicable ? n(w.pfAmount) : 0) + n(w.professionalTax) + n(w.incomeTax) + n(w.otherDeductions);
+  // Professional Tax is auto-derived from the slab — read-only, recalculated live.
+  const professionalTax = calculateProfessionalTax(gross);
+  const totalDeductions = (pfApplicable ? n(w.pfAmount) : 0) + professionalTax + n(w.incomeTax) + n(w.otherDeductions);
   const net = gross - totalDeductions;
 
   const mutation = useMutation({
@@ -68,7 +72,7 @@ function SalaryFormModal({ record, employees, onClose }) {
 
   // pfApplicable is driven by the toggle (setValue), so read it from the form
   // state at submit time — never rely on it being a registered <input>.
-  const onSubmit = (values) => mutation.mutate({ ...values, pfApplicable: !!watch('pfApplicable') });
+  const onSubmit = (values) => mutation.mutate({ ...values, pfApplicable: !!watch('pfApplicable'), professionalTax });
 
   // Inline render fn (NOT a nested component) so uncontrolled inputs keep focus
   // across re-renders triggered by watch().
@@ -140,8 +144,18 @@ function SalaryFormModal({ record, employees, onClose }) {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {field('pfAmount', 'PF Amount', false, !pfApplicable)}
+              {/* Professional Tax — auto-calculated from the slab, read-only */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-gray-600">Professional Tax <span className="text-[10px] font-medium text-indigo-500">(auto)</span></label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">₹</span>
+                  <input type="text" readOnly tabIndex={-1} value={professionalTax.toLocaleString('en-IN')} title="Auto-calculated from Gross Salary (slab)"
+                    className="w-full h-10 pl-7 pr-3 bg-gray-100 border border-gray-200 rounded-lg text-sm text-right text-gray-700 cursor-not-allowed" />
+                </div>
+              </div>
               {DEDUCTIONS.map(([k, label]) => field(k, label))}
             </div>
+            <p className="text-[11px] text-gray-400 mt-1.5">Professional Tax is set automatically: ₹0 up to ₹15,000 · ₹150 for ₹15,001–₹20,000 · ₹200 above ₹20,000.</p>
           </div>
 
           {/* Live totals */}
