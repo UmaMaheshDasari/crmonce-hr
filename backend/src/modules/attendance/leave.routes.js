@@ -531,7 +531,7 @@ router.patch('/:id/l1', async (req, res, next) => {
   try {
     const { action, remarks } = req.body; // action: 'approved' or 'rejected'
     const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
-      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
+      select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
       optionalSelect: 'hr_medcertdocid,hr_usecompoff',
     });
 
@@ -579,9 +579,11 @@ router.patch('/:id/l1', async (req, res, next) => {
 
     const leave = await d365.update(ENTITY, req.params.id, updatePayload);
 
-    // Comp-off leave: deduct on final L1 approval (pending → approved, once).
+    // Comp-off leave: deduct on final L1 approval (pending → approved) EXACTLY once.
+    // Guard against a repeated approval re-deducting (idempotent — same as HR override).
     if (updatePayload.hr_status === toValue('hr_leave_status', 'approved')) {
-      await applyCompOffUsageOnApprove(leaveRecord);
+      const wasApproved = toLabel('hr_leave_status', leaveRecord.hr_status) === 'approved';
+      await applyCompOffUsageOnApprove(leaveRecord, { alreadyApproved: wasApproved });
     }
 
     // Notify employee (only when L1 produced a FINAL decision)
@@ -617,7 +619,7 @@ router.patch('/:id/l2', async (req, res, next) => {
   try {
     const { action, remarks } = req.body;
     const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
-      select: 'hr_hrleaveid,_hr_hremployee_value,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
+      select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
       optionalSelect: 'hr_medcertdocid,hr_usecompoff',
     });
 
@@ -654,8 +656,11 @@ router.patch('/:id/l2', async (req, res, next) => {
 
     const leave = await d365.update(ENTITY, req.params.id, updatePayload);
 
-    // Comp-off leave: deduct on final L2 approval (once).
-    if (action === 'approved') await applyCompOffUsageOnApprove(leaveRecord);
+    // Comp-off leave: deduct on final L2 approval EXACTLY once (guard re-approval).
+    if (action === 'approved') {
+      const wasApproved = toLabel('hr_leave_status', leaveRecord.hr_status) === 'approved';
+      await applyCompOffUsageOnApprove(leaveRecord, { alreadyApproved: wasApproved });
+    }
 
     // Notify employee of final decision (in-app + email)
     const l2Final = action === 'approved' ? 'approved' : 'rejected';

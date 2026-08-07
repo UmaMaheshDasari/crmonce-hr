@@ -105,4 +105,36 @@ function effectiveWorking(from, capTo, firstDate, opts = {}) {
   return rangeCounts(effFrom, capTo, opts).working;
 }
 
-module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking };
+/**
+ * Approved-leave WORKING days for one employee within [from, capTo]. Counts each
+ * distinct working date once (dedupes overlapping leaves), excluding holidays and
+ * weekly-offs — so it matches the Absent math used by /absentees and /stats.
+ * This is the single helper both the dashboard and the monthly summary must use
+ * (previously they counted calendar-day spans, which diverged from /stats).
+ * @param leaves array of approved leave rows carrying hr_fromdate / hr_todate
+ */
+function approvedLeaveWorkingDays(leaves = [], from, to, opts = {}) {
+  const weekOffDays = opts.weekOffDays || attnCfg.weekOffDays;
+  const holidays = opts.holidays || attnCfg.holidays;
+  const start = String(from).slice(0, 10), end = String(to).slice(0, 10);
+  if (!start || !end || end < start) return 0;
+  const counted = new Set();
+  for (const l of leaves || []) {
+    const lf = String(l.hr_fromdate || '').slice(0, 10);
+    const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+    if (!lf) continue;
+    const s = lf < start ? start : lf;
+    const e = lt > end ? end : lt;
+    if (e < s) continue;
+    let d = new Date(`${s}T00:00:00Z`); const stop = new Date(`${e}T00:00:00Z`);
+    let guard = 0;
+    while (d <= stop && guard++ < 500) {
+      const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+      if (!holidays.includes(ds) && !weekOffDays.includes(d.getUTCDay())) counted.add(ds);
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+  }
+  return counted.size;
+}
+
+module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking, approvedLeaveWorkingDays };

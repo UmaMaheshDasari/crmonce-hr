@@ -593,16 +593,13 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
     });
     // Absent only counts working days that have already occurred (up to today).
     const today = time.istDateStr();
-    const leaveDays = (leaves || [])
-      .filter(l => {
-        const lf = String(l.hr_fromdate || '').slice(0, 10);
-        return lf.slice(0, 7) === `${y}-${mm}` && lf <= today;   // exclude future leave
-      })
-      .reduce((s, l) => s + resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate), 0);   // blank hr_days → span
-
     const workingDays = countWorkingDays(y, m);                  // full month (display)
     const monthEnd = `${y}-${mm}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
     const capTo = today < monthEnd ? today : monthEnd;           // min(today, last day of month)
+    // Approved-leave WORKING days in [from, capTo] via the shared engine — matches
+    // /stats and /absentees exactly (calendar-day counting over-subtracted and
+    // leaked future days).
+    const leaveDays = approvedLeaveWorkingDays(leaves || [], from, capTo);
     // Working days start at the employee's FIRST attendance date (never before
     // their first punch). No attendance history → 0 working days → 0 absent.
     // Prefer the true first-ever date; fall back to the earliest in-range punch
@@ -652,7 +649,7 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
 });
 
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
-const { rangeCounts, summarizeEmployee, effectiveWorking } = require('../../services/attendance-summary.util');
+const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays } = require('../../services/attendance-summary.util');
 const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
@@ -891,10 +888,18 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
       for (const ds of workDates) if (ds >= lf && ds <= lt) onLeave.add(`${l._hr_hremployee_value}|${ds}`);
     });
 
+    // Clamp each employee's absent days to start at their FIRST attendance date —
+    // exactly like /stats (effectiveWorking). Without this, a new joiner (or an
+    // employee with no history) is wrongly listed absent for the whole range, so
+    // the Absent CARD (/stats) and the Absent LIST (/absentees) would diverge.
+    const firstMap = await getFirstAttendanceMap();
     const CAP = 5000;
     const rows = [];
     for (const e of scope) {
+      const firstDate = firstMap.get(String(e.hr_hremployeeid));
+      if (!firstDate) continue;   // no attendance history → never counted absent (matches /stats)
       for (const ds of workDates) {
+        if (ds < firstDate) continue;   // nothing before their first punch
         const key = `${e.hr_hremployeeid}|${ds}`;
         if (active.has(key) || onLeave.has(key)) continue;
         rows.push({ employee: e.hr_hremployee1 || 'Employee', department: e.hr_department || '', designation: e.hr_designation || '', date: ds, status: 'absent' });

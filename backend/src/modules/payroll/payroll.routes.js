@@ -8,6 +8,10 @@ const { toValue, toLabel, labelsForList } = require('../../services/picklist');
 const { resolveDays } = require('../../services/leave-summary.util');
 const payrollDashboard = require('../../services/payroll-dashboard.service');
 const { rangeCounts } = require('../../services/attendance-summary.util');
+const attnCfg = require('../../services/attendance.config');
+// A punch only counts toward "present" on an actual working day — a weekend/holiday
+// punch must NOT inflate present days (which would erase genuine LOP).
+const isWorkingDay = (ds) => { try { return !attnCfg.holidays.includes(ds) && !attnCfg.weekOffDays.includes(new Date(`${ds}T00:00:00Z`).getUTCDay()); } catch { return true; } };
 const { computePayroll, round2 } = require('../../services/payroll.calc');
 const { computePayrollEngine } = require('../../services/payroll-engine.calc');
 const leaveEngine = require('../../services/leave-engine.service');
@@ -58,7 +62,10 @@ async function attendanceFacts(empId, month, year) {
       top: 400,
     });
     const dates = new Set();
-    for (const r of data || []) if (r.hr_intime && r.hr_date) dates.add(String(r.hr_date).slice(0, 10));
+    for (const r of data || []) {
+      const ds = String(r.hr_date || '').slice(0, 10);
+      if (r.hr_intime && ds && isWorkingDay(ds)) dates.add(ds);   // working-day punches only
+    }
     presentDays = Math.min(dates.size, workingDays);
   } catch { /* keep assumed full present */ }
 

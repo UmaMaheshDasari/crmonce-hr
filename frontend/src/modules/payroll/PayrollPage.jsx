@@ -304,12 +304,12 @@ export default function PayrollPage() {
             <tbody className="divide-y divide-gray-100/70">
               {isLoading ? (
                 Array(8).fill(0).map((_, i) => (
-                  <tr key={i}>{Array(8).fill(0).map((_, j) => (
+                  <tr key={i}>{Array(9).fill(0).map((_, j) => (
                     <td key={j} className="px-5 py-4"><div className="h-4 bg-gray-100 rounded-md animate-pulse" /></td>
                   ))}</tr>
                 ))
               ) : records.length === 0 ? (
-                <tr><td colSpan={8} className="px-5 py-16 text-center">
+                <tr><td colSpan={9} className="px-5 py-16 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <BanknotesIcon className="w-10 h-10 text-gray-300" />
                     <p className="text-sm text-gray-400 font-medium">No payroll records found</p>

@@ -131,9 +131,9 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
     if (!b) return [];
     const available = (b.paid?.remaining || 0) + (b.compOff?.balance || 0);
     return [
-      { label: 'Paid Leave', value: d(b.paid?.remaining), sub: `${d(b.paid?.used)} used of ${d(b.paid?.entitled)}`, accent: 'bg-indigo-500', pct: (b.paid?.used / (b.paid?.entitled || 1)) * 100 },
-      { label: 'Casual Leave', value: d(b.casual?.remaining), sub: `${d(b.casual?.used)} used of ${d(b.casual?.entitled)}`, accent: 'bg-sky-500', pct: (b.casual?.used / (b.casual?.entitled || 1)) * 100 },
-      { label: 'Sick Leave', value: d(b.sick?.remaining), sub: `${d(b.sick?.used)} used of ${d(b.sick?.entitled)}`, accent: 'bg-rose-500', pct: (b.sick?.used / (b.sick?.entitled || 1)) * 100 },
+      { label: 'Paid Leave', value: d(b.paid?.remaining), sub: `${d(b.paid?.used)} used of ${d(b.paid?.entitled)}`, accent: 'bg-indigo-500', pct: ((Number(b.paid?.used) || 0) / (Number(b.paid?.entitled) || 1)) * 100 },
+      { label: 'Casual Leave', value: d(b.casual?.remaining), sub: `${d(b.casual?.used)} used of ${d(b.casual?.entitled)}`, accent: 'bg-sky-500', pct: ((Number(b.casual?.used) || 0) / (Number(b.casual?.entitled) || 1)) * 100 },
+      { label: 'Sick Leave', value: d(b.sick?.remaining), sub: `${d(b.sick?.used)} used of ${d(b.sick?.entitled)}`, accent: 'bg-rose-500', pct: ((Number(b.sick?.used) || 0) / (Number(b.sick?.entitled) || 1)) * 100 },
       { label: 'Comp Off', value: d(b.compOff?.balance), sub: `${d(b.compOff?.used)} used of ${d(b.compOff?.earned)}`, accent: 'bg-emerald-500' },
       { label: 'LOP (this year)', value: d(b.lop?.fromLeave), sub: 'unpaid leave days', accent: 'bg-amber-500' },
       { label: 'Available Balance', value: d(available), sub: 'paid + comp-off', accent: 'bg-violet-500' },

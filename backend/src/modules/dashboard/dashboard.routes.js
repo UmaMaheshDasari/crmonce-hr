@@ -4,7 +4,7 @@ const d365 = require('../../services/d365.service');
 const { toValue, toLabel } = require('../../services/picklist');
 const { computeSession, punchesFromRecord } = require('../../services/attendance.util');
 const attnCfg = require('../../services/attendance.config');
-const { rangeCounts, effectiveWorking } = require('../../services/attendance-summary.util');
+const { rangeCounts, effectiveWorking, approvedLeaveWorkingDays } = require('../../services/attendance-summary.util');
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
 const { earliestAttendanceDate } = require('../../services/attendance-range.util');
 const holidayService = require('../../services/holiday.service');
@@ -125,14 +125,12 @@ router.get('/summary', async (req, res, next) => {
       if (c.lateArrivalMin > 0) lateDays++;
     }
 
-    // Approved leave days in THIS month (up to today) — offsets Absent.
-    const leaveDaysMonth = allLeaves
-      .filter(l => l.hr_status === approvedVal)
-      .filter(l => {
-        const lf = String(l.hr_fromdate || '').slice(0, 10);
-        return lf.slice(0, 7) === `${Y}-${mm}` && lf <= today;
-      })
-      .reduce((s, l) => s + resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate), 0);
+    // Approved leave days in THIS month (up to today) — offsets Absent. Counted in
+    // WORKING days over [monthFrom, capTo] via the shared engine so this matches the
+    // attendance page's /stats exactly (previously used calendar-day spans, which
+    // over-subtracted weekend-spanning leaves and leaked future days).
+    const approvedLeavesMonth = allLeaves.filter(l => l.hr_status === approvedVal);
+    const leaveDaysMonth = approvedLeaveWorkingDays(approvedLeavesMonth, monthFrom, capTo);
 
     // Absent = elapsed working days (from first punch) − attended − approved leave.
     // Resilient first-date: true first punch, else earliest in-range record.

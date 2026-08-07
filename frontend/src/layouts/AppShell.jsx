@@ -89,6 +89,7 @@ const LABEL_MAP = {
   '/performance': 'Performance',
   '/goals':       'Goals',
   '/documents':   'Documents',
+  '/activities':  'Activity',
   '/import-export': 'Import / Export',
   '/company-settings': 'Company Settings',
 };

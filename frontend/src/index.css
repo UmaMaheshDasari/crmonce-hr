@@ -1,8 +1,11 @@
+/* Web font must be imported BEFORE the Tailwind directives, or PostCSS drops it
+   ("@import must precede all other statements") and the app silently falls back
+   to the system font. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 /* ── Base ─────────────────────────────────────────────── */
 @layer base {

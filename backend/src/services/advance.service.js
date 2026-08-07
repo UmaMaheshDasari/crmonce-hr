@@ -94,11 +94,17 @@ function shape(row = {}) {
 
 // ── async ─────────────────────────────────────────────────────────
 
-/** The active (approved, not fully recovered) advances for an employee, oldest first. */
+/**
+ * Advances relevant to payroll recovery for an employee, oldest first. Includes
+ * COMPLETED advances too: `applyPeriod` is idempotent and returns a completed
+ * advance's recorded installment only for the exact month it was recovered (0 for
+ * any other month). Fetching only 'approved' would drop the final installment when
+ * a draft month that completes an advance is regenerated.
+ */
 async function activeAdvances(employeeId) {
   const q = `'${String(employeeId).replace(/'/g, "''")}'`;
   const { data } = await d365.getList(ENTITY, {
-    select: SELECT, filter: `hr_employeeid eq ${q} and hr_status eq 'approved'`, orderby: 'hr_requesteddate asc,createdon asc',
+    select: SELECT, filter: `hr_employeeid eq ${q} and (hr_status eq 'approved' or hr_status eq 'completed')`, orderby: 'hr_requesteddate asc,createdon asc',
   });
   return (data || []).map(shape);
 }
