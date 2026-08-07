@@ -39,23 +39,36 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
     const effectiveName = patch.hr_name !== undefined ? patch.hr_name : current.hr_name;
     if (!String(effectiveName || '').trim()) patch.hr_name = settings.PAYROLL_SETTINGS_DEFAULTS.hr_name;
 
-    let saved;
-    try {
-      if (current.hr_payrollsettingid) {
-        saved = await d365.update(ENTITY, current.hr_payrollsettingid, patch);
-      } else {
-        saved = await d365.create(ENTITY, { ...settings.PAYROLL_SETTINGS_DEFAULTS, ...patch });
+    // Resilient upsert: if the table OR a column isn't provisioned yet, provision
+    // once and retry; if a column still can't be created (lock/perms), strip ONLY
+    // that column and keep going — so known settings always persist and a partially
+    // provisioned table never 400s the save.
+    let saved, id = current.hr_payrollsettingid;
+    let body = id ? { ...patch } : { ...settings.PAYROLL_SETTINGS_DEFAULTS, ...patch };
+    let provisioned = false;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      try {
+        saved = id ? await d365.update(ENTITY, id, body) : await d365.create(ENTITY, body);
+        break;
+      } catch (err) {
+        const tableMissing = /Resource not found for the segment|Could not find the segment/i.test(err.message);
+        const propMissing = d365._isMissingProperty(err);
+        if ((tableMissing || propMissing) && !provisioned) {
+          // Create the table and/or add any missing columns, then retry once.
+          await ensurePayrollSettingsTable(global.logger || console);
+          provisioned = true;
+          settings.invalidate();
+          const again = await settings.getSettings();
+          id = again.hr_payrollsettingid;
+          body = id ? { ...patch } : { ...settings.PAYROLL_SETTINGS_DEFAULTS, ...patch };
+          continue;
+        }
+        if (propMissing) {
+          const prop = d365._missingPropertyName(err);
+          if (prop && body[prop] !== undefined) { delete body[prop]; continue; }   // strip & retry
+        }
+        throw err;
       }
-    } catch (err) {
-      // Table not provisioned yet → create it, then retry the upsert once.
-      if (/Resource not found for the segment|does not exist|Could not find/i.test(err.message)) {
-        await ensurePayrollSettingsTable(global.logger || console);
-        settings.invalidate();
-        const again = await settings.getSettings();
-        saved = again.hr_payrollsettingid
-          ? await d365.update(ENTITY, again.hr_payrollsettingid, patch)
-          : await d365.create(ENTITY, { ...settings.PAYROLL_SETTINGS_DEFAULTS, ...patch });
-      } else { throw err; }
     }
 
     settings.invalidate();

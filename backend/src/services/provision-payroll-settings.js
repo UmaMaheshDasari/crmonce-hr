@@ -81,13 +81,32 @@ const isLocked = (m) => /CustomizationLockException|customization is already run
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function post(path, body) { const headers = await d365.getHeaders({ 'Content-Type': 'application/json' }); return axios.post(`${d365.baseUrl}/${path}`, body, { headers }); }
 
+// Add every column (idempotent — existing columns return "already exists" and are
+// skipped). Used both when creating the entity AND to self-heal an existing table
+// whose columns were never fully provisioned.
+async function addColumns(log) {
+  for (const c of COLUMNS) {
+    try { await post(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes`, c); log?.info?.(`[provision] added payroll-settings column ${c.SchemaName}`); }
+    catch (e) { const m = e.response?.data?.error?.message || e.message; if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); if (!isExists(m)) log?.warn?.(`[provision] payroll-settings column ${c.SchemaName}: ${m}`); }
+  }
+}
+
 async function createSchema(log) {
   try { await post('EntityDefinitions', ENTITY_BODY); log?.info?.('[provision] created entity hr_PayrollSetting'); }
   catch (e) { const m = e.response?.data?.error?.message || e.message; if (isExists(m)) log?.info?.('[provision] entity hr_PayrollSetting already exists'); else if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); else throw new Error(m); }
-  for (const c of COLUMNS) {
-    try { await post(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes`, c); }
-    catch (e) { const m = e.response?.data?.error?.message || e.message; if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); if (!isExists(m)) log?.warn?.(`[provision] payroll-settings column ${c.SchemaName}: ${m}`); }
+  await addColumns(log);
+}
+
+// A cheap probe: does a core column exist on the (existing) table? If not, the
+// table was created without its columns — repair by adding them all.
+async function repairColumnsIfMissing(log) {
+  try { await d365.getList(ENTITY_SET, { select: 'hr_pfemployeepercent', top: 1 }); return; }
+  catch (e) {
+    const m = e.response?.data?.error?.message || e.message;
+    if (!/does not exist|Could not find a property|property named '|Invalid property/i.test(m)) return;   // some other error → leave it
   }
+  log?.warn?.('[provision] hr_payrollsettings exists but is missing columns — repairing');
+  try { await addColumns(log); } catch (e) { log?.warn?.(`[provision] payroll-settings column repair skipped: ${e.message}`); }
 }
 
 /** Insert the default settings row if the table has no rows yet. Idempotent. */
@@ -95,7 +114,15 @@ async function seedDefaults(log) {
   try {
     const { data } = await d365.getList(ENTITY_SET, { select: 'hr_payrollsettingid', top: 1 });
     if (data && data.length) { log?.info?.('[provision] payroll settings already seeded'); return; }
-    await d365.create(ENTITY_SET, { ...PAYROLL_SETTINGS_DEFAULTS });
+    // Resilient: strip any column that isn't provisioned yet so the seed row still saves.
+    let body = { ...PAYROLL_SETTINGS_DEFAULTS };
+    for (let i = 0; i < 60; i++) {
+      try { await d365.create(ENTITY_SET, body); break; }
+      catch (err) {
+        if (d365._isMissingProperty(err)) { const p = d365._missingPropertyName(err); if (p && body[p] !== undefined) { delete body[p]; continue; } }
+        throw err;
+      }
+    }
     log?.info?.('[provision] seeded default payroll settings');
   } catch (e) { log?.warn?.(`[provision] payroll-settings seed skipped: ${e.message}`); }
 }
@@ -107,6 +134,7 @@ async function ensurePayrollSettingsTable(log = console, opts = {}) {
   const { retry = false, retryIntervalMs = 30000, retryTimeoutMs = 10 * 60 * 1000 } = opts;
   try {
     await d365.getList(ENTITY_SET, { top: 1 });
+    await repairColumnsIfMissing(log);   // self-heal a table created without its columns
     await seedDefaults(log);
     return { status: 'exists' };
   } catch (e) {
