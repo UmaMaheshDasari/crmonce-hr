@@ -83,6 +83,43 @@ async function applyCompOffUsageOnApprove(current, { alreadyApproved = false } =
   } catch (e) { global.logger?.warn?.(`[leave] comp-off usage ledger skipped: ${e.message}`); }
 }
 
+// On leave approval: (1) write an audit entry (employee, dates, approver, attendance
+// transition), and (2) surface payroll impact — if that month's payroll is already
+// locked/processed it returns a "manual recalculation required" note; otherwise the
+// change auto-reflects on the next (draft) payroll generation (payroll reads live).
+async function auditAndPayrollImpactOnApprove(current, user, approvedDate) {
+  const employeeId = current._hr_hremployee_value;
+  const leaveFrom = String(current.hr_fromdate || '').slice(0, 10);
+  const leaveTo = String(current.hr_todate || '').slice(0, 10);
+  try {
+    audit({
+      category: 'Leave', type: 'leave_approved',
+      title: 'Leave approved — attendance updated to On Leave',
+      name: current['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '',
+      meta: { employeeId, leaveFrom, leaveTo, approvedBy: user?.name, approvedDate, previousAttendance: 'Absent / No record', updatedAttendance: 'Approved Leave' },
+    });
+  } catch (_) {}
+  try {
+    const [Y, M] = leaveFrom.split('-').map(Number);
+    if (!Y || !M) return null;
+    const { data } = await d365.getListOptional(d365.constructor.entities.payroll, {
+      select: 'hr_hrpayrollid,hr_status', optionalSelect: 'hr_locked',
+      filter: `_hr_hremployee_value eq '${employeeId}' and hr_month eq ${M} and hr_year eq ${Y}`, top: 1,
+    });
+    const row = data && data[0];
+    if (!row) return null;   // no payroll yet → reflects on first generation
+    const statusLabel = toLabel('hr_payroll_status', row.hr_status);
+    const locked = row.hr_locked === 'true' || ['processed', 'paid'].includes(statusLabel);
+    if (locked) {
+      const message = 'Payroll already processed. Manual recalculation required.';
+      broadcast('payroll:recalc_needed', { employeeId, month: `${M}/${Y}`, message });
+      audit({ category: 'Payroll', type: 'payroll_recalc_needed', title: 'Payroll recalculation required (backdated leave approved)', meta: { employeeId, month: M, year: Y } });
+      return { locked: true, message };
+    }
+    return { locked: false };
+  } catch (_) { return null; }
+}
+
 /**
  * Two-level leave approval flow:
  *
@@ -143,7 +180,7 @@ router.get('/', async (req, res, next) => {
     if (status) filters.push(`hr_status eq ${toValue('hr_leave_status', status)}`);
 
     const result = await d365.getListOptional(ENTITY, {
-      select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date',
+      select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date,createdon',
       optionalSelect: 'hr_medcertdocid,hr_usecompoff',   // present once the leave columns are provisioned
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
@@ -296,6 +333,11 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
 
   // Comp-off leave: deduct the comp-off balance once, on transition to approved.
   if (status === 'approved') await applyCompOffUsageOnApprove(current, { alreadyApproved: wasApproved });
+  // Audit + payroll-impact (attendance auto-updates via the read-time overlay).
+  if (status === 'approved' && !wasApproved) {
+    const impact = await auditAndPayrollImpactOnApprove(current, user, now);
+    if (impact?.locked) leave._payrollNote = impact.message;
+  }
 
   const employeeId = leave._hr_hremployee_value || current._hr_hremployee_value;
   if (employeeId) {
@@ -333,18 +375,22 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: employeeSender.reason });
     }
 
-    // Dates: leave can start today or in the future — never in the past.
+    // Dates: future leave is unrestricted; backdated leave is allowed only within the
+    // configured window (Payroll Settings → Maximum Backdated Leave Days, default 30).
     const fromDate = String(body.hr_fromdate || '').slice(0, 10);
     const toDate = String(body.hr_todate || '').slice(0, 10);
     if (!fromDate || !toDate) {
       return res.status(400).json({ error: 'From date and To date are required' });
     }
-    const today = time.istDateStr();   // "today" in the app timezone (Asia/Kolkata)
-    if (fromDate < today) {
-      return res.status(400).json({ error: 'Leave cannot be applied for a past date. Please choose today or a future date.' });
-    }
     if (toDate < fromDate) {
-      return res.status(400).json({ error: 'To date cannot be before From date.' });
+      return res.status(400).json({ error: 'To date cannot be before From date.' });   // invalid range (req 5)
+    }
+    const today = time.istDateStr();   // "today" in the app timezone (Asia/Kolkata)
+    let maxBackdated = 30;
+    try { maxBackdated = Number((await payrollSettings.getResolved()).maxBackdatedLeaveDays) || 30; } catch (_) {}
+    const earliest = (() => { const d = new Date(`${today}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - maxBackdated); return d.toISOString().slice(0, 10); })();
+    if (fromDate < earliest) {
+      return res.status(400).json({ error: `You can apply backdated leave only within the last ${maxBackdated} days.` });
     }
 
     // Balance guard (req 6): block a fully-exhausted Casual/Sick leave. The UI also
@@ -586,6 +632,7 @@ router.patch('/:id/l1', async (req, res, next) => {
     if (updatePayload.hr_status === toValue('hr_leave_status', 'approved')) {
       const wasApproved = toLabel('hr_leave_status', leaveRecord.hr_status) === 'approved';
       await applyCompOffUsageOnApprove(leaveRecord, { alreadyApproved: wasApproved });
+      if (!wasApproved) await auditAndPayrollImpactOnApprove(leaveRecord, req.user, now);
     }
 
     // Notify employee (only when L1 produced a FINAL decision)
@@ -662,6 +709,7 @@ router.patch('/:id/l2', async (req, res, next) => {
     if (action === 'approved') {
       const wasApproved = toLabel('hr_leave_status', leaveRecord.hr_status) === 'approved';
       await applyCompOffUsageOnApprove(leaveRecord, { alreadyApproved: wasApproved });
+      if (!wasApproved) await auditAndPayrollImpactOnApprove(leaveRecord, req.user, new Date().toISOString().split('T')[0]);
     }
 
     // Notify employee of final decision (in-app + email)
@@ -834,10 +882,12 @@ router.get('/balance', async (req, res, next) => {
     try {
       balance.compOff = balance.compOff || {};
       balance.compOff.nextExpiry = await compOffSvc.nextExpiry(employeeId);
-      const { earnedLeave } = await payrollSettings.getResolved();
+      const resolved = await payrollSettings.getResolved();
+      const earnedLeave = resolved.earnedLeave;
       const allocated = Number(earnedLeave?.allocated) || 0;
       const used = Number(balance.earned?.used) || 0;
       balance.earnedLeave = { enabled: !!earnedLeave?.enabled, allocated, used, remaining: Math.max(0, allocated - used) };
+      balance.maxBackdatedLeaveDays = Number(resolved.maxBackdatedLeaveDays) || 30;   // backdated-apply window
     } catch (_) { /* enrichment optional */ }
     res.json(balance);
   } catch (err) { next(err); }

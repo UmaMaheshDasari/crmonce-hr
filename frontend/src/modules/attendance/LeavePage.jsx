@@ -6,7 +6,7 @@ import Button from '../../components/Button';
 import LeaveBalance from './LeaveBalance';
 import { CertUploader, CertReview } from '../../components/MedicalCertificate';
 import { useAuth } from '../../context/AuthContext';
-import { format, differenceInCalendarDays } from 'date-fns';
+import { format, differenceInCalendarDays, subDays } from 'date-fns';
 import toast from 'react-hot-toast';
 
 const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Paternity Leave', 'LOP'];
@@ -185,6 +185,13 @@ function LeaveActions({ leave, user, isHR }) {
       toast.success(`L1 ${vars.action === 'approved' ? 'Approved' : 'Rejected'}`);
       qc.invalidateQueries({ queryKey: ['leaves'] });
       qc.invalidateQueries({ queryKey: ['pendingApprovals'] });
+      // Approving/rejecting leave changes attendance (Absent → On Leave), the balance
+      // and the dashboard — refresh them so counts update immediately (req 6).
+      qc.invalidateQueries({ queryKey: ['attendance'] });
+      qc.invalidateQueries({ queryKey: ['attendance-stats'] });
+      qc.invalidateQueries({ queryKey: ['attendance-absentees'] });
+      qc.invalidateQueries({ queryKey: ['leave-balance'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
     onError: () => toast.error('L1 action failed'),
   });
@@ -195,16 +202,32 @@ function LeaveActions({ leave, user, isHR }) {
       toast.success(`L2 ${vars.action === 'approved' ? 'Approved' : 'Rejected'}`);
       qc.invalidateQueries({ queryKey: ['leaves'] });
       qc.invalidateQueries({ queryKey: ['pendingApprovals'] });
+      // Approving/rejecting leave changes attendance (Absent → On Leave), the balance
+      // and the dashboard — refresh them so counts update immediately (req 6).
+      qc.invalidateQueries({ queryKey: ['attendance'] });
+      qc.invalidateQueries({ queryKey: ['attendance-stats'] });
+      qc.invalidateQueries({ queryKey: ['attendance-absentees'] });
+      qc.invalidateQueries({ queryKey: ['leave-balance'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
     onError: () => toast.error('L2 action failed'),
   });
 
   const hrMutation = useMutation({
     mutationFn: ({ id, status, remarks }) => leaveApi.approve(id, status, remarks),
-    onSuccess: (_, vars) => {
-      toast.success(`Leave ${vars.status}`);
+    onSuccess: (res, vars) => {
+      const note = res?.data?._payrollNote;   // set when the month's payroll is locked
+      if (note) toast(`Leave ${vars.status}. ${note}`, { icon: '⚠️', duration: 6000 });
+      else toast.success(`Leave ${vars.status}`);
       qc.invalidateQueries({ queryKey: ['leaves'] });
       qc.invalidateQueries({ queryKey: ['pendingApprovals'] });
+      // Approving/rejecting leave changes attendance (Absent → On Leave), the balance
+      // and the dashboard — refresh them so counts update immediately (req 6).
+      qc.invalidateQueries({ queryKey: ['attendance'] });
+      qc.invalidateQueries({ queryKey: ['attendance-stats'] });
+      qc.invalidateQueries({ queryKey: ['attendance-absentees'] });
+      qc.invalidateQueries({ queryKey: ['leave-balance'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
     onError: () => toast.error('Action failed'),
   });
@@ -379,7 +402,6 @@ function LeaveActions({ leave, user, isHR }) {
 function ApplyLeaveModal({ onClose }) {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const todayStr = format(new Date(), 'yyyy-MM-dd');   // leave can start today or later, never in the past
 
   // Employee profile drives gender/marital eligibility for Maternity / Paternity.
   const { data: meRes } = useQuery({ queryKey: ['employee', user?.id], queryFn: () => employeeApi.get(user.id), enabled: !!user?.id });
@@ -444,6 +466,10 @@ function ApplyLeaveModal({ onClose }) {
   const casualRem = bal?.casual?.remaining;
   const sickRem = bal?.sick?.remaining;
   const compRem = bal?.compOff?.balance;
+  // Backdated leave is allowed within the configured window (default 30 days); future
+  // leave is unrestricted, so the To date has no max.
+  const maxBackdated = Number(bal?.maxBackdatedLeaveDays) || 30;
+  const earliestStr = format(subDays(new Date(), maxBackdated), 'yyyy-MM-dd');
 
   // Dynamic leave types (req 3): a balance-tracked type disappears when exhausted;
   // Comp Off appears only when there is a comp-off balance. Policy leaves (Earned/
@@ -567,14 +593,14 @@ function ApplyLeaveModal({ onClose }) {
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">From Date</label>
               <div className="relative">
                 <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                <input type="date" min={todayStr} className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.from} onChange={e => setForm(p => ({ ...p, from: e.target.value, to: p.to && p.to < e.target.value ? e.target.value : p.to }))} />
+                <input type="date" min={earliestStr} className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.from} onChange={e => setForm(p => ({ ...p, from: e.target.value, to: p.to && p.to < e.target.value ? e.target.value : p.to }))} />
               </div>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">To Date</label>
               <div className="relative">
                 <CalendarDaysIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                <input type="date" className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.to} min={form.from || todayStr} onChange={e => setForm(p => ({ ...p, to: e.target.value }))} />
+                <input type="date" className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={form.to} min={form.from || earliestStr} onChange={e => setForm(p => ({ ...p, to: e.target.value }))} />
               </div>
             </div>
           </div>
@@ -696,7 +722,7 @@ function ApplyLeaveModal({ onClose }) {
             fullWidth
             onClick={() => mutation.mutate()}
             loading={mutation.isPending}
-            disabled={!form.from || !form.to || !approverId || form.from < todayStr || !!exhausted || certMissing}
+            disabled={!form.from || !form.to || !approverId || form.from < earliestStr || !!exhausted || certMissing}
           >
             Submit Application
           </Button>
@@ -801,6 +827,8 @@ export default function LeavePage() {
             const statusInfo = getOverallStatusLabel(leave);
             const displayType = leave.hr_usecompoff === 'true' ? 'Comp Off' : leave.hr_leavetype;
             const typeConfig = LEAVE_TYPE_ICONS[displayType] || LEAVE_TYPE_ICONS['LOP'];
+            // Backdated = leave started before it was applied (report visibility).
+            const isBackdated = leave.hr_fromdate && leave.createdon && String(leave.hr_fromdate).slice(0, 10) < String(leave.createdon).slice(0, 10);
             return (
               <div key={leave.hr_hrleaveid} className={`bg-white rounded-xl border border-gray-100 border-l-4 ${statusBorder} shadow-sm hover:shadow-md transition-all duration-200`}>
                 <div className="p-5">
@@ -816,6 +844,9 @@ export default function LeavePage() {
                         <span className={`inline-flex items-center gap-1 text-xs font-medium border px-2.5 py-0.5 rounded-full ${typeConfig.color}`}>
                           <span className="text-xs">{typeConfig.emoji}</span> {displayType}
                         </span>
+                        {isBackdated && (
+                          <span className="inline-flex items-center text-[11px] font-semibold border border-orange-200 bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full">Backdated</span>
+                        )}
                         <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${statusInfo.text}`}>
                           <span className={`w-2 h-2 rounded-full ${statusInfo.dot}`} />
                           {statusInfo.label}

@@ -98,6 +98,15 @@ export const compOffApi = {
   scan: (data) => api.post('/attendance/comp-off/scan', data),
 };
 
+// ── Late Login ───────────────────────────────────────────────────
+export const lateLoginApi = {
+  list: (params) => api.get('/attendance/late-login', { params }),
+  policy: () => api.get('/attendance/late-login/policy'),
+  create: (data) => api.post('/attendance/late-login', data),
+  managerDecide: (id, action, remarks) => api.patch(`/attendance/late-login/${id}/manager`, { action, remarks }),
+  hrDecide: (id, action, remarks) => api.patch(`/attendance/late-login/${id}/hr`, { action, remarks }),
+};
+
 // ── Leave Opening Balance (historical migration) ─────────────────
 export const leaveOpeningApi = {
   list: (params) => api.get('/leave-opening', { params }),

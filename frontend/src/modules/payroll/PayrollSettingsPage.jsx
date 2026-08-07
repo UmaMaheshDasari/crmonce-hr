@@ -49,6 +49,15 @@ const SECTIONS = [
       { name: 'hr_paidleavesperyear', label: 'Paid Leaves / Year', type: 'number' },
       { name: 'hr_casualleaves', label: 'Casual Leaves', type: 'number' },
       { name: 'hr_sickleaves', label: 'Sick Leaves', type: 'number' },
+      { name: 'hr_maxbackdatedleavedays', label: 'Maximum Backdated Leave Days', type: 'number', hint: 'Employees may apply leave up to this many days in the past. Default 30.' },
+    ],
+  },
+  {
+    title: 'Late Login',
+    hint: 'Employees can submit a Late Login request (approved by manager → HR) instead of leave; attendance stays Present and no leave is deducted.',
+    fields: [
+      { name: 'hr_gracetime', label: 'Grace Time (minutes)', type: 'number', hint: 'Minutes after shift start before a login is "late". Default 15.' },
+      { name: 'hr_maxlatelogins', label: 'Maximum Late Logins Per Month', type: 'number', hint: 'A warning is shown beyond this; HR can still approve. Default 3.' },
     ],
   },
   {

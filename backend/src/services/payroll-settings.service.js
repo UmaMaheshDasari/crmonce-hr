@@ -48,6 +48,10 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   // ── Earned Leave (optional — shown on the Leave dashboard only when enabled) ──
   hr_earnedleaveenabled: 'false', // enable Earned Leave allocation + dashboard card
   hr_earnedleaves: '0',           // Earned Leave allocated per year (configurable)
+  // ── Backdated leave + Late Login policy (configurable, never hardcoded) ──
+  hr_maxbackdatedleavedays: '30', // employee may apply leave up to N calendar days in the past
+  hr_gracetime: '15',             // late-login grace period (minutes after shift start)
+  hr_maxlatelogins: '3',          // max approved Late Logins per employee per month before a warning
   // ── Default salary components applied to a new employee's Salary Structure.
   //    JSON: [{ name, type: 'percent'|'fixed', value }]. percent = % of Basic. ──
   hr_defaultallowances: JSON.stringify([
@@ -126,6 +130,9 @@ function resolve(settings = null) {
     },
     // Earned Leave (optional dashboard card).
     earnedLeave: { enabled: bool(g.hr_earnedleaveenabled), allocated: num(g.hr_earnedleaves, 0) },
+    // Backdated leave window + Late Login policy.
+    maxBackdatedLeaveDays: num(g.hr_maxbackdatedleavedays, 30),
+    lateLogin: { graceMinutes: num(g.hr_gracetime, 15), maxPerMonth: num(g.hr_maxlatelogins, 3) },
     defaultAllowances: parseJson(g.hr_defaultallowances, []),
     defaultDeductions: parseJson(g.hr_defaultdeductions, []),
   };

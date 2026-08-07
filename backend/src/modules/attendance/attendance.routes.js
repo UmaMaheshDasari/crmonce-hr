@@ -9,12 +9,14 @@ const { computeFromPunches, computeSession, punchesFromRecord } = require('../..
 const attnCfg = require('../../services/attendance.config');
 const leaveRoutes = require('./leave.routes');
 const compOffRoutes = require('./comp-off.routes');
+const lateLoginRoutes = require('./late-login.routes');
 const activity = require('../../services/activity.service');
 const time = require('../../services/time.util');
 const { ensureAttendanceAuditTable, ENTITY_SET: ATT_AUDIT_SET } = require('../../services/provision-attendance-audit');
 
 router.use('/leave', leaveRoutes);
 router.use('/comp-off', compOffRoutes);
+router.use('/late-login', lateLoginRoutes);
 
 const ENTITY = d365.constructor.entities.attendance;
 

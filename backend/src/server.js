@@ -205,6 +205,9 @@ server.listen(PORT, () => {
     require('./services/provision-attendance-audit')
       .ensureAttendanceAuditTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] attendance-audit table skipped: ${err.message}`));
+    require('./services/provision-late-login')
+      .ensureLateLoginTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] late-login table skipped: ${err.message}`));
     require('./services/provision-advance')
       .ensureAdvanceTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] advance salary table skipped: ${err.message}`));

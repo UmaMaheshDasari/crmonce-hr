@@ -51,6 +51,9 @@ const COLUMNS = [
   str('hr_CompOffEmployeeRaise', 'Allow Employees to Raise Comp Off', 10),
   str('hr_EarnedLeaveEnabled', 'Earned Leave Enabled', 10),
   str('hr_EarnedLeaves', 'Earned Leaves / Year', 10),
+  str('hr_MaxBackdatedLeaveDays', 'Maximum Backdated Leave Days', 10),
+  str('hr_GraceTime', 'Late Login Grace Time (minutes)', 10),
+  str('hr_MaxLateLogins', 'Maximum Late Logins Per Month', 10),
   memo('hr_DefaultAllowances', 'Default Allowances (JSON)'),
   memo('hr_DefaultDeductions', 'Default Deductions (JSON)'),
 ];
