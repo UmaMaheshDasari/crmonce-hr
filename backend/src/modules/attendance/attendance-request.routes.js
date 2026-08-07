@@ -228,13 +228,11 @@ async function decide(user, id, decision, comment, { enforcePending = false } = 
   activity.record({ category: 'Attendance', type: decision === 'approved' ? 'correction_approved' : 'correction_rejected',
     title: `Missing Punch ${decision === 'approved' ? 'Approved' : 'Rejected'}`, name: reqRec.hr_employeename,
     meta: `${PUNCH_TYPES[reqRec.hr_punchtype] || reqRec.hr_punchtype} @ ${reqRec.hr_requestedtime} on ${reqDate}` });
-  // Decision email FROM the HR approver's mailbox, CC info@crmonce.com (so HR/info
-  // always has a copy of every approved/rejected attendance correction).
+  // Decision email → the EMPLOYEE ONLY (no HR / manager CC). FROM the approver's mailbox.
   requestNotify.emailDecisionToEmployee({
     type: 'missing_punch', employeeId: reqRec.hr_employeeid, decision,
     approver: { name: user.name, email: user.email, role: user.role },
     remarks: comment || '', status: decision,
-    cc: [{ email: process.env.HR_INFO_EMAIL || 'info@crmonce.com', name: 'CRMONCE HR' }],
   });
   return updated;
 }

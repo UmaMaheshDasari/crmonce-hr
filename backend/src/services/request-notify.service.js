@@ -167,11 +167,14 @@ async function emailApplyAcknowledgement({ type, toEmail, employeeName, approver
 }
 
 /**
- * Decision → email the employee (Approved/Rejected) with balance + .ics for
- * approved leave. FROM = the approver's OWN mailbox (HR@ / umamahesh@). CC =
- * original CC recipients (real CC line). `approver` = { name, email }.
+ * Decision → email the EMPLOYEE ONLY (Approved/Rejected), with balance + .ics for
+ * approved leave. FROM = the approver's OWN mailbox (HR@ / umamahesh@).
+ *
+ * The reporting manager and HR are NEVER emailed or CC'd on a decision — they were
+ * already notified when the request was submitted. The `cc` argument is accepted
+ * for backward compatibility but is intentionally IGNORED. `approver` = {name,email}.
  */
-async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, cc = [] }) {
+async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, cc = [] }) {   // eslint-disable-line no-unused-vars
   try {
     const cfg = TYPE_CFG[type] || { title: type };
     let emp;
@@ -207,10 +210,10 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
       attachments.push(icsAttachment(ics, 'leave.ics'));
     }
 
-    const ccEmails = (cc || []).filter(c => c?.email && !isPlaceholderEmail(c.email)).map(c => c.email);
-    const r = await sendEmail(emp.hr_email, subject, html, { from: s.sender, cc: ccEmails, attachments, meta: { type: `${type}_decision` } });
+    // Employee ONLY — never CC HR or the reporting manager on a decision.
+    const r = await sendEmail(emp.hr_email, subject, html, { from: s.sender, attachments, meta: { type: `${type}_decision` } });
     global.logger?.[r?.success ? 'info' : 'error'](
-      `${cfg.title} decision email FROM ${s.sender} → ${emp.hr_email} (cc: ${ccEmails.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+      `${cfg.title} decision email FROM ${s.sender} → ${emp.hr_email} (employee only): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailDecisionToEmployee(${type}) failed: ${err.message}`);
   }

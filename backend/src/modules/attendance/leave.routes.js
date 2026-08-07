@@ -341,10 +341,7 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
 
   const employeeId = leave._hr_hremployee_value || current._hr_hremployee_value;
   if (employeeId) {
-    let ccList = [];
-    try { ccList = JSON.parse(current.hr_ccrecipients || '[]'); } catch (_) {}
-    // In-app notification (existing) + employee decision email (shared service):
-    // FROM the approver's own mailbox, CC = the original CC recipients.
+    // In-app notification + employee decision email — EMPLOYEE ONLY (no HR/manager CC).
     await notifyLeaveApproval(employeeId, status, { from: current.hr_fromdate, to: current.hr_todate });
     requestNotify.emailDecisionToEmployee({
       type: 'leave', employeeId, decision: status,
@@ -352,7 +349,6 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
       remarks: remarks || '', status,
       fromDate: current.hr_fromdate, toDate: current.hr_todate,
       leaveType: toLabel('hr_leave_type', current.hr_leavetype),
-      cc: ccList,
     });
   }
 
@@ -642,8 +638,6 @@ router.patch('/:id/l1', async (req, res, next) => {
         from: leaveRecord.hr_fromdate,
         to: leaveRecord.hr_todate,
       });
-      let ccList = [];
-      try { ccList = JSON.parse(leaveRecord.hr_ccrecipients || '[]'); } catch (_) {}
       requestNotify.emailDecisionToEmployee({
         type: 'leave', employeeId: leaveRecord._hr_hremployee_value,
         decision: finalStatus,
@@ -651,7 +645,6 @@ router.patch('/:id/l1', async (req, res, next) => {
         remarks: updatePayload.hr_remarks, status: finalStatus,
         fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
         leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
-        cc: ccList,
       });
     }
 
@@ -718,8 +711,6 @@ router.patch('/:id/l2', async (req, res, next) => {
       from: leaveRecord.hr_fromdate,
       to: leaveRecord.hr_todate,
     });
-    let ccListL2 = [];
-    try { ccListL2 = JSON.parse(leaveRecord.hr_ccrecipients || '[]'); } catch (_) {}
     requestNotify.emailDecisionToEmployee({
       type: 'leave', employeeId: leaveRecord._hr_hremployee_value,
       decision: l2Final,
@@ -727,7 +718,6 @@ router.patch('/:id/l2', async (req, res, next) => {
       remarks: updatePayload.hr_remarks, status: l2Final,
       fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
       leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
-      cc: ccListL2,
     });
 
     broadcast('leave:updated', { leaveId: req.params.id, action, level: 'L2' });
