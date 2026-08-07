@@ -104,12 +104,12 @@ test('payslip: advance + LOP reduce net correctly (Net = Gross - PF - PT - TDS -
   assert.ok(t.some(x => x.includes('Rs. 35,300.00')), 'net reduced by advance + PT');
 });
 
-test('payslip: website normalised to https://hr.crmonce.com; email labelled', async () => {
+test('payslip: website normalised to https://www.crmonce.com; email labelled', async () => {
   const t = await renderText({ payroll: { hr_month: 8, hr_year: 2026, hr_basic: 40000, hr_allowances: 10000, hr_deductions: 0, hr_gross: 50000, hr_netpay: 50000, hr_lop: 0 }, employee: EMP, company: COMP });
-  assert.ok(t.some(x => x.includes('https://hr.crmonce.com')), 'HR portal URL');
+  assert.ok(t.some(x => x.includes('https://www.crmonce.com')), 'public www URL');
   assert.ok(t.some(x => x.includes('Website:')), 'website label');
   assert.ok(t.some(x => x.includes('Email:') && x.includes('info@crmonce.com')), 'email label + address');
-  assert.ok(!t.some(x => /Website:\s*(https?:\/\/)?(www\.)?crmonce\.com(\s|$)/i.test(x)), 'legacy bare crmonce.com not shown as website');
+  assert.ok(!t.some(x => x.includes('hr.crmonce.com')), 'legacy hr. portal URL not shown as the website');
 });
 
 test('payslip: a genuinely different website in settings is preserved', async () => {
@@ -123,7 +123,7 @@ test('payslipModel: structured data matches the PDF core (itemised, normalised w
     employee: { hr_hremployee1: 'Jaya Tharuja', hr_employeeid: 'EMP1039', hr_department: 'IT', hr_designation: 'Consultant', hr_pan: 'ABCDE1234F', hr_accountnumber: '123456789012', hr_uan: '100200300400' },
     company: { hr_name: 'CRMONCE (OPC) PRIVATE LIMITED', hr_gstin: '37AAICC8445J1Z7', hr_cin: 'U72', hr_addressline: 'Nellore, AP', hr_email: 'info@crmonce.com', hr_website: 'crmonce.com' },
   });
-  assert.strictEqual(model.company.website, 'https://hr.crmonce.com');   // legacy bare domain normalised
+  assert.strictEqual(model.company.website, 'https://www.crmonce.com');   // legacy bare domain normalised to public www
   assert.strictEqual(model.employee.employeeId, 'EMP1039');
   assert.strictEqual(model.employee.bankAccount, 'XXXX9012');           // masked
   assert.strictEqual(model.gross, 65000);

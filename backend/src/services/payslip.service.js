@@ -42,11 +42,12 @@ function numberToWords(num) {
 // ── palette (white / light-gray / royal blue) ──
 const C = { blue: '#2563EB', dark: '#0f172a', gray: '#64748b', border: '#e5e7eb', head: '#f1f5f9', light: '#f8fafc' };
 
-// Company email + HR-portal website (normalise a blank/legacy bare crmonce.com).
+// Company email + website shown on the payslip (normalise a blank/legacy bare or
+// hr. crmonce.com to the public www site).
 function resolveContact(company = {}) {
   const email = company.hr_email || 'info@crmonce.com';
   const rawSite = String(company.hr_website || '').trim();
-  const website = (!rawSite || /^(https?:\/\/)?(www\.)?crmonce\.com\/?$/i.test(rawSite)) ? 'https://hr.crmonce.com' : rawSite;
+  const website = (!rawSite || /^(https?:\/\/)?(www\.|hr\.)?crmonce\.com\/?$/i.test(rawSite)) ? 'https://www.crmonce.com' : rawSite;
   return { email, website };
 }
 
