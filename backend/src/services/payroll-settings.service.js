@@ -106,6 +106,34 @@ function merge(row = {}) {
   return m;
 }
 
+const isPresent = (v) => v !== undefined && v !== null && v !== '';
+
+/**
+ * Resolve a settings row with the CORRECT priority:
+ *
+ *   latest database column  >  JSON blob (hr_settingsjson)  >  defaults
+ *
+ * A populated database column ALWAYS wins. The JSON blob only FILLS fields whose
+ * column is absent/empty (e.g. a column that isn't provisioned yet). An older blob
+ * value must NEVER overwrite a live column. Applies uniformly to every setting
+ * (PF, Professional Tax, Default Allowances/Deductions, Late Login, Comp Off,
+ * Leave, …) because they all flow through here. Pure.
+ */
+function mergeSaved(row = {}) {
+  const r = { ...row };
+  if (isPresent(r.hr_settingsjson)) {
+    try {
+      const blob = JSON.parse(r.hr_settingsjson);
+      if (blob && typeof blob === 'object') {
+        for (const f of FIELDS) {
+          if (!isPresent(r[f]) && isPresent(blob[f])) r[f] = blob[f];   // blob fills ONLY missing columns
+        }
+      }
+    } catch { /* corrupt blob → columns/defaults only */ }
+  }
+  return merge(r);
+}
+
 /**
  * Turn raw (string) settings into a typed, ready-to-use config object. This is
  * the shape the payroll engine consumes — no parsing anywhere else.
@@ -171,12 +199,8 @@ async function getSettings() {
     const { data } = await d365.getListOptional(ENTITY_SET, { select: BASE_SELECT, optionalSelect: `hr_settingsjson,${OPT_SELECT}`, top: 1, orderby: 'createdon asc' });
     if (data && data[0]) row = data[0];
   } catch (_) { /* table not provisioned — fall back to defaults */ }
-  // The JSON blob is the source of truth (it persists the COMPLETE config even when
-  // individual scalar columns aren't provisioned). Overlay it onto the raw row.
-  if (row.hr_settingsjson) {
-    try { const blob = JSON.parse(row.hr_settingsjson); if (blob && typeof blob === 'object') for (const f of FIELDS) if (blob[f] !== undefined && blob[f] !== null) row[f] = blob[f]; } catch { /* corrupt blob → fall back to columns */ }
-  }
-  cache = merge(row);
+  // Priority: latest database column > JSON blob > defaults (a live column wins).
+  cache = mergeSaved(row);
   cacheAt = now;
   return cache;
 }
@@ -185,6 +209,6 @@ async function getSettings() {
 async function getResolved() { return resolve(await getSettings()); }
 
 module.exports = {
-  getSettings, getResolved, resolve, merge, invalidate,
+  getSettings, getResolved, resolve, merge, mergeSaved, invalidate,
   PAYROLL_SETTINGS_DEFAULTS, FIELDS, JSON_FIELDS, ENTITY_SET, SELECT,
 };
