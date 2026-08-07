@@ -17,7 +17,7 @@ import DocumentsManager from '../../components/DocumentsManager';
 import LeaveBalance from '../attendance/LeaveBalance';
 
 const GENDERS = ['Male', 'Female'];
-const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
+const MARITAL = ['Single', 'Married'];
 const DOC_TYPES = ['Aadhaar Card', 'PAN Card', 'Passport', 'Driving Licence', 'Cancelled Cheque', 'Passbook', 'Photo'];
 
 const FORM_TABS = [
