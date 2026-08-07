@@ -54,10 +54,14 @@ const SECTIONS = [
   },
   {
     title: 'Late Login',
-    hint: 'Employees can submit a Late Login request (approved by manager → HR) instead of leave; attendance stays Present and no leave is deducted.',
+    hint: 'Employees submit a Late Login request (manager → HR); attendance stays Present and no leave/salary is deducted.',
     fields: [
       { name: 'hr_gracetime', label: 'Grace Time (minutes)', type: 'number', hint: 'Minutes after shift start before a login is "late". Default 15.' },
       { name: 'hr_maxlatelogins', label: 'Maximum Late Logins Per Month', type: 'number', hint: 'A warning is shown beyond this; HR can still approve. Default 3.' },
+      { name: 'hr_latelogindaysback', label: 'Maximum Backdated Days', type: 'number', hint: 'Submit late logins up to this many days in the past. Default 30.' },
+      { name: 'hr_lateloginallowfuture', label: 'Allow Future Requests', toggle: true },
+      { name: 'hr_lateloginapprovalrequired', label: 'Approval Required (Manager → HR)', toggle: true },
+      { name: 'hr_lateloginmode', label: 'Attendance Mode', select: [['late_present', 'Late Present'], ['present', 'Present (Late Login Approved)']] },
     ],
   },
   {

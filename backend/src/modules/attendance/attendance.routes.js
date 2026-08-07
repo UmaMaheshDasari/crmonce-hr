@@ -10,6 +10,7 @@ const attnCfg = require('../../services/attendance.config');
 const leaveRoutes = require('./leave.routes');
 const compOffRoutes = require('./comp-off.routes');
 const lateLoginRoutes = require('./late-login.routes');
+const lateLoginService = require('../../services/late-login.service');
 const activity = require('../../services/activity.service');
 const time = require('../../services/time.util');
 const { ensureAttendanceAuditTable, ENTITY_SET: ATT_AUDIT_SET } = require('../../services/provision-attendance-audit');
@@ -94,6 +95,27 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
     let out, count;
     if (needsAll) { count = filtered.length; out = filtered.slice((pageNum - 1) * lim, pageNum * lim); }
     else { count = storedCount; out = filtered.slice((pageNum - 1) * lim); }
+
+    // Late Login overlay (spec §7): an APPROVED late login never marks the day absent
+    // and is surfaced as "Late Present"/"Present (Late Login Approved)" per settings.
+    // Additive + best-effort — it annotates rows, never changes the computed status.
+    try {
+      const dates = out.map(r => String(r.hr_date || '').slice(0, 10)).filter(Boolean).sort();
+      if (dates.length) {
+        const set = await lateLoginService.approvedSet({ from: dates[0], to: dates[dates.length - 1], employeeId: targetId || undefined });
+        if (set.size) {
+          const mode = (await lateLoginService.policy()).attendanceMode || 'late_present';
+          const label = mode === 'present' ? 'Present (Late Login Approved)' : 'Late Present';
+          out.forEach(r => {
+            if (set.has(`${r._hr_hremployee_value}|${String(r.hr_date || '').slice(0, 10)}`)) {
+              r.hr_lateloginapproved = true;
+              r.hr_lateloginlabel = label;
+            }
+          });
+        }
+      }
+    } catch (_) { /* overlay is best-effort; attendance must never depend on it */ }
+
     out.forEach(r => { delete r._late; delete r._incomplete; });
     res.json(labelsForList('hr_hrattendances', { data: out, count }));
   } catch (err) { next(err); }

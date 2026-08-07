@@ -31,11 +31,16 @@ const COLUMNS = [
   str('hr_ActualTime', 'Actual Login Time', 10),
   memo('hr_Reason', 'Reason'),
   memo('hr_Remarks', 'Remarks'),
-  str('hr_Status', 'Status', 20),             // pending | approved | rejected
+  str('hr_Status', 'Status', 20),             // pending | approved | rejected | cancelled
   str('hr_ManagerStatus', 'Manager Status', 20),   // pending | approved | rejected
   str('hr_ApprovedBy', 'Approved By', 200),
   str('hr_ApprovedDate', 'Approved Date', 30),
   str('hr_CreatedBy', 'Created By', 200),
+  // Future-ready: the SAME table/API serves other request types (Early Logout, WFH,
+  // Permission, On Duty, Client Visit, Business Travel) — just a different type code.
+  str('hr_RequestType', 'Request Type', 30),  // late_login (default) | early_logout | wfh | permission | on_duty | client_visit | travel
+  str('hr_AttachmentId', 'Attachment Document Id', 100),
+  str('hr_Ip', 'Submitted From IP', 60),
 ];
 
 const ENTITY_BODY = {

@@ -54,6 +54,11 @@ const COLUMNS = [
   str('hr_MaxBackdatedLeaveDays', 'Maximum Backdated Leave Days', 10),
   str('hr_GraceTime', 'Late Login Grace Time (minutes)', 10),
   str('hr_MaxLateLogins', 'Maximum Late Logins Per Month', 10),
+  str('hr_LateLoginDaysBack', 'Late Login Maximum Backdated Days', 10),
+  str('hr_LateLoginAllowFuture', 'Late Login Allow Future Requests', 10),
+  str('hr_LateLoginApprovalRequired', 'Late Login Approval Required', 10),
+  str('hr_LateLoginMode', 'Late Login Attendance Mode', 20),
+  str('hr_LateLoginPenalty', 'Late Login Payroll Penalty (future)', 10),
   memo('hr_DefaultAllowances', 'Default Allowances (JSON)'),
   memo('hr_DefaultDeductions', 'Default Deductions (JSON)'),
 ];

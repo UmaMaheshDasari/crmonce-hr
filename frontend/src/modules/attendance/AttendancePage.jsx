@@ -280,6 +280,11 @@ export default function AttendancePage() {
               <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
               {cfg.label}
             </span>
+            {r.hr_lateloginapproved && (
+              <span title="An approved Late Login covers this day" className="inline-flex items-center text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+                {r.hr_lateloginlabel || 'Late Present'}
+              </span>
+            )}
             {isHR() && (
               <button onClick={() => setEditRec(r)} title="Edit attendance"
                 className="p-1 rounded-md text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">

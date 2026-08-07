@@ -9,7 +9,7 @@ import {
   PencilSquareIcon, UserPlusIcon, DocumentTextIcon, ArrowRightOnRectangleIcon,
   ArrowLeftOnRectangleIcon, SignalIcon,
 } from '@heroicons/react/24/outline';
-import { dashboardApi, attendanceApi } from '../../api/endpoints';
+import { dashboardApi, attendanceApi, lateLoginApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import ActivityFeed from '../../components/ActivityFeed';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
@@ -108,6 +108,11 @@ export default function AdminDashboard() {
   const d = data?.data;
   const k = d?.kpis, a = d?.actions, t = d?.today, lv = d?.leave;
 
+  // Org-wide Late Login summary (this month) — HR approval workload.
+  const llMonth = format(new Date(), 'yyyy-MM');
+  const { data: llRes } = useQuery({ queryKey: ['late-login-summary', 'admin', llMonth], queryFn: () => lateLoginApi.summary({ month: llMonth }).then(r => r.data), refetchInterval: 60000 });
+  const ll = llRes || null;
+
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admin-summary'] });
   const checkin = useMutation({ mutationFn: () => attendanceApi.checkin(), onSuccess: () => { toast.success('Checked in!'); invalidate(); }, onError: (e) => toast.error(e.response?.data?.error || 'Check-in failed') });
   const checkout = useMutation({ mutationFn: () => attendanceApi.checkout(), onSuccess: () => { toast.success('Checked out!'); invalidate(); }, onError: (e) => toast.error(e.response?.data?.error || 'Check-out failed') });
@@ -192,6 +197,7 @@ export default function AdminDashboard() {
           {actions.length
             ? actions.map(c => <ActionCard key={c.label} {...c} />)
             : Array.from({ length: 4 }).map((_, i) => <div key={i} className="bg-gray-50 rounded-xl h-[60px] animate-pulse" />)}
+          {ll && <ActionCard icon={ClockIcon} label="Late Login Requests Pending" value={ll.pending || 0} to="/late-login" iconBg="bg-rose-50" iconColor="text-rose-600" />}
         </div>
       </div>
 

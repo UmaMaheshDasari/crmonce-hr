@@ -34,6 +34,10 @@ const NAV = [
       { to: '/attendance',          label: 'Attendance',          icon: ClockIcon },
       { to: '/historical-attendance', label: 'Historical Attendance', icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/attendance-requests', label: 'Attendance Requests', icon: PencilSquareIcon },
+    ],
+  },
+  {
+    group: 'Leave', icon: CalendarDaysIcon, children: [
       { to: '/leave',               label: 'Leave',               icon: CalendarDaysIcon },
       { to: '/late-login',          label: 'Late Login',          icon: ClockIcon },
       { to: '/comp-off',            label: 'Comp Off',            icon: ArrowPathIcon },

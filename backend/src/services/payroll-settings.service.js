@@ -52,6 +52,11 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   hr_maxbackdatedleavedays: '30', // employee may apply leave up to N calendar days in the past
   hr_gracetime: '15',             // late-login grace period (minutes after shift start)
   hr_maxlatelogins: '3',          // max approved Late Logins per employee per month before a warning
+  hr_latelogindaysback: '30',     // Late Login backdated window (calendar days)
+  hr_lateloginallowfuture: 'true',// allow Late Login requests for today + future dates
+  hr_lateloginapprovalrequired: 'true', // manager → HR approval required (else auto-approved)
+  hr_lateloginmode: 'late_present',     // attendance label for an approved late login: present | late_present
+  hr_lateloginpenalty: 'false',   // FUTURE: deduct salary for excess late logins (off by default)
   // ── Default salary components applied to a new employee's Salary Structure.
   //    JSON: [{ name, type: 'percent'|'fixed', value }]. percent = % of Basic. ──
   hr_defaultallowances: JSON.stringify([
@@ -132,7 +137,15 @@ function resolve(settings = null) {
     earnedLeave: { enabled: bool(g.hr_earnedleaveenabled), allocated: num(g.hr_earnedleaves, 0) },
     // Backdated leave window + Late Login policy.
     maxBackdatedLeaveDays: num(g.hr_maxbackdatedleavedays, 30),
-    lateLogin: { graceMinutes: num(g.hr_gracetime, 15), maxPerMonth: num(g.hr_maxlatelogins, 3) },
+    lateLogin: {
+      graceMinutes: num(g.hr_gracetime, 15),
+      maxPerMonth: num(g.hr_maxlatelogins, 3),
+      backdatedDays: num(g.hr_latelogindaysback, 30),
+      allowFuture: bool(g.hr_lateloginallowfuture),
+      approvalRequired: bool(g.hr_lateloginapprovalrequired),
+      attendanceMode: (g.hr_lateloginmode === 'present' ? 'present' : 'late_present'),
+      penaltyEnabled: bool(g.hr_lateloginpenalty),   // future payroll deduction hook
+    },
     defaultAllowances: parseJson(g.hr_defaultallowances, []),
     defaultDeductions: parseJson(g.hr_defaultdeductions, []),
   };
