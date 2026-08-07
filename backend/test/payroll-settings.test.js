@@ -139,3 +139,8 @@ test('mergeSaved: corrupt blob is ignored (columns/defaults still apply)', () =>
   const m = svc.mergeSaved({ hr_pfemployeepercent: '11', hr_settingsjson: '{not json' });
   assert.strictEqual(m.hr_pfemployeepercent, '11');
 });
+
+test('historical attendance: months-back default 6, configurable', () => {
+  assert.strictEqual(svc.resolve(null).historicalAttendance.monthsBack, 6);
+  assert.strictEqual(svc.resolve({ hr_histattendancemonths: '3' }).historicalAttendance.monthsBack, 3);
+});

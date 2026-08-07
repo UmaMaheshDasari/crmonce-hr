@@ -50,6 +50,7 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   hr_earnedleaves: '0',           // Earned Leave allocated per year (configurable)
   // ── Backdated leave + Late Login policy (configurable, never hardcoded) ──
   hr_maxbackdatedleavedays: '30', // employee may apply leave up to N calendar days in the past
+  hr_histattendancemonths: '6',   // Historical Attendance: employees may raise requests for the last N months
   hr_gracetime: '15',             // late-login grace period (minutes after shift start)
   hr_maxlatelogins: '3',          // max approved Late Logins per employee per month before a warning
   hr_latelogindaysback: '30',     // Late Login backdated window (calendar days)
@@ -171,6 +172,8 @@ function resolve(settings = null) {
     earnedLeave: { enabled: bool(g.hr_earnedleaveenabled), allocated: num(g.hr_earnedleaves, 0) },
     // Backdated leave window + Late Login policy.
     maxBackdatedLeaveDays: num(g.hr_maxbackdatedleavedays, 30),
+    // Historical Attendance: how many months back an employee may raise a request.
+    historicalAttendance: { monthsBack: num(g.hr_histattendancemonths, 6) },
     lateLogin: {
       graceMinutes: num(g.hr_gracetime, 15),
       maxPerMonth: num(g.hr_maxlatelogins, 3),

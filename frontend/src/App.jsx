@@ -25,6 +25,7 @@ import TaxDeclarationPage from './modules/payroll/TaxDeclarationPage';
 import PayrollSettingsPage from './modules/payroll/PayrollSettingsPage';
 import PTMasterPage from './modules/payroll/PTMasterPage';
 import CelebrationsPage from './modules/celebrations/CelebrationsPage';
+import HistoricalAttendanceRequestsPage from './modules/attendance/HistoricalAttendanceRequestsPage';
 import CancellationRequestsPage from './modules/shared/CancellationRequestsPage';
 import SalaryStructurePage from './modules/payroll/SalaryStructurePage';
 import AdvanceSalaryPage from './modules/payroll/AdvanceSalaryPage';
@@ -76,6 +77,7 @@ function AppRoutes() {
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="historical-attendance" element={<ProtectedRoute roles={['super_admin','hr_manager']}><HistoricalAttendancePage /></ProtectedRoute>} />
         <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
+        <Route path="historical-attendance-requests" element={<HistoricalAttendanceRequestsPage />} />
         <Route path="holidays" element={<HolidaysPage />} />
         <Route path="leave" element={<LeavePage />} />
         <Route path="comp-off" element={<CompOffPage />} />

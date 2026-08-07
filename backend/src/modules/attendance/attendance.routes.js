@@ -17,6 +17,7 @@ const { ensureAttendanceAuditTable, ENTITY_SET: ATT_AUDIT_SET } = require('../..
 
 router.use('/leave', leaveRoutes);
 router.use('/comp-off', compOffRoutes);
+router.use('/historical-requests', require('./historical-attendance.routes'));
 router.use('/late-login', lateLoginRoutes);
 
 const ENTITY = d365.constructor.entities.attendance;
@@ -885,10 +886,12 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
       select: 'hr_date,_hr_hremployee_value,hr_allpunches,hr_intime,hr_outtime,hr_punchcount',
       filter: f.join(' and '), orderby: 'hr_date desc',
     }, 10000);
+    // A date is NOT synthesized as absent when the employee has ANY attendance
+    // record for it — the record itself represents the day (shown in the list with
+    // its computed status). This guarantees ONE row per employee per date: a
+    // Present/manual/Historical record never coexists with a synthesized "Absent".
     const active = new Set();
-    (recs || []).forEach(r => {
-      if (punchesFromRecord(r).length > 0) active.add(`${r._hr_hremployee_value}|${String(r.hr_date).slice(0, 10)}`);
-    });
+    (recs || []).forEach(r => active.add(`${r._hr_hremployee_value}|${String(r.hr_date).slice(0, 10)}`));
 
     // Active employees in scope.
     const { data: emps } = await d365.getListOptional(d365.constructor.entities.employee, {

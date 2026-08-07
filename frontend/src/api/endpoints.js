@@ -270,6 +270,17 @@ export const documentApi = {
   file: (id, download) => api.get(`/documents/${id}/file`, { params: download ? { download: 1 } : {}, responseType: 'blob' }),
 };
 
+// ── Historical Attendance Requests (raise past-date attendance) ──────
+export const historicalAttendanceApi = {
+  list: (params) => api.get('/attendance/historical-requests', { params }),
+  policy: () => api.get('/attendance/historical-requests/policy'),
+  summary: (params) => api.get('/attendance/historical-requests/summary', { params }),
+  create: (data) => api.post('/attendance/historical-requests', data),
+  approve: (id, comment) => api.patch(`/attendance/historical-requests/${id}/approve`, { comment }),
+  reject: (id, comment) => api.patch(`/attendance/historical-requests/${id}/reject`, { comment }),
+  moreInfo: (id, comment) => api.patch(`/attendance/historical-requests/${id}/more-info`, { comment }),
+};
+
 // ── Shared Request Lifecycle (delete / resubmit / cancellation) ──────
 // One API for every request module — pass the module `type` (e.g. 'late_login',
 // 'leave', 'comp_off', 'attendance_correction', 'document').
