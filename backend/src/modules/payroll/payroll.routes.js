@@ -222,8 +222,10 @@ async function runGeneration({ month, year, employeeIds } = {}) {
         hr_pf: c.pf, hr_professionaltax: c.professionalTax, hr_incometax: c.incomeTax,
         hr_lop: c.lop, hr_advance: c.advance, hr_deductions: c.otherDeductions,
         hr_netpay: c.netSalary,
-        hr_presentdays: att.presentDays, hr_absentdays: att.absentDays,
-        hr_workingdays: att.workingDays, hr_paydays: att.payDays,
+        // Day-count columns are Edm.Int32 — round the half-day fractions for storage
+        // (the LOP money is computed on the exact fractional days inside the engine).
+        hr_presentdays: Math.round(att.presentDays), hr_absentdays: Math.round(att.absentDays),
+        hr_workingdays: Math.round(att.workingDays), hr_paydays: Math.round(att.payDays),
         hr_status: draft, hr_locked: 'false', hr_processeddate: new Date().toISOString(),
       };
 
