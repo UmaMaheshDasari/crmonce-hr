@@ -14,7 +14,6 @@ import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRu
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
 import DocumentsManager from '../../components/DocumentsManager';
-import LeaveBalance from '../attendance/LeaveBalance';
 
 const GENDERS = ['Male', 'Female'];
 const MARITAL = ['Single', 'Married'];
@@ -104,7 +103,8 @@ export default function ProfilePage() {
 
   const { data, isLoading } = useQuery({ queryKey: ['employee', id], queryFn: () => employeeApi.get(id), enabled: !!id });
   const emp = data?.data;
-  const { data: docsData } = useQuery({ queryKey: ['documents', id], queryFn: () => documentApi.list({ employeeId: id }), enabled: !!id });
+  // Warm the documents cache for the Documents tab (result read there, not here).
+  useQuery({ queryKey: ['documents', id], queryFn: () => documentApi.list({ employeeId: id }), enabled: !!id });
 
   // Reset the form from the server data whenever it (re)loads — but not while the
   // user is mid-edit (so a background refetch can't wipe their changes).
@@ -345,9 +345,6 @@ export default function ProfilePage() {
           )}
         </div>
       </div>
-
-      {/* Leave Balance summary (auto-calculated from approved leave) */}
-      <LeaveBalance employeeId={id} employeeName={emp?.hr_hremployee1} />
     </div>
   );
 }
