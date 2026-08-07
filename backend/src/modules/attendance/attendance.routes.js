@@ -686,11 +686,33 @@ const fmtDur = (h) => {
 };
 const fmtMin = (m) => fmtDur((Number(m) || 0) / 60);
 
+// The ONE definition of an employee's Absent working dates in a range — used by
+// BOTH /stats (the card counts them) and /absentees (the list shows them), so the
+// Absent CARD and the Absent LIST can never disagree. A date is Absent when it is a
+// working day (not holiday / weekly-off), on/after the employee's first attendance
+// date, up to capTo, with NO attendance record and NO approved leave. This replaces
+// the old "Working − Attended − Leave" formula, which under-counted whenever a punch
+// landed on a non-working day (attended could exceed working and zero out absences).
+function absentDatesFor(from, capTo, firstDate, hasRecord, onLeave) {
+  if (!firstDate) return [];
+  const start = from < firstDate ? firstDate : from;
+  if (!capTo || capTo < start) return [];
+  const out = [];
+  const end = new Date(`${capTo}T00:00:00Z`);
+  for (let d = new Date(`${start}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+    if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
+    if (hasRecord(ds) || onLeave(ds)) continue;
+    out.push(ds);
+  }
+  return out;
+}
+
 /**
  * SINGLE SOURCE OF TRUTH for range attendance figures (Present/Half/Incomplete/
  * Absent/Leave). Used by BOTH the /stats cards and the Excel export so every view
- * shows the SAME absent count. Absent = Working Days − Attended (any punch) −
- * Approved Leave, per employee (holidays/week-offs are excluded from Working Days).
+ * shows the SAME absent count. Absent is ENUMERATED (absentDatesFor) — a working day
+ * with no attendance record and no approved leave — identical to /absentees.
  */
 async function buildRangeSummary(from, to, { targetId, department, designation } = {}) {
   const f = [`hr_date ge ${from}`, `hr_date le ${to}`];
@@ -720,7 +742,9 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   // are never "would-be-absent" days). Count per-date over [from, capTo] so the
   // Absent CARD matches the /absentees ROWS exactly (both exclude working leave
   // days). Calendar-day counting (resolveDays) over-subtracts and made them differ.
-  const leaveByEmp = {};
+  // Per-employee SETS: approved-leave WORKING dates + dates with ANY attendance
+  // record (matching /absentees). Absent is then enumerated from these, not a formula.
+  const leaveDatesByEmp = {};
   (leaves || []).forEach(l => {
     const lf = String(l.hr_fromdate || '').slice(0, 10);
     const lt = String(l.hr_todate || '').slice(0, 10) || lf;
@@ -728,12 +752,19 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     const start = lf < from ? from : lf;
     const stop = lt > capTo ? capTo : lt;                                 // elapsed window only
     if (stop < start) return;
+    const set = leaveDatesByEmp[l._hr_hremployee_value] = leaveDatesByEmp[l._hr_hremployee_value] || new Set();
     const end = new Date(`${stop}T00:00:00Z`);
     for (let dt = new Date(`${start}T00:00:00Z`); dt <= end; dt.setUTCDate(dt.getUTCDate() + 1)) {
       const ds = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
       if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(dt.getUTCDay())) continue;   // working days only
-      leaveByEmp[l._hr_hremployee_value] = (leaveByEmp[l._hr_hremployee_value] || 0) + 1;
+      set.add(ds);
     }
+  });
+  const recordDatesByEmp = {};
+  (recs || []).forEach(r => {
+    const ds = String(r.hr_date || '').slice(0, 10);
+    if (!ds) return;
+    (recordDatesByEmp[r._hr_hremployee_value] = recordDatesByEmp[r._hr_hremployee_value] || new Set()).add(ds);
   });
 
   const rc = rangeCounts(from, to);
@@ -765,12 +796,18 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   // before their first punch) and end at min(to, today). An employee with no
   // attendance history at all has 0 working days → never marked Absent.
   const perEmployee = scope.map(e => {
-    const leaveDays = leaveByEmp[e.hr_hremployeeid] || 0;
+    const recordSet = recordDatesByEmp[e.hr_hremployeeid] || new Set();
+    const leaveSet = leaveDatesByEmp[e.hr_hremployeeid] || new Set();
+    const leaveDays = leaveSet.size;
     // Prefer the true first-ever date; fall back to the earliest in-range punch so
     // an unavailable aggregate never forces working days (and thus Absent) to 0.
     const firstDate = firstMap.get(e.hr_hremployeeid) || firstInRange[e.hr_hremployeeid] || null;
     const working = effectiveWorking(from, capTo, firstDate);
-    return { emp: e, leaveDays, working, firstDate, summary: summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays }) };
+    const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays });
+    // Absent = ENUMERATED working dates with no record and no leave (identical to
+    // /absentees) — never the Working−Attended−Leave formula.
+    summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds)).length;
+    return { emp: e, leaveDays, working, firstDate, summary };
   });
 
   const totals = perEmployee.reduce((t, p) => {
@@ -920,15 +957,22 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
     // employee with no history) is wrongly listed absent for the whole range, so
     // the Absent CARD (/stats) and the Absent LIST (/absentees) would diverge.
     const firstMap = await getFirstAttendanceMap();
+    // Earliest in-range record per employee — same first-date fallback as /stats, so
+    // the Absent LIST and the Absent CARD are computed from identical inputs.
+    const firstInRange = {};
+    (recs || []).forEach(r => {
+      const ds = String(r.hr_date || '').slice(0, 10);
+      if (ds && (!firstInRange[r._hr_hremployee_value] || ds < firstInRange[r._hr_hremployee_value])) firstInRange[r._hr_hremployee_value] = ds;
+    });
     const CAP = 5000;
     const rows = [];
     for (const e of scope) {
-      const firstDate = firstMap.get(String(e.hr_hremployeeid));
+      const firstDate = firstMap.get(String(e.hr_hremployeeid)) || firstInRange[e.hr_hremployeeid] || null;
       if (!firstDate) continue;   // no attendance history → never counted absent (matches /stats)
-      for (const ds of workDates) {
-        if (ds < firstDate) continue;   // nothing before their first punch
-        const key = `${e.hr_hremployeeid}|${ds}`;
-        if (active.has(key) || onLeave.has(key)) continue;
+      const dates = absentDatesFor(from, capTo, firstDate,
+        ds => active.has(`${e.hr_hremployeeid}|${ds}`),
+        ds => onLeave.has(`${e.hr_hremployeeid}|${ds}`));
+      for (const ds of dates) {
         rows.push({ employee: e.hr_hremployee1 || 'Employee', department: e.hr_department || '', designation: e.hr_designation || '', date: ds, status: 'absent' });
         if (rows.length >= CAP) break;
       }
