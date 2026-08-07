@@ -17,7 +17,7 @@ import DocumentsManager from '../../components/DocumentsManager';
 import LeaveBalance from '../attendance/LeaveBalance';
 
 const GENDERS = ['Male', 'Female'];
-const MARITAL = ['Single', 'Married'];
+const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
 const DOC_TYPES = ['Aadhaar Card', 'PAN Card', 'Passport', 'Driving Licence', 'Cancelled Cheque', 'Passbook', 'Photo'];
 
 const FORM_TABS = [
@@ -25,9 +25,11 @@ const FORM_TABS = [
     { name: 'hr_phone', label: 'Mobile Number', rules: phoneRule },
     { name: 'hr_altphone', label: 'Alternate Mobile', rules: phoneRule },
     { name: 'hr_personalemail', label: 'Personal Email', type: 'email' },
-    { name: 'hr_dob', label: 'Date of Birth', type: 'date' },
+    { name: 'hr_dob', label: 'Date of Birth', type: 'date', required: true },
     { name: 'hr_gender', label: 'Gender', type: 'select', options: GENDERS },
     { name: 'hr_maritalstatus', label: 'Marital Status', type: 'select', options: MARITAL },
+    // Marriage Date shows (and is required) only when Marital Status = Married.
+    { name: 'hr_marriagedate', label: 'Marriage Date', type: 'date', visibleWhen: (v) => v.hr_maritalstatus === 'Married', requiredWhen: (v) => v.hr_maritalstatus === 'Married' },
     { name: 'hr_nationality', label: 'Nationality' },
     { name: 'hr_bloodgroup', label: 'Blood Group', type: 'select', options: BLOOD_GROUPS },
   ] },
@@ -96,7 +98,9 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [, setUploading] = useState('');
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm();
+  // Marital status drives the conditional Marriage Date field.
+  const marital = watch('hr_maritalstatus');
 
   const { data, isLoading } = useQuery({ queryKey: ['employee', id], queryFn: () => employeeApi.get(id), enabled: !!id });
   const emp = data?.data;
@@ -137,6 +141,8 @@ export default function ProfilePage() {
   const onValid = (values) => {
     const payload = {};
     for (const f of EDITABLE_FIELDS) if (values[f] !== undefined) payload[f] = values[f];
+    // Clear Marriage Date whenever the employee is not Married (keeps data consistent).
+    if (values.hr_maritalstatus !== 'Married') payload.hr_marriagedate = '';
     saveMutation.mutate(payload);
   };
   const onInvalid = (errs) => {
@@ -167,14 +173,16 @@ export default function ProfilePage() {
   if (isLoading) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400">Loading profile…</div></div>;
   if (!emp) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-500">Profile not found.</div></div>;
 
+  const formVals = { hr_maritalstatus: marital };
   const Field = (f) => {
     const err = errors[f.name];
     const ro = !editing;
+    const required = f.required || (f.requiredWhen && f.requiredWhen(formVals));
     const base = `w-full ${f.textarea ? 'px-4 py-2.5' : 'h-11 px-4'} border rounded-xl text-sm transition-all outline-none ${err ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} ${ro ? 'bg-gray-50/70 text-gray-600 cursor-default' : 'bg-white text-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400'}`;
-    const reg = register(f.name, { ...(f.required ? { required: `${f.label} is required` } : {}), ...(f.rules || {}) });
+    const reg = register(f.name, { ...(required ? { required: `${f.label} is required` } : {}), ...(f.rules || {}) });
     return (
       <div key={f.name} className={`space-y-1.5 ${f.textarea ? 'sm:col-span-2' : ''}`}>
-        <label className="block text-sm font-semibold text-gray-700">{f.label}{f.required && <span className="text-red-500 ml-0.5">*</span>}</label>
+        <label className="block text-sm font-semibold text-gray-700">{f.label}{required && <span className="text-red-500 ml-0.5">*</span>}</label>
         {f.textarea ? (
           <textarea rows={2} className={`${base} resize-none`} readOnly={ro} {...reg} />
         ) : f.type === 'select' ? (
@@ -326,7 +334,7 @@ export default function ProfilePage() {
           <form onSubmit={handleSubmit(onValid, onInvalid)} className={tab === 'documents' ? 'hidden' : ''}>
             {FORM_TABS.map(t => (
               <div key={t.key} className={tab === t.key ? 'grid grid-cols-1 sm:grid-cols-2 gap-5' : 'hidden'}>
-                {t.fields.map(Field)}
+                {t.fields.filter(f => !f.visibleWhen || f.visibleWhen(formVals)).map(Field)}
               </div>
             ))}
           </form>

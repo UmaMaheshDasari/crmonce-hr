@@ -21,7 +21,7 @@ const EMP = d365.constructor.entities.employee;
 // emergency / bank + photo). NOTHING else is writable by a non-HR user.
 const SELF_EDITABLE = new Set([
   // Personal
-  'hr_phone', 'hr_altphone', 'hr_personalemail', 'hr_dob', 'hr_gender', 'hr_maritalstatus', 'hr_nationality', 'hr_bloodgroup', 'hr_photourl',
+  'hr_phone', 'hr_altphone', 'hr_personalemail', 'hr_dob', 'hr_gender', 'hr_maritalstatus', 'hr_marriagedate', 'hr_nationality', 'hr_bloodgroup', 'hr_photourl',
   // Identity
   'hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_uan', 'hr_pfnumber',
   // Address
@@ -42,7 +42,7 @@ const VERIFY_TRIGGER = new Set([
 // Human labels for audit rows / notifications.
 const FIELD_LABELS = {
   hr_phone: 'Mobile Number', hr_altphone: 'Alternate Mobile', hr_personalemail: 'Personal Email',
-  hr_dob: 'Date of Birth', hr_gender: 'Gender', hr_maritalstatus: 'Marital Status', hr_nationality: 'Nationality',
+  hr_dob: 'Date of Birth', hr_gender: 'Gender', hr_maritalstatus: 'Marital Status', hr_marriagedate: 'Marriage Date', hr_nationality: 'Nationality',
   hr_bloodgroup: 'Blood Group', hr_photourl: 'Photo',
   hr_aadhaar: 'Aadhaar', hr_pan: 'PAN', hr_passport: 'Passport',
   hr_uan: 'UAN', hr_pfnumber: 'PF Number',
@@ -72,7 +72,7 @@ const MISSING_GROUPS = [
 // Field → section (used to label "Changed Section" in HR Verification).
 const SECTION_OF = {
   hr_phone: 'Personal', hr_altphone: 'Personal', hr_personalemail: 'Personal', hr_dob: 'Personal',
-  hr_gender: 'Personal', hr_maritalstatus: 'Personal', hr_nationality: 'Personal', hr_bloodgroup: 'Personal', hr_photourl: 'Personal',
+  hr_gender: 'Personal', hr_maritalstatus: 'Personal', hr_marriagedate: 'Personal', hr_nationality: 'Personal', hr_bloodgroup: 'Personal', hr_photourl: 'Personal',
   hr_aadhaar: 'Identity', hr_pan: 'Identity', hr_passport: 'Identity', hr_uan: 'Identity', hr_pfnumber: 'Identity',
   hr_address: 'Address', hr_permaddress: 'Address', hr_city: 'Address', hr_state: 'Address', hr_country: 'Address', hr_pincode: 'Address',
   hr_emergencycontact: 'Emergency', hr_emergencyrelation: 'Emergency', hr_emergencyphone: 'Emergency',

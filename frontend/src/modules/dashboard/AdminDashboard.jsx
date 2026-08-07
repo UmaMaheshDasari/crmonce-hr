@@ -12,6 +12,7 @@ import {
 import { dashboardApi, attendanceApi, lateLoginApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import ActivityFeed from '../../components/ActivityFeed';
+import TodaysCelebrations from './TodaysCelebrations';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
 
 function greeting() {
@@ -243,6 +244,9 @@ export default function AdminDashboard() {
           <ActivityFeed items={d?.activity ?? []} loading={isLoading && !d} emptyText="No recent activity yet." />
         </div>
       </div>
+
+      {/* ── Today's Celebrations ──────────────────────────────────────────── */}
+      <TodaysCelebrations />
 
       {/* ── Leave Summary (compact) ──────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-100 p-5">

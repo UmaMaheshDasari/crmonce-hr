@@ -46,6 +46,7 @@ const COLUMNS = [
   str('hr_DOB', 'Date of Birth', 20),
   str('hr_Gender', 'Gender', 20),
   str('hr_MaritalStatus', 'Marital Status', 20),
+  str('hr_MarriageDate', 'Marriage Date', 20),          // shown only when Marital Status = Married
   str('hr_Nationality', 'Nationality', 60),
   str('hr_PhotoUrl', 'Photo', 500),
   // Address

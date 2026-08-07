@@ -46,6 +46,21 @@ function initJobs() {
     global.logger?.info('Comp Off expiry sweep scheduled (01:00 IST daily)');
   }
 
+  // Celebrations — Birthday / Marriage Anniversary / Work Anniversary wishes.
+  // Ticks every 30 min; celebrations.runDaily() only actually sends once the
+  // configured Send Time (default 09:00 IST) has passed, and the audit log guards
+  // against duplicate emails — so a missed 09:00 tick (server restart) still sends
+  // later the same day, exactly once. Disable with CELEBRATIONS_SCHEDULER=false.
+  if (process.env.CELEBRATIONS_SCHEDULER !== 'false') {
+    const celebrations = require('../services/celebrations.service');
+    cron.schedule('*/30 * * * *', () => {
+      celebrations.runDaily({ scheduled: true })
+        .then(r => { if (r?.total) global.logger?.info(`[celebrations] daily run: ${r.total} wish(es) sent`); })
+        .catch(e => global.logger?.error(`[celebrations] daily run failed: ${e.message}`));
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Celebrations scheduled (every 30 min; sends at configured Send Time, IST)');
+  }
+
   global.logger?.info('Cron jobs initialized');
 }
 

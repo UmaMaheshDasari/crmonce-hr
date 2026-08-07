@@ -13,6 +13,7 @@ import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import MissingPunchModal from '../attendance/MissingPunchModal';
 import ActivityFeed from '../../components/ActivityFeed';
+import TodaysCelebrations from './TodaysCelebrations';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
 
 function greeting() {
@@ -380,6 +381,9 @@ export default function EmployeeDashboard() {
           </div>
         </div>
       )}
+
+      {/* ── Today's Celebrations ──────────────────────────────────────────── */}
+      <TodaysCelebrations />
 
       {/* ── Recent Activity ───────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-100 p-5">

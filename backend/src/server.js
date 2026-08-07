@@ -120,6 +120,7 @@ app.use('/api/holidays',    authenticateToken, holidayRoutes);
 app.use('/api/leave-opening', authenticateToken, require('./modules/attendance/leave-opening.routes'));
 app.use('/api/company',     authenticateToken, require('./modules/company/company.routes'));
 app.use('/api/import-export', authenticateToken, require('./modules/shared/import-export.routes'));
+app.use('/api/celebrations', authenticateToken, require('./modules/celebrations/celebrations.routes'));
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));
@@ -223,6 +224,9 @@ server.listen(PORT, () => {
     require('./services/provision-document-columns')
       .ensureDocumentColumns(logger)
       .catch(err => logger.warn(`[provision] document columns skipped: ${err.message}`));
+    require('./services/provision-celebrations')
+      .ensureCelebrationTables(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] celebration tables skipped: ${err.message}`));
   }
 
   // Load the HR holiday calendar into attendance.config so holidays are excluded

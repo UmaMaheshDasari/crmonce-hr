@@ -266,3 +266,12 @@ export const documentApi = {
   // Stream the actual file (authenticated). download=true → attachment.
   file: (id, download) => api.get(`/documents/${id}/file`, { params: download ? { download: 1 } : {}, responseType: 'blob' }),
 };
+
+// ── Celebrations (Birthday / Marriage / Work Anniversary) ────────────
+export const celebrationsApi = {
+  today: () => api.get('/celebrations/today'),
+  settings: () => api.get('/celebrations/settings'),
+  updateSettings: (data) => api.put('/celebrations/settings', data),
+  logs: (params) => api.get('/celebrations/logs', { params }),
+  run: () => api.post('/celebrations/run'),
+};
