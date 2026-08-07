@@ -102,7 +102,7 @@ export default function EmployeeForm() {
         hr_shiftname: e.hr_shiftname || 'General Shift', hr_shiftstarttime: e.hr_shiftstarttime || '09:00',
         hr_shiftendtime: e.hr_shiftendtime || '18:00',
         // Master
-        managerId: e._hr_manager_value || '', hr_employeeid: e.hr_employeeid, hr_etimecode: e.hr_etimecode,
+        managerId: e._hr_manager_value || '', hr_employeeid: e.hr_employeeid,
         hr_employmenttype: e.hr_employmenttype,
         hr_worklocation: e.hr_worklocation, hr_confirmationdate: e.hr_confirmationdate?.split('T')[0],
         hr_relievingdate: e.hr_relievingdate?.split('T')[0],

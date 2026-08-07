@@ -28,13 +28,12 @@ function StarRating({ value, onChange, readOnly, size = 'md' }) {
 
 function NewReviewModal({ onClose }) {
   const qc = useQueryClient();
-  const { user } = useAuth();
   const [form, setForm] = useState({ employeeId: '', cycle: CYCLES[0], rating: 3, goals: '', kpis: '', notes: '' });
   const [empSearch, setEmpSearch] = useState('');
 
   const { data: empData } = useQuery({
     queryKey: ['employees-all'],
-    queryFn: () => employeeApi.list({ limit: 200, status: 'active' }),
+    queryFn: () => employeeApi.list({ limit: 500, status: 'active' }),
   });
 
   const employees = empData?.data?.data || [];

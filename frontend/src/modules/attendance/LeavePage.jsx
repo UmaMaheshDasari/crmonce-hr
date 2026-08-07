@@ -722,7 +722,6 @@ function getOverallStatusLabel(leave) {
 
 export default function LeavePage() {
   const { isHR, user } = useAuth();
-  const qc = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [filter, setFilter] = useState('pending');
 

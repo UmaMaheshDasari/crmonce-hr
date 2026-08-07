@@ -215,7 +215,9 @@ router.get('/approvers', async (req, res, next) => {
 // scoped to the logged-in employee; Total Leave Taken = sum of Approved leave days.
 router.get('/summary', async (req, res, next) => {
   try {
-    const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
+    // Only HR/Super Admin may view another employee; everyone else (incl. recruiter)
+    // is locked to their own id — this route has no requirePermission gate.
+    const targetId = HR_ROLES.includes(req.user.role) ? (req.query.employeeId || req.user.id) : req.user.id;
     // Period comes from the dashboard filter; default = current month.
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -233,10 +235,6 @@ router.get('/summary', async (req, res, next) => {
     }));
     const summary = leaveSummary(rows, { from, to });
     // Diagnostic logging (checklist #9): who, how many records, and the computed total.
-    console.log(
-      `[leave/summary] employee=${targetId} period=${from}..${to} ` +
-      `records=${rows.length} approvedInPeriod=${summary.approvedCount} takenDays=${summary.taken}`
-    );
     res.json(summary);
   } catch (err) { next(err); }
 });

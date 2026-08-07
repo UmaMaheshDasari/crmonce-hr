@@ -69,7 +69,7 @@ export default function LeaveOpeningBalancePage() {
       const payload = { ...form, year };
       return isEdit ? leaveOpeningApi.update(payload) : leaveOpeningApi.create(payload);
     },
-    onSuccess: (r) => {
+    onSuccess: () => {
       toast.success(isEdit ? 'Opening balance updated' : 'Opening balance created');
       qc.invalidateQueries({ queryKey: ['leave-opening'] });
       qc.invalidateQueries({ queryKey: ['leave-balance'] });

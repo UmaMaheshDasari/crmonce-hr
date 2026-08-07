@@ -40,7 +40,7 @@ const STATUS_PILL = {
 };
 
 // ── compact KPI card (~35% shorter than the old p-5/text-3xl card) ──────────────
-function Kpi({ icon: Icon, label, value, sub, iconBg, iconColor }) {
+function Kpi({ label, value, sub, iconBg, iconColor }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-3.5 flex items-center gap-3 hover:shadow-sm transition-shadow">
       <div className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 ${iconBg}`}>

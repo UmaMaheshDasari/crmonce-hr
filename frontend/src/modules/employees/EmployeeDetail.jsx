@@ -8,7 +8,6 @@ import LeaveBalance from '../attendance/LeaveBalance';
 import { formatDuration } from '../../utils/formatDuration';
 import { fmtTime, fmtVal, fmtDate } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
-import { format } from 'date-fns';
 
 const STATUS_STYLES = {
   active: 'bg-emerald-50 text-emerald-700 ring-emerald-600/10',
@@ -41,7 +40,6 @@ export default function EmployeeDetail() {
   const { id } = useParams();
   const { isHR, user } = useAuth();
   const isSelf = user?.id === id;
-  const canEdit = isHR() || isSelf;
   const { view, download, viewer } = useDocumentViewer();   // authenticated document view/download
 
   const { data, isLoading } = useQuery({ queryKey: ['employee', id], queryFn: () => employeeApi.get(id) });

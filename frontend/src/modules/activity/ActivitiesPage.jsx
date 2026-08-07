@@ -8,8 +8,7 @@ export default function ActivitiesPage() {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['activities-all'],
     queryFn: () => activityApi.list(100),
-    refetchInterval: 30000,          // auto-refresh every 30s
-    refetchOnWindowFocus: true,
+    refetchInterval: 90000,          // auto-refresh every 90s
   });
 
   const items = data?.data?.data ?? [];

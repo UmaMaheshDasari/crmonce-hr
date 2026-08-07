@@ -19,7 +19,7 @@ function signApprovalToken({ type, id, level, action }) {
 
 /** Verify + decode an approval-link token. Throws on invalid / expired / tampered. */
 function verifyApprovalToken(token) {
-  const decoded = jwt.verify(token, SECRET);
+  const decoded = jwt.verify(token, SECRET, { algorithms: ['HS256'] });
   if (decoded.typ !== 'approval') throw new Error('Not an approval token');
   return decoded;
 }

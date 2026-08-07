@@ -4,6 +4,7 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
+const { odStr, odGuid } = require('../../services/odata.util');
 
 const ENTITY = 'hr_hrtaxdeclarations';
 const SELECT_FIELDS = [
@@ -23,14 +24,16 @@ router.get('/', async (req, res, next) => {
     const { year, status, employeeId, page = 1, limit = 20 } = req.query;
     const filters = [];
 
-    // Employees can only see their own
+    // Employees can only see their own (self-scope is the trusted JWT id).
     if (!isHR(req.user)) {
       filters.push(`_hr_hremployee_value eq '${req.user.id}'`);
     } else if (employeeId) {
-      filters.push(`_hr_hremployee_value eq '${employeeId}'`);
+      filters.push(`_hr_hremployee_value eq '${odGuid(employeeId) || odStr(employeeId)}'`);
     }
 
-    if (year) filters.push(`hr_financialyear eq '${year}'`);
+    // `year` is a client string interpolated inside quotes — escape it, or a crafted
+    // value could break out of the term and defeat the self-scope (cross-employee PII).
+    if (year) filters.push(`hr_financialyear eq '${odStr(year)}'`);
     if (status) filters.push(`hr_status eq ${toValue('hr_declaration_status', status)}`);
 
     // Dataverse ignores $skip → fetch first (page*limit) rows and slice server-side.

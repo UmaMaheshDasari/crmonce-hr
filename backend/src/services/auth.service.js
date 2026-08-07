@@ -32,8 +32,11 @@ class AuthService {
   }
 
   async login(email, password) {
+    // `email` is untrusted pre-auth input — escape single quotes so it cannot break
+    // out of the filter literal (which record is matched / active-status bypass).
+    const safeEmail = String(email ?? '').replace(/'/g, "''");
     const { data } = await d365.getList(d365.constructor.entities.employee, {
-      filter: `hr_email eq '${email}' and hr_status eq 123140000`,
+      filter: `hr_email eq '${safeEmail}' and hr_status eq 123140000`,
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_password,hr_role,hr_department',
     });
 
@@ -56,7 +59,7 @@ class AuthService {
   }
 
   async refreshToken(token) {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const user = await d365.getById(d365.constructor.entities.employee, decoded.id, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_role',
     });
@@ -64,7 +67,7 @@ class AuthService {
   }
 
   verifyToken(token) {
-    return jwt.verify(token, process.env.JWT_SECRET);
+    return jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   }
 
   async hashPassword(password) {

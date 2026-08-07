@@ -20,7 +20,7 @@ function authenticateToken(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Access token required' });
 
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     next();
   } catch (err) {
     return res.status(403).json({ error: 'Invalid or expired token' });

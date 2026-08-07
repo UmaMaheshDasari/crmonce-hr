@@ -94,14 +94,13 @@ export default function ProfilePage() {
 
   const [tab, setTab] = useState('general');
   const [editing, setEditing] = useState(false);
-  const [uploading, setUploading] = useState('');
+  const [, setUploading] = useState('');
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
 
   const { data, isLoading } = useQuery({ queryKey: ['employee', id], queryFn: () => employeeApi.get(id), enabled: !!id });
   const emp = data?.data;
   const { data: docsData } = useQuery({ queryKey: ['documents', id], queryFn: () => documentApi.list({ employeeId: id }), enabled: !!id });
-  const docs = docsData?.data?.data || [];
 
   // Reset the form from the server data whenever it (re)loads — but not while the
   // user is mid-edit (so a background refetch can't wipe their changes).

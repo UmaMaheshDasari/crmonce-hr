@@ -152,7 +152,6 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     // Guard: every hr_attendancerequests column is Edm.String — never let a numeric
     // slip into the payload (that is the 0x80048d19 / "convert Int32 to String" 400).
     for (const k of Object.keys(body)) if (typeof body[k] === 'number') body[k] = String(body[k]);
-    console.log('[attendance-requests] create payload →', JSON.stringify(body));
 
     // Requirement #10: self-heal the schema (create table / add missing columns)
     // and retry — never return "not configured" when we can fix it automatically.

@@ -49,7 +49,9 @@ async function openPriorRecord(empId, today) {
 // figure is computed live from Dataverse (no dummy values).
 router.get('/summary', async (req, res, next) => {
   try {
-    const empId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
+    // Only HR/Super Admin may view another employee's dashboard; everyone else
+    // (incl. recruiter) is locked to their own id (this route has no permission gate).
+    const empId = ['super_admin', 'hr_manager'].includes(req.user.role) ? (req.query.employeeId || req.user.id) : req.user.id;
     const today = time.istDateStr();
     const [Y, M] = today.split('-').map(Number);
     const mm = pad2(M);
@@ -154,13 +156,6 @@ router.get('/summary', async (req, res, next) => {
     }));
     const leave = leaveSummary(leaveRows, { from: leaveFrom, to: leaveTo });
     leave.hasActivity = leaveRows.some(r => r.fromDate && r.fromDate >= leaveFrom && r.fromDate <= leaveTo);
-    // Diagnostic: reveals whether the query returned 0 rows (lookup/data issue) or
-    // rows exist but none fall in the period / match a counted status.
-    console.log(
-      `[dashboard/summary] employee=${empId} leaveRecords=${leaveRows.length} ` +
-      `period=${leaveFrom}..${leaveTo} statuses=[${leaveRows.map(r => `${r.status}@${r.fromDate}`).slice(0, 8).join(', ')}] ` +
-      `pending=${leave.pendingCount} approved=${leave.approvedCount} rejected=${leave.rejectedCount} hasActivity=${leave.hasActivity}`
-    );
 
     // ── Next payday & upcoming holiday ────────────────────────────────────────
     const salaryDay = parseInt(process.env.SALARY_DAY, 10) || 1;

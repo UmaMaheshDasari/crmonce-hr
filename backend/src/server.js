@@ -140,6 +140,22 @@ app.use((err, req, res, next) => {
 
 // ── Start ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
+
+// Boot-time env check — surface missing critical vars up front instead of failing
+// lazily at first request. Warns always; in production a missing var is fatal.
+(() => {
+  const required = ['JWT_SECRET', 'D365_BASE_URL', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'];
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length) {
+    logger.error(`[env] Missing required environment variables: ${missing.join(', ')} — see .env.example`);
+    if (process.env.NODE_ENV === 'production') { logger.error('[env] Refusing to start in production without these.'); process.exit(1); }
+    logger.warn('[env] Continuing (non-production); these features will fail until set.');
+  }
+  if (process.env.NODE_ENV === 'production' && !process.env.GRAPH_SENDER) {
+    logger.warn('[env] GRAPH_SENDER is not set — outbound email will silently no-op.');
+  }
+})();
+
 server.listen(PORT, () => {
   logger.info(`✅ HR System backend running → http://localhost:${PORT}`);
   logger.info(`   Health check → http://localhost:${PORT}/health`);

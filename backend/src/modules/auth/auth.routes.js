@@ -51,9 +51,10 @@ router.post('/azure/callback', async (req, res) => {
       return res.status(400).json({ error: 'Could not get email from Azure AD' });
     }
 
-    // Find employee in D365 by email
+    // Find employee in D365 by email (escape the literal defensively).
+    const safeEmail = String(email).replace(/'/g, "''");
     let { data: employees } = await d365.getList(d365.constructor.entities.employee, {
-      filter: `hr_email eq '${email}' and hr_status eq 123140000`,
+      filter: `hr_email eq '${safeEmail}' and hr_status eq 123140000`,
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_role,hr_department',
     });
 

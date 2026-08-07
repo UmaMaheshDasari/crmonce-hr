@@ -1033,7 +1033,6 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     const summaryRows = perEmployee
       .filter(p => !isExcluded(p.emp))
       .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
-    console.log(`[monthly-summary] ${from}..${to}  Calendar=${rc.calendar} Working=${rc.working} WorkingElapsed=${workingForAbsent}`);
     for (const { emp: e, leaveDays, summary: s } of summaryRows) {
       const present = s.attended;               // Present/Late/Early/OT/Incomplete/Half → ONE present
       const leave = leaveDays || 0;             // approved leave days (already resolveDays-counted)
@@ -1041,7 +1040,6 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
       const absent = Math.max(0, workingForAbsent - present - leave);
       // First absent day is FREE; 2nd+ each reduce one Salary Working Day.
       const salary = Math.max(0, rc.working - Math.max(absent - 1, 0));
-      console.log(`[monthly-summary] ${e.hr_hremployee1 || 'Employee'} | Working=${rc.working} Present=${present} Leave=${leave} Absent=${absent} Salary=${salary}`);
       ws.addRow({
         id: e.hr_etimecode || e.hr_hremployeeid || '',
         name: e.hr_hremployee1 || 'Employee',

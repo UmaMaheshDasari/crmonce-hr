@@ -104,7 +104,7 @@ export default function RecruitmentPage() {
     queryFn: () => recruitmentApi.jobs(),
   });
 
-  const { data: appsData, isLoading: appsLoading } = useQuery({
+  const { data: appsData } = useQuery({
     queryKey: ['applications', selectedJob],
     queryFn: () => recruitmentApi.applications({ jobId: selectedJob || undefined }),
     enabled: view === 'pipeline',

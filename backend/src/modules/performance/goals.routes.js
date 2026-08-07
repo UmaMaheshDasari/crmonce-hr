@@ -107,7 +107,6 @@ router.get('/:id', async (req, res, next) => {
 // POST /  — create goal (HR/manager only)
 router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
-    console.log('[goals/create] incoming payload →', JSON.stringify(req.body));
     const { employeeId, hr_weightage, ...rest } = req.body;
 
     // ── Validation (return the SPECIFIC reason, never a generic failure) ──
@@ -149,7 +148,6 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
     for (const k of Object.keys(body)) {
       if (body[k] === '' || body[k] === null || body[k] === undefined) delete body[k];
     }
-    console.log('[goals/create] dataverse payload →', JSON.stringify(body));
 
     let goal;
     try {

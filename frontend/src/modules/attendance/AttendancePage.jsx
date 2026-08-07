@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { attendanceApi, employeeApi } from '../../api/endpoints';
 import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCircleIcon, FunnelIcon, CalendarDaysIcon, ComputerDesktopIcon, PencilSquareIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
@@ -18,7 +18,7 @@ const STATUS_CONFIG = {
 };
 
 export default function AttendancePage() {
-  const { isHR, user } = useAuth();
+  const { isHR } = useAuth();
   const qc = useQueryClient();
   const today = new Date();
   const [from, setFrom] = useState(format(startOfMonth(today), 'yyyy-MM-dd'));
@@ -130,7 +130,7 @@ export default function AttendancePage() {
 
   const { data: empData } = useQuery({
     queryKey: ['employees-all'],
-    queryFn: () => employeeApi.list({ limit: 200, status: 'active' }),
+    queryFn: () => employeeApi.list({ limit: 500, status: 'active' }),
     enabled: isHR(),
   });
 
@@ -231,7 +231,7 @@ export default function AttendancePage() {
         <td className="px-5 py-4">
           {(() => {
             let punches = [];
-            try { punches = JSON.parse(r.hr_allpunches || '[]'); } catch (_) {}
+            try { punches = JSON.parse(r.hr_allpunches || '[]'); } catch { /* malformed punches → empty */ }
             if (!Array.isArray(punches) || punches.length === 0) return <span className="text-sm text-gray-300">—</span>;
             return (
               <div className="flex flex-wrap gap-1">

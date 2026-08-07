@@ -135,7 +135,7 @@ function DeclarationCard({ dec, onEdit, onView, onSubmit, onDelete, isHR }) {
 }
 
 // ── Form Modal ───────────────────────────────────────────────────
-function DeclarationFormModal({ declaration, onClose, onSaved }) {
+function DeclarationFormModal({ declaration, onClose }) {
   const isEdit = !!declaration;
   const qc = useQueryClient();
 
@@ -484,7 +484,7 @@ function ViewDetailsModal({ declaration, onClose, isHR }) {
 
 // ── Main Page ────────────────────────────────────────────────────
 export default function TaxDeclarationPage() {
-  const { user, hasRole } = useAuth();
+  const { hasRole } = useAuth();
   const qc = useQueryClient();
   const isHRUser = hasRole('super_admin', 'hr_manager');
 

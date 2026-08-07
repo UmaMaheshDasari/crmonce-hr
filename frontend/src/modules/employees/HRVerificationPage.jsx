@@ -12,7 +12,7 @@ import toast from 'react-hot-toast';
 function PendingDocuments() {
   const qc = useQueryClient();
   const { view, download, viewer } = useDocumentViewer();   // authenticated view/download
-  const { data, isLoading } = useQuery({ queryKey: ['pending-documents'], queryFn: () => documentApi.pending(), refetchInterval: 30000 });
+  const { data, isLoading } = useQuery({ queryKey: ['pending-documents'], queryFn: () => documentApi.pending(), refetchInterval: 90000 });
   const rows = data?.data?.data || [];
   const verify = useMutation({
     mutationFn: ({ id, action, hrRemarks }) => documentApi.verify(id, { action, hrRemarks }),
@@ -113,7 +113,7 @@ export default function HRVerificationPage() {
   const [selected, setSelected] = useState(null);
   const [vtab, setVtab] = useState('profiles');
 
-  const { data, isLoading } = useQuery({ queryKey: ['pending-verifications'], queryFn: () => employeeApi.pendingVerifications(), refetchInterval: 30000 });
+  const { data, isLoading } = useQuery({ queryKey: ['pending-verifications'], queryFn: () => employeeApi.pendingVerifications(), refetchInterval: 90000 });
   const rows = data?.data?.data || [];
 
   const decide = useMutation({

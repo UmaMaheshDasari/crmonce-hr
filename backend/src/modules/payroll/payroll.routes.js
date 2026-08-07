@@ -8,6 +8,7 @@ const { toValue, toLabel, labelsForList } = require('../../services/picklist');
 const { resolveDays } = require('../../services/leave-summary.util');
 const payrollDashboard = require('../../services/payroll-dashboard.service');
 const { rangeCounts } = require('../../services/attendance-summary.util');
+const { odStr, odInt, odGuid } = require('../../services/odata.util');
 const attnCfg = require('../../services/attendance.config');
 // A punch only counts toward "present" on an actual working day — a weekend/holiday
 // punch must NOT inflate present days (which would erase genuine LOP).
@@ -85,10 +86,13 @@ payrollRouter.get('/', requirePermission('payroll:read'), async (req, res, next)
   try {
     const { employeeId, month, year, page = 1, limit = 20 } = req.query;
     const filters = [];
+    // Employees are locked to their own id; HR may pass an employeeId (validated GUID).
     const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
-    if (targetId) filters.push(`_hr_hremployee_value eq '${targetId}'`);
-    if (month) filters.push(`hr_month eq ${month}`);
-    if (year) filters.push(`hr_year eq ${year}`);
+    if (targetId) filters.push(`_hr_hremployee_value eq '${odGuid(targetId) || odStr(targetId)}'`);
+    // month/year are interpolated UNQUOTED — must be integers or a crafted value could
+    // break out of the self-scope (`?month=1 or hr_year eq 2025`). Validate strictly.
+    const m = odInt(month); if (m !== null) filters.push(`hr_month eq ${m}`);
+    const y = odInt(year); if (y !== null) filters.push(`hr_year eq ${y}`);
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const lim = Math.max(1, parseInt(limit, 10) || 20);
@@ -108,8 +112,10 @@ payrollRouter.get('/', requirePermission('payroll:read'), async (req, res, next)
 // locked/finalised months. Returns counts (no HTTP). Runs Attendance → Leave →
 // LOP → Advance → Salary Calculation → Payroll for each employee.
 async function runGeneration({ month, year, employeeIds } = {}) {
-  const filter = employeeIds?.length
-    ? employeeIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ')
+  month = odInt(month); year = odInt(year);   // never interpolate a raw month/year
+  const validIds = (employeeIds || []).map(odGuid).filter(Boolean);
+  const filter = validIds.length
+    ? validIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ')
     : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
   const { data: employees } = await d365.getListOptional(E.employee, {
     select: 'hr_hremployeeid,hr_hremployee1,hr_salary,hr_allowances,hr_deductions',
@@ -181,8 +187,9 @@ async function runGeneration({ month, year, employeeIds } = {}) {
 // POST /generate  — HTTP wrapper around runGeneration (HR).
 async function generatePayroll(req, res, next) {
   try {
-    const { month, year, employeeIds } = req.body;
-    if (!month || !year) return res.status(400).json({ error: 'month and year are required.' });
+    const month = odInt(req.body.month), year = odInt(req.body.year);
+    const { employeeIds } = req.body;
+    if (month === null || year === null || month < 1 || month > 12) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
     const r = await runGeneration({ month, year, employeeIds });
     try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${r.created + r.updated} employees${r.locked ? `, ${r.locked} locked skipped` : ''}` }); } catch {}
     broadcast('payroll:processed', { month: `${month}/${year}`, count: r.created + r.updated });
@@ -198,8 +205,9 @@ payrollRouter.post('/process', requireRole('super_admin', 'hr_manager'), generat
 async function finalizeMonth({ month, year, employeeIds } = {}) {
   const draft = toValue('hr_payroll_status', 'draft');
   const processed = toValue('hr_payroll_status', 'processed');
-  const filters = [`hr_year eq ${year}`, `hr_month eq ${month}`, `hr_status eq ${draft}`];
-  if (employeeIds?.length) filters.push('(' + employeeIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ') + ')');
+  const filters = [`hr_year eq ${odInt(year)}`, `hr_month eq ${odInt(month)}`, `hr_status eq ${draft}`];
+  const validIds = (employeeIds || []).map(odGuid).filter(Boolean);
+  if (validIds.length) filters.push('(' + validIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ') + ')');
   const { data } = await d365.getListOptional(PAYROLL, { select: BASE_SELECT, optionalSelect: OPT_SELECT, filter: filters.join(' and '), top: 2000 });
   let approved = 0, emailed = 0, emailFailed = 0, notified = 0, failed = 0;
   for (const payroll of data || []) {
@@ -273,8 +281,8 @@ payrollRouter.patch('/:id/unlock', requireRole('super_admin'), async (req, res, 
 // POST /lock-month  — bulk-lock every APPROVED/PAID row for a month (HR).
 payrollRouter.post('/lock-month', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
-    const { month, year } = req.body;
-    if (!month || !year) return res.status(400).json({ error: 'month and year are required.' });
+    const month = odInt(req.body.month), year = odInt(req.body.year);
+    if (month === null || year === null) return res.status(400).json({ error: 'A valid month and year are required.' });
     const processed = toValue('hr_payroll_status', 'processed');
     const paid = toValue('hr_payroll_status', 'paid');
     const { data } = await d365.getListOptional(PAYROLL, {

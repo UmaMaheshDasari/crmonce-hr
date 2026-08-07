@@ -9,7 +9,7 @@
     "test-d365": "node scripts/test-d365-connection.js",
     "setup": "node scripts/setup-d365-entities.js",
     "seed": "node scripts/seed.js",
-    "test": "node --test"
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.3",

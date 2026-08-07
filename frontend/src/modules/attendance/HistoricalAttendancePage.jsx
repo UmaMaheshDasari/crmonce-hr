@@ -19,7 +19,7 @@ export default function HistoricalAttendancePage() {
   const [dupWarn, setDupWarn] = useState(false);
   const [recent, setRecent] = useState([]);
 
-  const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500, status: 'active' }) });
+  const { data: empRes } = useQuery({ queryKey: ['employees-lite', 'active'], queryFn: () => employeeApi.list({ limit: 500, status: 'active' }) });
   const employees = empRes?.data?.data || empRes?.data || [];
   const empName = (id) => employees.find(e => e.hr_hremployeeid === id)?.hr_hremployee1 || 'Employee';
 

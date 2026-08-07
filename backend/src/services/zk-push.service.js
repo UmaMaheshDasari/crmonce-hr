@@ -137,8 +137,12 @@ class ZKPushService {
    */
   async syncToD365(record, deviceIp) {
     try {
+      // userId comes from the (unauthenticated) device payload — escape the string
+      // literal so a crafted value cannot tamper with the filter. The push port must
+      // also be firewalled to the device network (see deployment notes).
+      const safeUserId = String(record.userId ?? '').replace(/'/g, "''");
       const { data } = await d365.getList(d365.constructor.entities.employee, {
-        filter: `hr_etimecode eq '${record.userId}'`,
+        filter: `hr_etimecode eq '${safeUserId}'`,
         select: 'hr_hremployeeid,hr_hremployee1',
       });
 

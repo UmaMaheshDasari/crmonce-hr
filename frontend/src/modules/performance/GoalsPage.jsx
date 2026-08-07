@@ -127,7 +127,7 @@ function GoalModal({ goal, onClose }) {
 
   const { data: empData } = useQuery({
     queryKey: ['employees-all'],
-    queryFn: () => employeeApi.list({ limit: 200, status: 'active' }),
+    queryFn: () => employeeApi.list({ limit: 500, status: 'active' }),
   });
 
   const employees = empData?.data?.data || [];
@@ -600,7 +600,7 @@ export default function GoalsPage() {
   // Employee list for HR filter
   const { data: empData } = useQuery({
     queryKey: ['employees-all'],
-    queryFn: () => employeeApi.list({ limit: 200, status: 'active' }),
+    queryFn: () => employeeApi.list({ limit: 500, status: 'active' }),
     enabled: isHR,
   });
   const employees = empData?.data?.data || [];
