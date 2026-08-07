@@ -10,7 +10,7 @@ import {
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, ChevronDownIcon, PencilSquareIcon,
   BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
-  Squares2X2Icon, ArrowPathIcon, GiftIcon,
+  Squares2X2Icon, ArrowPathIcon, GiftIcon, XCircleIcon,
 } from '@heroicons/react/24/outline';
 
 // Grouped navigation. Standalone items have `to`; groups have `group` + `children`.
@@ -24,6 +24,7 @@ const NAV = [
     group: 'Employees', icon: UsersIcon, children: [
       { to: '/employees',       label: 'Employees',       icon: UsersIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/hr-verification', label: 'HR Verification', icon: ShieldCheckIcon, roles: ['super_admin', 'hr_manager'] },
+      { to: '/cancellation-requests', label: 'Cancellation Requests', icon: XCircleIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/celebrations',    label: 'Celebrations',    icon: GiftIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/documents',       label: 'Documents',       icon: DocumentTextIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/leave-opening-balance', label: 'Leave Opening Balance', icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
@@ -76,6 +77,7 @@ const LABEL_MAP = {
   '/profile':     'My Profile',
   '/employees':   'Employees',
   '/hr-verification': 'HR Verification',
+  '/cancellation-requests': 'Cancellation Requests',
   '/celebrations': 'Celebrations',
   '/attendance':  'Attendance',
   '/attendance-requests': 'Attendance Requests',

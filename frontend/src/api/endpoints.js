@@ -267,6 +267,20 @@ export const documentApi = {
   file: (id, download) => api.get(`/documents/${id}/file`, { params: download ? { download: 1 } : {}, responseType: 'blob' }),
 };
 
+// ── Shared Request Lifecycle (delete / resubmit / cancellation) ──────
+// One API for every request module — pass the module `type` (e.g. 'late_login',
+// 'leave', 'comp_off', 'attendance_correction', 'document').
+export const requestLifecycleApi = {
+  status: (type, id) => api.get(`/requests/${type}/${id}`),
+  audit: (type, id) => api.get(`/requests/${type}/${id}/audit`),
+  remove: (type, id) => api.delete(`/requests/${type}/${id}`),
+  resubmit: (type, id, edits) => api.post(`/requests/${type}/${id}/resubmit`, { edits }),
+  requestCancellation: (type, id, reason) => api.post(`/requests/${type}/${id}/cancellation`, { reason }),
+  cancellationManager: (type, id, action, remarks) => api.patch(`/requests/${type}/${id}/cancellation/manager`, { action, remarks }),
+  cancellationHr: (type, id, action, remarks) => api.patch(`/requests/${type}/${id}/cancellation/hr`, { action, remarks }),
+  cancellations: (params) => api.get('/requests/cancellations', { params }),
+};
+
 // ── Celebrations (Birthday / Marriage / Work Anniversary) ────────────
 export const celebrationsApi = {
   today: () => api.get('/celebrations/today'),

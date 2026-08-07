@@ -4,7 +4,8 @@ import { lateLoginApi, employeeApi, documentApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import { useDocumentViewer } from '../../components/DocumentViewer';
 import Button from '../../components/Button';
-import { PlusIcon, XMarkIcon, CheckIcon, PaperClipIcon, ArrowDownTrayIcon, NoSymbolIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, XMarkIcon, CheckIcon, PaperClipIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import RequestLifecycleActions from '../../components/RequestLifecycleActions';
 import { format, subDays } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -16,6 +17,14 @@ const STATUS = {
   cancelled: 'bg-gray-100 text-gray-500 border-gray-200',
 };
 const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—'; } catch { return d || '—'; } };
+// Map a Late Login row to the shared lifecycle canonical status.
+const canon = (r) => {
+  if (r.status === 'cancelled') return 'cancelled';
+  if (r.status === 'rejected') return 'rejected';
+  if (r.status === 'approved') return 'approved';
+  if (r.managerStatus === 'approved') return 'manager_approved';
+  return 'pending';
+};
 const todayStr = new Date().toISOString().slice(0, 10);
 const ATTACH_ACCEPT = '.pdf,.jpg,.jpeg,.png,.doc,.docx';
 
@@ -151,12 +160,6 @@ export default function LateLoginPage() {
     onSuccess: (_, v) => { toast.success(v.action === 'approved' ? 'Approved' : 'Rejected'); qc.invalidateQueries({ queryKey: ['late-login'] }); },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed'),
   });
-  const cancelMut = useMutation({
-    mutationFn: (id) => lateLoginApi.cancel(id),
-    onSuccess: () => { toast.success('Request cancelled'); qc.invalidateQueries({ queryKey: ['late-login'] }); },
-    onError: (e) => toast.error(e.response?.data?.error || 'Failed'),
-  });
-
   const doExport = async (fmtType) => {
     try {
       const res = await lateLoginApi.export({ ...params, format: fmtType });
@@ -252,8 +255,11 @@ export default function LateLoginPage() {
                           <button onClick={() => decide.mutate({ id: r.id, level: 'hr', action: 'rejected' })} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XMarkIcon className="w-3.5 h-3.5" /> Reject</button>
                         </>
                       )}
-                      {r.status === 'pending' && r.employeeId === user?.id && (
-                        <button onClick={() => cancelMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"><NoSymbolIcon className="w-3.5 h-3.5" /> Cancel</button>
+                      {r.employeeId === user?.id && (
+                        <RequestLifecycleActions
+                          type="late_login" id={r.id} status={canon(r)}
+                          invalidateKeys={[['late-login'], ['late-login-summary']]}
+                        />
                       )}
                     </div>
                   </td>

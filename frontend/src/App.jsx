@@ -25,6 +25,7 @@ import TaxDeclarationPage from './modules/payroll/TaxDeclarationPage';
 import PayrollSettingsPage from './modules/payroll/PayrollSettingsPage';
 import PTMasterPage from './modules/payroll/PTMasterPage';
 import CelebrationsPage from './modules/celebrations/CelebrationsPage';
+import CancellationRequestsPage from './modules/shared/CancellationRequestsPage';
 import SalaryStructurePage from './modules/payroll/SalaryStructurePage';
 import AdvanceSalaryPage from './modules/payroll/AdvanceSalaryPage';
 import PayrollDashboardPage from './modules/payroll/PayrollDashboardPage';
@@ -71,6 +72,7 @@ function AppRoutes() {
         <Route path="employees/:id/profile" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ProfilePage /></ProtectedRoute>} />
         <Route path="hr-verification" element={<ProtectedRoute roles={['super_admin','hr_manager']}><HRVerificationPage /></ProtectedRoute>} />
         <Route path="celebrations" element={<ProtectedRoute roles={['super_admin','hr_manager']}><CelebrationsPage /></ProtectedRoute>} />
+        <Route path="cancellation-requests" element={<ProtectedRoute roles={['super_admin','hr_manager']}><CancellationRequestsPage /></ProtectedRoute>} />
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="historical-attendance" element={<ProtectedRoute roles={['super_admin','hr_manager']}><HistoricalAttendancePage /></ProtectedRoute>} />
         <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
