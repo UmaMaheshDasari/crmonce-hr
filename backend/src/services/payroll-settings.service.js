@@ -196,12 +196,25 @@ async function getSettings() {
   const now = Date.now();
   if (cache && now - cacheAt < TTL) return cache;
   let row = {};
-  try {
-    // Value columns are optional → a not-yet-provisioned column degrades to the base
-    // read (id + name) instead of throwing, so the existing row is always found.
-    const { data } = await d365.getListOptional(ENTITY_SET, { select: BASE_SELECT, optionalSelect: `hr_settingsjson,${OPT_SELECT}`, top: 1, orderby: 'createdon asc' });
-    if (data && data[0]) row = data[0];
-  } catch (_) { /* table not provisioned — fall back to defaults */ }
+  // Resilient read: select id + name + the JSON blob + every value column. If a
+  // column isn't provisioned yet (e.g. a newly-added field), strip ONLY that column
+  // and retry — so we still get every EXISTING column AND the blob. (getListOptional
+  // is all-or-nothing: one missing column would drop it to base-only, losing every
+  // value AND the blob, which made getSettings return defaults — the read bug.)
+  let cols = ['hr_payrollsettingid', 'hr_name', 'hr_settingsjson', ...FIELDS.filter((f) => f !== 'hr_name')];
+  for (let i = 0; i <= cols.length; i++) {
+    try {
+      const { data } = await d365.getList(ENTITY_SET, { select: cols.join(','), top: 1, orderby: 'createdon asc' });
+      row = (data && data[0]) || {};
+      break;
+    } catch (err) {
+      if (d365._isMissingProperty?.(err)) {
+        const prop = d365._missingPropertyName?.(err);
+        if (prop && cols.includes(prop)) { cols = cols.filter((c) => c !== prop); continue; }   // drop only the missing column
+      }
+      break;   // table missing / other error → defaults (row stays {})
+    }
+  }
   // Priority: latest database column > JSON blob > defaults (a live column wins).
   cache = mergeSaved(row);
   cacheAt = now;

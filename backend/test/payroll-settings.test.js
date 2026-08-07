@@ -144,3 +144,17 @@ test('historical attendance: months-back default 6, configurable', () => {
   assert.strictEqual(svc.resolve(null).historicalAttendance.monthsBack, 6);
   assert.strictEqual(svc.resolve({ hr_histattendancemonths: '3' }).historicalAttendance.monthsBack, 3);
 });
+
+test('mergeSaved: live column wins over stale blob; blob fills a column NOT in the row (the real read-path scenario)', () => {
+  // Mirrors production: hr_pfemployeepercent column = 13.13 (latest), blob still says
+  // 12, and hr_histattendancemonths has NO column (dropped from the resilient read) so
+  // it must be filled from the blob.
+  const row = {
+    hr_payrollsettingid: 'row-1',
+    hr_pfemployeepercent: '13.13',   // latest DB column
+    hr_settingsjson: JSON.stringify({ hr_pfemployeepercent: '12', hr_histattendancemonths: '6' }),
+  };
+  const r = svc.resolve(svc.mergeSaved(row));
+  assert.strictEqual(r.pf.employeePercent, 13.13);              // column wins, not blob's 12
+  assert.strictEqual(r.historicalAttendance.monthsBack, 6);     // blob fills the missing column
+});

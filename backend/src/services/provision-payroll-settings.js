@@ -52,6 +52,7 @@ const COLUMNS = [
   str('hr_EarnedLeaveEnabled', 'Earned Leave Enabled', 10),
   str('hr_EarnedLeaves', 'Earned Leaves / Year', 10),
   str('hr_MaxBackdatedLeaveDays', 'Maximum Backdated Leave Days', 10),
+  str('hr_HistAttendanceMonths', 'Historical Attendance Months Back', 10),
   str('hr_GraceTime', 'Late Login Grace Time (minutes)', 10),
   str('hr_MaxLateLogins', 'Maximum Late Logins Per Month', 10),
   str('hr_LateLoginDaysBack', 'Late Login Maximum Backdated Days', 10),
@@ -103,7 +104,7 @@ async function createSchema(log) {
 // A cheap probe: does a core column exist on the (existing) table? If not, the
 // table was created without its columns — repair by adding them all.
 async function repairColumnsIfMissing(log) {
-  try { await d365.getList(ENTITY_SET, { select: 'hr_settingsjson,hr_pfemployeepercent', top: 1 }); return; }
+  try { await d365.getList(ENTITY_SET, { select: 'hr_settingsjson,hr_pfemployeepercent,hr_histattendancemonths', top: 1 }); return; }
   catch (e) {
     const m = e.response?.data?.error?.message || e.message;
     if (!/does not exist|Could not find a property|property named '|Invalid property/i.test(m)) return;   // some other error → leave it
