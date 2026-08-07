@@ -3,7 +3,7 @@ const express = require('express');
 const payrollRouter = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
-const { notifyPayrollProcessed, broadcast, notifyUser } = require('../../services/notification.service');
+const { notifyPayrollProcessed, broadcast, notifyUser, sendEmail } = require('../../services/notification.service');
 const { toValue, toLabel, labelsForList } = require('../../services/picklist');
 const { resolveDays } = require('../../services/leave-summary.util');
 const payrollDashboard = require('../../services/payroll-dashboard.service');
@@ -47,38 +47,81 @@ async function updateOpt(id, data) {
   catch (err) { if (!d365._isMissingProperty(err)) throw err; return d365.update(PAYROLL, id, stripOpt(data)); }
 }
 
-// ── Attendance facts for a month (best-effort; failure → assume full present, no LOP) ──
-async function attendanceFacts(empId, month, year) {
+/**
+ * Month facts for ONE employee, from APPROVED data only (attendance punches,
+ * approved leave, approved comp-off, PT master). Implements the leave priority and
+ * the LOP waterfall (spec §Leave):
+ *
+ *   working day → Holiday / Weekly-Off (excluded from Working Days) → Approved
+ *   Leave (paid) → Present / Half Day → uncovered Absent.
+ *
+ * An uncovered absent day is NEVER converted straight to LOP. It becomes LOP only
+ * after CL + SL + Earned + Comp Off balances are ALL exhausted; while balance is
+ * still available the day is flagged "Leave Not Applied" (a warning, no deduction).
+ * Pending requests never affect payroll (only approved leave is fetched).
+ */
+async function computeMonthFacts(empId, month, year, settings) {
   const from = `${year}-${pad2(month)}-01`;
   const lastDay = new Date(year, month, 0).getDate();
   const to = `${year}-${pad2(month)}-${pad2(lastDay)}`;
-  const workingDays = rangeCounts(from, to).working;
+  const rc = rangeCounts(from, to);
+  const workingDays = rc.working;
 
-  let presentDays = workingDays;   // assume present unless attendance says otherwise
-  let overtimeHours = 0;
+  // Present / Half Day from APPROVED attendance (working-day punches only).
+  let presentDays = 0, halfDays = 0, overtimeHours = 0, attendanceRows = 0;
   try {
     const { data } = await d365.getList(E.attendance, {
-      select: 'hr_date,hr_intime,_hr_hremployee_value',
+      select: 'hr_date,hr_intime,hr_status,hr_overtime,_hr_hremployee_value',
       filter: `_hr_hremployee_value eq '${empId}' and hr_date ge '${from}' and hr_date le '${to}'`,
       top: 400,
     });
-    const dates = new Set();
+    attendanceRows = (data || []).length;
+    const seen = new Set();
     for (const r of data || []) {
       const ds = String(r.hr_date || '').slice(0, 10);
-      if (r.hr_intime && ds && isWorkingDay(ds)) dates.add(ds);   // working-day punches only
+      if (!ds || !isWorkingDay(ds) || seen.has(ds)) continue;
+      seen.add(ds);
+      overtimeHours += Number(r.hr_overtime) || 0;
+      if (toLabel('hr_attendance_status', r.hr_status) === 'half_day') halfDays++;
+      else if (r.hr_intime) presentDays++;
     }
-    presentDays = Math.min(dates.size, workingDays);
-  } catch { /* keep assumed full present */ }
+  } catch { /* no attendance rows → flagged below */ }
 
-  // Leave Engine splits the month's approved leave into PAID (within the annual
-  // 18-day cap) vs LOP (beyond it). Excess paid-leave automatically falls into
-  // lopDays via the formula below. The engine never throws — on any failure it
-  // falls back to the legacy "all approved leave is paid" behaviour, so payroll
-  // is never blocked. (§2/§8 — paid leave exhausted → remaining days become LOP.)
-  const { paidLeaveDays } = await leaveEngine.splitMonthLeave(empId, { year, month });
+  // Approved leave split into paid (within the annual cap) vs LOP (beyond it).
+  const { paidLeaveDays, lopLeaveDays } = await leaveEngine.splitMonthLeave(empId, { year, month });
 
-  const lopDays = Math.max(0, workingDays - presentDays - paidLeaveDays);
-  return { workingDays, presentDays, absentDays: lopDays, lopDays, paidLeaveDays, overtimeHours, calendarDays: lastDay };
+  // Balances for the LOP waterfall (CL → SL → Earned → Comp Off), approved data only.
+  const bal = await leaveEngine.getBalance(empId, year).catch(() => null);
+  const earnedCfg = settings.earnedLeave || {};
+  const earnedRemaining = earnedCfg.enabled ? Math.max(0, (Number(earnedCfg.allocated) || 0) - (bal?.earned?.used || 0)) : 0;
+  const available = bal ? round2(bal.casual.remaining + bal.sick.remaining + earnedRemaining + bal.compOff.balance) : 0;
+
+  // Uncovered absence = working − present − ½·halfDay − paid approved leave.
+  const covered = presentDays + halfDays * 0.5 + paidLeaveDays;
+  const uncoveredAbsent = Math.max(0, round2(workingDays - covered));
+  // Waterfall: LOP only after balances are exhausted; else "Leave Not Applied".
+  const leaveNotAppliedDays = round2(Math.min(uncoveredAbsent, available));
+  const autoLopDays = round2(Math.max(0, uncoveredAbsent - available));
+  const lopDays = round2(lopLeaveDays + autoLopDays);
+  const payDays = Math.max(0, round2(workingDays - lopDays));
+
+  const warnings = [];
+  if (attendanceRows === 0) warnings.push({ code: 'attendance_missing', message: 'No attendance records exist for this month.' });
+  if (workingDays === 0) warnings.push({ code: 'working_days_missing', message: 'No working days are configured for this month.' });
+  if (leaveNotAppliedDays > 0) warnings.push({
+    code: 'leave_not_applied', days: leaveNotAppliedDays,
+    message: 'This employee has available leave balance but no approved leave request exists.',
+    balances: bal ? { casual: bal.casual.remaining, sick: bal.sick.remaining, earned: earnedRemaining, compOff: bal.compOff.balance } : null,
+  });
+
+  return {
+    workingDays, presentDays, halfDays, holidays: rc.holidays, weeklyOff: rc.weeklyOff,
+    approvedLeaveDays: round2(paidLeaveDays), compOffBalance: bal?.compOff?.balance || 0,
+    absentDays: uncoveredAbsent, leaveNotAppliedDays, lopDays, payDays,
+    overtimeHours, calendarDays: lastDay,
+    warnings,
+    snapshot: { workingDays, present: presentDays, halfDays, paidLeave: round2(paidLeaveDays), lopLeave: round2(lopLeaveDays), autoLop: autoLopDays, availableBalance: available },
+  };
 }
 
 // GET /  — list payroll (employees scoped to their own)
@@ -118,7 +161,7 @@ async function runGeneration({ month, year, employeeIds } = {}) {
     ? validIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ')
     : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
   const { data: employees } = await d365.getListOptional(E.employee, {
-    select: 'hr_hremployeeid,hr_hremployee1,hr_salary,hr_allowances,hr_deductions',
+    select: 'hr_hremployeeid,hr_hremployee1',   // NEVER read salary from Employee Master (spec §Salary Source)
     optionalSelect: 'hr_ptstate', filter,
   });
 
@@ -126,9 +169,11 @@ async function runGeneration({ month, year, employeeIds } = {}) {
   const settings = await payrollSettings.getResolved().catch(() => payrollSettings.resolve(null));
   const asOf = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;   // last day of the month
   const payrollDate = `${year}-${pad2(month)}-01`;   // the month PT slabs are resolved against
+  const ptConfigured = (await ptMaster.loadActiveSlabs().catch(() => [])).length > 0;
 
   const draft = toValue('hr_payroll_status', 'draft');
-  let created = 0, updated = 0, skipped = 0, locked = 0;
+  let created = 0, updated = 0, skipped = 0, locked = 0, noStructure = 0;
+  const warnings = [];   // per-employee payroll warnings (surfaced in the UI)
   {
     for (const emp of employees) {
       // Skip a locked or finalised month for this employee up front.
@@ -140,17 +185,18 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       if (row && row.hr_locked === 'true') { locked++; continue; }             // never regenerate locked months
       if (row && row.hr_status !== draft) { skipped++; continue; }             // don't overwrite approved/released
 
-      // ── Earnings: from the effective Salary Structure; fall back to the
-      //    Employee master (basic + lump allowances) when none exists yet. ──
-      const structure = await salaryStructure.getEffectiveStructure(d365, emp.hr_hremployeeid, asOf);
-      const earnings = structure
-        ? { basic: structure.basic, hra: structure.hra, special: structure.special, medical: structure.medical, conveyance: structure.conveyance, otherAllowance: structure.otherAllowance }
-        : { basic: emp.hr_salary || 0, otherAllowance: emp.hr_allowances || 0 };
-      const overrides = structure
-        ? { pfApplicable: structure.pfApplicable, pfAmount: structure.pfAmount, professionalTax: structure.professionalTax, incomeTax: structure.incomeTax, otherDeductions: structure.otherDeductions }
-        : { otherDeductions: emp.hr_deductions || 0 };
+      // ── Earnings + deductions come ONLY from the latest ACTIVE Salary Structure.
+      //    Employee-Master salary is never used; no structure → warn + skip. ──
+      const structure = await salaryStructure.getActiveStructure(d365, emp.hr_hremployeeid, asOf);
+      if (!structure) {
+        noStructure++;
+        warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'no_salary_structure', message: 'No active Salary Structure — payroll skipped (Employee-Master salary is never used).' });
+        continue;
+      }
+      const earnings = { basic: structure.basic, hra: structure.hra, special: structure.special, medical: structure.medical, conveyance: structure.conveyance, otherAllowance: structure.otherAllowance };
+      const overrides = { pfApplicable: structure.pfApplicable, pfAmount: structure.pfAmount, professionalTax: structure.professionalTax, incomeTax: structure.incomeTax, otherDeductions: structure.otherDeductions };
 
-      const att = await attendanceFacts(emp.hr_hremployeeid, month, year);
+      const att = await computeMonthFacts(emp.hr_hremployeeid, month, year, settings);
       const advanceRecovery = await advanceService.applyMonthlyRecovery(emp.hr_hremployeeid, { year, month });
 
       // Professional Tax from the MASTER (state + gross + month). The resolved
@@ -158,6 +204,10 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       // slabs change later.
       const baseGross = ['basic', 'hra', 'special', 'medical', 'conveyance', 'otherAllowance'].reduce((s, k) => s + (Number(earnings[k]) || 0), 0);
       const ptAmount = await ptMaster.getProfessionalTax(emp.hr_ptstate || settings.defaultPtState, baseGross, payrollDate);
+
+      // Collect this employee's warnings (attendance/leave/PT/working-days).
+      for (const w of att.warnings) warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, ...w });
+      if (!ptConfigured) warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'pt_missing', message: 'Professional Tax master has no slabs — using the built-in fallback slab.' });
 
       // The one engine: Gross − PF − PT − TDS − LOP − Advance − Other = Net.
       const c = computePayrollEngine({
@@ -173,15 +223,24 @@ async function runGeneration({ month, year, employeeIds } = {}) {
         hr_lop: c.lop, hr_advance: c.advance, hr_deductions: c.otherDeductions,
         hr_netpay: c.netSalary,
         hr_presentdays: att.presentDays, hr_absentdays: att.absentDays,
-        hr_workingdays: att.workingDays, hr_paydays: Math.max(0, att.workingDays - att.lopDays),
+        hr_workingdays: att.workingDays, hr_paydays: att.payDays,
         hr_status: draft, hr_locked: 'false', hr_processeddate: new Date().toISOString(),
       };
 
       if (row) { await updateOpt(row.hr_hrpayrollid, record); updated++; }
       else { await createOpt({ 'hr_hremployee@odata.bind': `/hr_hremployees(${emp.hr_hremployeeid})`, ...record }); created++; }
+
+      // Audit snapshot (spec §Audit): salary-structure version, attendance + leave
+      // snapshot, PT amount — captured immutably at generation time.
+      try {
+        activity.record({
+          category: 'Payroll', type: 'payroll_calculated', title: 'Payroll Calculated', name: emp.hr_hremployee1,
+          meta: `${emp.hr_hremployee1}: structure ${structure.id} (eff ${structure.effectiveFrom}) · WD ${att.workingDays} P ${att.presentDays} AL ${att.approvedLeaveDays} LOP ${att.lopDays} · PT ₹${c.professionalTax} · Net ₹${c.netSalary}`,
+        });
+      } catch { /* audit is best-effort */ }
     }
   }
-  return { created, updated, skipped, locked, count: created + updated };
+  return { created, updated, skipped, locked, noStructure, count: created + updated, warnings };
 }
 
 // POST /generate  — HTTP wrapper around runGeneration (HR).
@@ -191,11 +250,56 @@ async function generatePayroll(req, res, next) {
     const { employeeIds } = req.body;
     if (month === null || year === null || month < 1 || month > 12) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
     const r = await runGeneration({ month, year, employeeIds });
-    try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${r.created + r.updated} employees${r.locked ? `, ${r.locked} locked skipped` : ''}` }); } catch {}
+    try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${r.created + r.updated} employees${r.locked ? `, ${r.locked} locked skipped` : ''}${r.noStructure ? `, ${r.noStructure} without salary structure` : ''}` }); } catch {}
     broadcast('payroll:processed', { month: `${month}/${year}`, count: r.created + r.updated });
-    res.json({ message: `Payroll generated for ${r.created + r.updated} employees (${r.skipped} finalised, ${r.locked} locked skipped)`, ...r });
+    res.json({ message: `Payroll generated for ${r.created + r.updated} employees (${r.skipped} finalised, ${r.locked} locked skipped${r.noStructure ? `, ${r.noStructure} without salary structure` : ''})`, ...r });
   } catch (err) { next(err); }
 }
+
+// POST /validate — pre-flight checks WITHOUT writing anything (spec §Validation).
+// Returns readiness + the same warnings the generation would surface, so HR can
+// review "Leave Not Applied" / missing structure / attendance before generating.
+async function validateGeneration(req, res, next) {
+  try {
+    const month = odInt(req.body.month), year = odInt(req.body.year);
+    if (month === null || year === null || month < 1 || month > 12) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
+    const validIds = (req.body.employeeIds || []).map(odGuid).filter(Boolean);
+    const filter = validIds.length ? validIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ') : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
+    const { data: employees } = await d365.getListOptional(E.employee, { select: 'hr_hremployeeid,hr_hremployee1', optionalSelect: 'hr_ptstate', filter });
+    const settings = await payrollSettings.getResolved().catch(() => payrollSettings.resolve(null));
+    const asOf = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;
+    const ptConfigured = (await ptMaster.loadActiveSlabs().catch(() => [])).length > 0;
+
+    const warnings = [];
+    let ready = 0, blocked = 0, lockedCount = 0;
+    for (const emp of employees) {
+      const existing = await d365.getListOptional(PAYROLL, { select: 'hr_hrpayrollid', optionalSelect: 'hr_locked', filter: `_hr_hremployee_value eq '${emp.hr_hremployeeid}' and hr_month eq ${month} and hr_year eq ${year}`, top: 1 });
+      if (existing.data?.[0]?.hr_locked === 'true') { lockedCount++; continue; }
+      const structure = await salaryStructure.getActiveStructure(d365, emp.hr_hremployeeid, asOf);
+      if (!structure) { blocked++; warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'no_salary_structure', message: 'No active Salary Structure — this employee will be skipped.' }); continue; }
+      const att = await computeMonthFacts(emp.hr_hremployeeid, month, year, settings);
+      for (const w of att.warnings) warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, ...w });
+      ready++;
+    }
+    if (!ptConfigured) warnings.push({ code: 'pt_missing', message: 'Professional Tax master has no slabs — the built-in fallback slab will be used.' });
+    res.json({ month, year, ready, blocked, locked: lockedCount, checks: { salaryStructure: blocked === 0, professionalTax: ptConfigured }, warnings });
+  } catch (err) { next(err); }
+}
+payrollRouter.post('/validate', requireRole('super_admin', 'hr_manager'), validateGeneration);
+
+// POST /remind-leave — HR reminds an employee to apply leave for absent days that
+// have available balance but no approved request (the "Leave Not Applied" warning).
+payrollRouter.post('/remind-leave', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const employeeId = odGuid(req.body.employeeId);
+    if (!employeeId) return res.status(400).json({ error: 'A valid employeeId is required.' });
+    const emp = await d365.getByIdOptional(E.employee, employeeId, { select: 'hr_hremployee1,hr_email' });
+    const monthLabel = req.body.month ? `${req.body.month}/${req.body.year || ''}` : 'the current month';
+    try { notifyUser(employeeId, 'leave:reminder', { message: `Please apply leave for your absent days in ${monthLabel} — payroll is being processed.` }); } catch {}
+    if (emp?.hr_email) await sendEmail(emp.hr_email, 'Please apply for leave', `<p>Hi ${emp.hr_hremployee1 || ''},</p><p>Our records show absent days in ${monthLabel} without an approved leave request. Please apply for leave so your attendance and payroll reflect it correctly.</p><p>Regards,<br/>CRMONCE HR Team</p>`);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
 payrollRouter.post('/generate', requireRole('super_admin', 'hr_manager'), generatePayroll);
 payrollRouter.post('/process', requireRole('super_admin', 'hr_manager'), generatePayroll);   // backward-compat alias
 

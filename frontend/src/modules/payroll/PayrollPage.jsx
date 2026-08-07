@@ -1,13 +1,51 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { payrollApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
-import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon, CheckCircleIcon, LockClosedIcon, LockOpenIcon, EyeIcon } from '@heroicons/react/24/outline';
+import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon, CheckCircleIcon, LockClosedIcon, LockOpenIcon, EyeIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import PayslipView from './PayslipView';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const WARN_META = {
+  no_salary_structure: { label: 'No Salary Structure', tone: 'bg-red-50 border-red-200 text-red-700' },
+  attendance_missing: { label: 'Attendance Missing', tone: 'bg-amber-50 border-amber-200 text-amber-700' },
+  working_days_missing: { label: 'Working Days Missing', tone: 'bg-amber-50 border-amber-200 text-amber-700' },
+  leave_not_applied: { label: 'Leave Not Applied', tone: 'bg-orange-50 border-orange-200 text-orange-700' },
+  pt_missing: { label: 'Professional Tax Missing', tone: 'bg-amber-50 border-amber-200 text-amber-700' },
+};
+
+// One warning row. "Leave Not Applied" gets the Approve Leave / Ignore / Send Reminder actions.
+function WarningRow({ w, month, year, onIgnore }) {
+  const meta = WARN_META[w.code] || { label: w.code, tone: 'bg-gray-50 border-gray-200 text-gray-600' };
+  const remind = useMutation({
+    mutationFn: () => payrollApi.remindLeave({ employeeId: w.employeeId, month, year }),
+    onSuccess: () => toast.success('Reminder sent'),
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to send reminder'),
+  });
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 ${meta.tone}`}>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-wide">{meta.label}</p>
+          <p className="text-sm font-medium mt-0.5">{w.employeeName || 'All employees'}{w.days ? ` · ${w.days} day(s)` : ''}</p>
+          <p className="text-xs opacity-80 mt-0.5">{w.message}</p>
+          {w.balances && <p className="text-[11px] opacity-70 mt-0.5">CL {w.balances.casual} · SL {w.balances.sick} · EL {w.balances.earned} · CompOff {w.balances.compOff}</p>}
+        </div>
+        {w.code === 'leave_not_applied' && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Link to="/leave" className="px-2 py-1 text-xs font-semibold bg-white/70 rounded-lg hover:bg-white">Approve Leave</Link>
+            <button onClick={() => remind.mutate()} disabled={remind.isPending} className="px-2 py-1 text-xs font-semibold bg-white/70 rounded-lg hover:bg-white disabled:opacity-50">Send Reminder</button>
+            {onIgnore && <button onClick={onIgnore} className="px-2 py-1 text-xs font-semibold bg-white/70 rounded-lg hover:bg-white">Ignore &amp; Continue</button>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ProcessPayrollModal({ onClose }) {
   const qc = useQueryClient();
@@ -15,11 +53,20 @@ function ProcessPayrollModal({ onClose }) {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [confirmed, setConfirmed] = useState(false);
+  const [checks, setChecks] = useState(null);
+  const resetPeriod = () => { setConfirmed(false); setChecks(null); };
+
+  const validate = useMutation({
+    mutationFn: () => payrollApi.validate({ month, year }),
+    onSuccess: (res) => setChecks(res.data),
+    onError: (err) => toast.error(err.response?.data?.error || 'Validation failed'),
+  });
 
   const mutation = useMutation({
     mutationFn: () => payrollApi.generate({ month, year }),
     onSuccess: (res) => {
-      toast.success(res.data?.message || `Payroll generated for ${res.data.count} employees`);
+      const w = res.data?.warnings?.length || 0;
+      toast.success((res.data?.message || `Payroll generated for ${res.data.count} employees`) + (w ? ` · ${w} warning(s)` : ''));
       qc.invalidateQueries({ queryKey: ['payroll'] });
       onClose();
     },
@@ -50,13 +97,13 @@ function ProcessPayrollModal({ onClose }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">Month</label>
-              <select className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none" value={month} onChange={e => { setMonth(Number(e.target.value)); setConfirmed(false); }}>
+              <select className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none" value={month} onChange={e => { setMonth(Number(e.target.value)); resetPeriod(); }}>
                 {MONTHS.map((m, i) => <option key={m} value={i+1}>{m}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">Year</label>
-              <input type="number" className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={year} onChange={e => { setYear(Number(e.target.value)); setConfirmed(false); }} min={2020} max={2099} />
+              <input type="number" className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all" value={year} onChange={e => { setYear(Number(e.target.value)); resetPeriod(); }} min={2020} max={2099} />
             </div>
           </div>
 
@@ -66,6 +113,30 @@ function ProcessPayrollModal({ onClose }) {
               <CalendarIcon className="w-5 h-5 text-indigo-500" />
               <span className="text-sm font-bold text-indigo-900">{MONTHS[month-1]} {year}</span>
             </div>
+          </div>
+
+          {/* Pre-flight validation (spec §Validation / §Warnings) */}
+          <div>
+            <button onClick={() => validate.mutate()} disabled={validate.isPending}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl hover:bg-indigo-100 disabled:opacity-50 transition-colors">
+              <ShieldCheckIcon className="w-4 h-4" /> {validate.isPending ? 'Validating…' : 'Validate before generating'}
+            </button>
+            {checks && (
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+                  <span className="inline-flex items-center gap-1 font-semibold text-emerald-600"><CheckCircleIcon className="w-4 h-4" /> {checks.ready} ready</span>
+                  {checks.blocked > 0 && <span className="inline-flex items-center gap-1 font-semibold text-red-600"><XMarkIcon className="w-4 h-4" /> {checks.blocked} without structure</span>}
+                  {checks.locked > 0 && <span className="inline-flex items-center gap-1 font-semibold text-gray-500"><LockClosedIcon className="w-4 h-4" /> {checks.locked} locked</span>}
+                </div>
+                {checks.warnings?.length > 0 ? (
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {checks.warnings.map((w, i) => <WarningRow key={i} w={w} month={month} year={year} onIgnore={() => setConfirmed(true)} />)}
+                  </div>
+                ) : (
+                  <p className="flex items-center gap-2 text-sm text-emerald-600"><CheckCircleIcon className="w-4 h-4" /> No warnings — ready to generate.</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Confirmation step */}

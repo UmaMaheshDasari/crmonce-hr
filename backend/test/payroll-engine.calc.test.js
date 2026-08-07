@@ -84,9 +84,18 @@ test('Professional Tax follows the slab across brackets', () => {
   assert.strictEqual(at(20001), 200);    // > 20000
 });
 
-test('PF not applicable → 0', () => {
+test('PF not applicable (structure) → 0', () => {
   const r = computePayrollEngine({ earnings: EARN, settings: SETTINGS, overrides: { pfApplicable: false, pfAmount: 5000 }, attendance: { salaryWorkingDays: 26, lopDays: 0 } });
   assert.strictEqual(r.pf, 0);
+});
+
+test('PF disabled at SETTINGS level → 0 even with a fixed structure PF amount', () => {
+  const r = computePayrollEngine({
+    earnings: EARN, settings: { ...SETTINGS, pf: { applicable: false } },
+    overrides: { pfApplicable: true, pfAmount: 2500 }, attendance: { salaryWorkingDays: 26, lopDays: 0 },
+  });
+  assert.strictEqual(r.pf, 0);            // never deduct PF when disabled globally
+  assert.strictEqual(r.pfApplicable, false);
 });
 
 test('income tax as a percentage of gross when applicable', () => {

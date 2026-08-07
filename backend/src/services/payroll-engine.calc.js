@@ -62,12 +62,18 @@ function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, at
   const ptSet = settings.professionalTax || {};
   const itSet = settings.incomeTax || {};
 
-  const pfApplicable = overrides.pfApplicable === undefined ? true : !!overrides.pfApplicable;
+  // PF applies ONLY when it is Applicable = Yes at BOTH levels — the employee's
+  // salary structure AND the global Payroll Setting. If disabled at either level
+  // PF is 0 and is NEVER deducted (spec §PF), even if a fixed PF amount is set.
+  const structurePfApplicable = overrides.pfApplicable === undefined ? true : !!overrides.pfApplicable;
+  const settingsPfApplicable = pfSet.applicable !== false;
+  const pfApplicable = structurePfApplicable && settingsPfApplicable;
   let pf = 0;
   if (pfApplicable) {
-    if (round(overrides.pfAmount) > 0) pf = round(overrides.pfAmount);
-    else if (pfSet.applicable) {
-      const ceiling = round(pfSet.wageCeiling);
+    if (round(overrides.pfAmount) > 0) {
+      pf = round(overrides.pfAmount);                     // fixed PF from the salary structure
+    } else {
+      const ceiling = round(pfSet.wageCeiling);           // configured PF calculation: % of PF wage
       const pfWage = ceiling > 0 ? Math.min(e.basic, ceiling) : e.basic;
       pf = round(pfWage * (Number(pfSet.employeePercent) || 0) / 100);
     }
