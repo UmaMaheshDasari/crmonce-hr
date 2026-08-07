@@ -7,9 +7,12 @@ import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
 
 const d = (n) => `${Number(n || 0)}`;
+// Light date formatter (no extra dependency) → 'DD MMM YYYY'.
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtDate = (s) => { const p = String(s || '').slice(0, 10).split('-'); return p.length === 3 ? `${p[2]} ${MON[+p[1] - 1] || p[1]} ${p[0]}` : ''; };
 
-// One balance stat card with an optional usage bar.
-function BalanceCard({ label, value, sub, accent, pct }) {
+// One balance stat card with an optional usage bar + optional note line.
+function BalanceCard({ label, value, sub, note, accent, pct }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
       <div className="flex items-center justify-between">
@@ -18,6 +21,7 @@ function BalanceCard({ label, value, sub, accent, pct }) {
       </div>
       <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
       {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      {note && <p className="text-[11px] font-medium text-amber-600 mt-0.5">{note}</p>}
       {typeof pct === 'number' && (
         <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
           <div className={`h-full rounded-full ${accent}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
@@ -129,15 +133,19 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
 
   const cards = useMemo(() => {
     if (!b) return [];
-    const available = (b.paid?.remaining || 0) + (b.compOff?.balance || 0);
-    return [
-      { label: 'Paid Leave', value: d(b.paid?.remaining), sub: `${d(b.paid?.used)} used of ${d(b.paid?.entitled)}`, accent: 'bg-indigo-500', pct: ((Number(b.paid?.used) || 0) / (Number(b.paid?.entitled) || 1)) * 100 },
-      { label: 'Casual Leave', value: d(b.casual?.remaining), sub: `${d(b.casual?.used)} used of ${d(b.casual?.entitled)}`, accent: 'bg-sky-500', pct: ((Number(b.casual?.used) || 0) / (Number(b.casual?.entitled) || 1)) * 100 },
-      { label: 'Sick Leave', value: d(b.sick?.remaining), sub: `${d(b.sick?.used)} used of ${d(b.sick?.entitled)}`, accent: 'bg-rose-500', pct: ((Number(b.sick?.used) || 0) / (Number(b.sick?.entitled) || 1)) * 100 },
-      { label: 'Comp Off', value: d(b.compOff?.balance), sub: `${d(b.compOff?.used)} used of ${d(b.compOff?.earned)}`, accent: 'bg-emerald-500' },
-      { label: 'LOP (this year)', value: d(b.lop?.fromLeave), sub: 'unpaid leave days', accent: 'bg-amber-500' },
-      { label: 'Available Balance', value: d(available), sub: 'paid + comp-off', accent: 'bg-violet-500' },
+    const list = [
+      { label: 'Casual Leave', value: d(b.casual?.remaining), sub: `Allocated ${d(b.casual?.entitled)} · Used ${d(b.casual?.used)}`, accent: 'bg-sky-500', pct: ((Number(b.casual?.used) || 0) / (Number(b.casual?.entitled) || 1)) * 100 },
+      { label: 'Sick Leave', value: d(b.sick?.remaining), sub: `Allocated ${d(b.sick?.entitled)} · Used ${d(b.sick?.used)}`, accent: 'bg-rose-500', pct: ((Number(b.sick?.used) || 0) / (Number(b.sick?.entitled) || 1)) * 100 },
     ];
+    // Earned Leave — only when enabled in Payroll Settings.
+    if (b.earnedLeave?.enabled) {
+      list.push({ label: 'Earned Leave', value: d(b.earnedLeave?.remaining), sub: `Allocated ${d(b.earnedLeave?.allocated)} · Used ${d(b.earnedLeave?.used)}`, accent: 'bg-indigo-500', pct: ((Number(b.earnedLeave?.used) || 0) / (Number(b.earnedLeave?.allocated) || 1)) * 100 });
+    }
+    list.push(
+      { label: 'Comp Off', value: d(b.compOff?.balance), sub: `Earned ${d(b.compOff?.earned)} · Used ${d(b.compOff?.used)}`, note: b.compOff?.nextExpiry ? `Expires ${fmtDate(b.compOff.nextExpiry)}` : undefined, accent: 'bg-emerald-500' },
+      { label: 'LOP (this year)', value: d(b.lop?.fromLeave), sub: 'Used · unpaid leave days', accent: 'bg-amber-500' },
+    );
+    return list;
   }, [b]);
 
   return (
@@ -171,9 +179,9 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">{[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-white rounded-xl border border-gray-100 animate-pulse" />)}</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">{[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-white rounded-xl border border-gray-100 animate-pulse" />)}</div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {cards.map(c => <BalanceCard key={c.label} {...c} />)}
         </div>
       )}

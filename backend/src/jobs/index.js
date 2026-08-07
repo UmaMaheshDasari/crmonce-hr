@@ -33,6 +33,19 @@ function initJobs() {
     global.logger?.info('Payroll Automation scheduled (last day of month, 20:00 IST)');
   }
 
+  // Comp Off expiry — daily at 01:00 IST. Marks approved comp-off past its expiry
+  // date as Expired, reverses the balance, and notifies the employee (email + in-app).
+  {
+    const compOff = require('../services/comp-off.service');
+    cron.schedule('0 1 * * *', async () => {
+      try {
+        const n = await compOff.sweepExpired();
+        if (n) global.logger?.info(`[comp-off] daily expiry sweep: ${n} comp-off credit(s) expired`);
+      } catch (e) { global.logger?.error(`[comp-off] daily expiry sweep failed: ${e.message}`); }
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Comp Off expiry sweep scheduled (01:00 IST daily)');
+  }
+
   global.logger?.info('Cron jobs initialized');
 }
 

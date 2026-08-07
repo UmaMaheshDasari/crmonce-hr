@@ -13,6 +13,7 @@ const leaveEngine = require('../../services/leave-engine.service');
 const { ensureLeaveLedgerTable } = require('../../services/provision-leave-ledger');
 const payrollSettings = require('../../services/payroll-settings.service');
 const sickRun = require('../../services/sick-run.service');
+const compOffSvc = require('../../services/comp-off.service');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
 const audit = (payload) => { try { activity?.record?.(payload); } catch (_) {} };
 
@@ -366,6 +367,9 @@ router.post('/', async (req, res, next) => {
     // plus a flag; on approval a `comp_off_used` ledger entry reduces the balance.
     if (typeLabel === 'Comp Off') {
       const coDays = resolveDays(body.hr_days, fromDate, toDate);
+      // Expire this employee's overdue comp-off FIRST so expired credits can never be
+      // used to apply leave, then check the (now accurate) balance.
+      try { await compOffSvc.sweepExpired(req.user.id); } catch (_) {}
       try {
         const yr = Number(String(fromDate).slice(0, 4)) || new Date().getFullYear();
         const bal = await leaveEngine.getBalance(req.user.id, yr);
@@ -825,6 +829,16 @@ router.get('/balance', async (req, res, next) => {
     const employeeId = isHR ? (req.query.employeeId || req.user.id) : req.user.id;
     const year = Number(req.query.year) || new Date().getFullYear();
     const balance = await leaveEngine.getBalance(employeeId, year);
+    // Enrich for the dashboard: nearest comp-off expiry + Earned Leave (only surfaced
+    // when enabled in Payroll Settings). Best-effort — never breaks the balance read.
+    try {
+      balance.compOff = balance.compOff || {};
+      balance.compOff.nextExpiry = await compOffSvc.nextExpiry(employeeId);
+      const { earnedLeave } = await payrollSettings.getResolved();
+      const allocated = Number(earnedLeave?.allocated) || 0;
+      const used = Number(balance.earned?.used) || 0;
+      balance.earnedLeave = { enabled: !!earnedLeave?.enabled, allocated, used, remaining: Math.max(0, allocated - used) };
+    } catch (_) { /* enrichment optional */ }
     res.json(balance);
   } catch (err) { next(err); }
 });

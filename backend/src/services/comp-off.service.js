@@ -20,6 +20,13 @@ const EMP = d365.constructor.entities.employee;
 const audit = (p) => { try { activity?.record?.(p); } catch (_) {} };
 const notifyUser = (id, ev, p) => { try { notif?.notifyUser?.(id, ev, p); } catch (_) {} };
 const broadcast = (ev, p) => { try { notif?.broadcast?.(ev, p); } catch (_) {} };
+// Email an employee (best-effort; never throws / blocks the caller).
+async function emailEmployee(employeeId, subject, html) {
+  try {
+    const e = await d365.getById(EMP, employeeId, { select: 'hr_email,hr_hremployee1' });
+    if (e?.hr_email) await notif?.sendEmail?.(e.hr_email, subject, html);
+  } catch (err) { global.logger?.warn?.(`[comp-off] email skipped: ${err.message}`); }
+}
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (dateStr, days) => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + Number(days)); return d.toISOString().slice(0, 10); };
@@ -77,7 +84,7 @@ async function bridgeEarned(row, days) {
 
 async function policy() {
   try { return (await payrollSettings.getResolved()).compOff; }
-  catch { return { expiryDays: 90, autoEarn: true, employeeRaise: true }; }
+  catch { return { expiryDays: 45, autoEarn: true, employeeRaise: true }; }
 }
 
 // ── create / raise ───────────────────────────────────────────────────────────
@@ -156,7 +163,12 @@ async function expire(id) {
   if (row.hr_status !== 'approved') return shape(row);
   await reverseEarned(row);
   await d365.update(COMP, id, { hr_status: 'expired', hr_ledgerlinked: 'false' });
-  notifyUser(row.hr_employeeid, 'compoff:expired', { workedDate: row.hr_workeddate });
+  // Notify the employee — in-app + email (both best-effort).
+  notifyUser(row.hr_employeeid, 'compoff:expired', { workedDate: row.hr_workeddate, days: num(row.hr_days) });
+  const days = num(row.hr_days) || 1;
+  emailEmployee(row.hr_employeeid,
+    'Comp Off Expired',
+    `<p>Hi ${row.hr_employeename || ''},</p><p>Your Comp Off of <b>${days} day(s)</b> earned for ${row.hr_workeddate || 'a worked day'} has <b>expired</b> and has been removed from your balance.</p><p>Comp Off must be used within the validity period after the worked date.</p>`);
   audit({ category: 'Attendance', type: 'compoff_expired', title: 'Comp Off expired', name: row.hr_employeename, meta: { workedDate: row.hr_workeddate } });
   return shape({ ...row, hr_status: 'expired', hr_ledgerlinked: 'false' });
 }
@@ -173,13 +185,21 @@ async function edit(id, patch) {
   return shape(await getRaw(id));
 }
 
-/** Lazily expire any approved comp-off past its expiry date. Best-effort. */
-async function sweepExpired() {
+/**
+ * Expire any approved comp-off past its expiry date (mark Expired, reverse the
+ * balance, notify email + in-app). Runs daily via cron and is also called
+ * per-employee before a comp-off balance check so expired credits can never be
+ * used. Best-effort. Pass an employeeId to scope to one employee.
+ */
+async function sweepExpired(employeeId) {
   try {
     const t = today();
+    const filter = employeeId
+      ? `hr_status eq 'approved' and hr_employeeid eq '${String(employeeId).replace(/'/g, "''")}'`
+      : `hr_status eq 'approved'`;
     const { data } = await d365.getList(COMP, {
       select: 'hr_compoffid,hr_status,hr_expirydate,hr_ledgerlinked,hr_employeeid,hr_employeename,hr_days,hr_year,hr_workeddate',
-      filter: `hr_status eq 'approved'`, top: 2000,
+      filter, top: 5000,
     });
     let expired = 0;
     for (const r of data || []) {
@@ -187,6 +207,20 @@ async function sweepExpired() {
     }
     return expired;
   } catch { return 0; }
+}
+
+/** Nearest upcoming comp-off expiry date for an employee (approved, non-expired). */
+async function nextExpiry(employeeId) {
+  try {
+    const t = today();
+    const { data } = await d365.getList(COMP, {
+      select: 'hr_expirydate',
+      filter: `hr_status eq 'approved' and hr_employeeid eq '${String(employeeId).replace(/'/g, "''")}'`,
+      top: 5000,
+    });
+    const dates = (data || []).map(r => r.hr_expirydate).filter(d => d && d >= t).sort();
+    return dates[0] || null;
+  } catch { return null; }
 }
 
 // ── auto-detection (holiday / weekly-off work) ───────────────────────────────
@@ -256,4 +290,4 @@ async function scanRange({ from, to }) {
   return created;
 }
 
-module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, sweepExpired, maybeAutoCompOff, scanRange };
+module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange };

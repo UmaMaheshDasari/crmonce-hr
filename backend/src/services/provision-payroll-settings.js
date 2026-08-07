@@ -49,6 +49,8 @@ const COLUMNS = [
   str('hr_CompOffExpiryDays', 'Comp Off Expiry (days after worked date)', 10),
   str('hr_CompOffAutoEarn', 'Auto-earn Comp Off on Holiday / Weekly-off Work', 10),
   str('hr_CompOffEmployeeRaise', 'Allow Employees to Raise Comp Off', 10),
+  str('hr_EarnedLeaveEnabled', 'Earned Leave Enabled', 10),
+  str('hr_EarnedLeaves', 'Earned Leaves / Year', 10),
   memo('hr_DefaultAllowances', 'Default Allowances (JSON)'),
   memo('hr_DefaultDeductions', 'Default Deductions (JSON)'),
 ];

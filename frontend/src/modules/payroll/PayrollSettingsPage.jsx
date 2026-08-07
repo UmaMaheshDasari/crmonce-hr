@@ -65,7 +65,15 @@ const SECTIONS = [
     fields: [
       { name: 'hr_compoffautoearn', label: 'Auto-earn on Holiday / Weekly-off Work', toggle: true },
       { name: 'hr_compoffemployeeraise', label: 'Allow Employees to Raise Comp Off', toggle: true },
-      { name: 'hr_compoffexpirydays', label: 'Comp Off Expiry (days after worked date)', type: 'number', hint: '0 = never expires' },
+      { name: 'hr_compoffexpirydays', label: 'Comp Off Expiry (calendar days after worked date)', type: 'number', hint: '0 = never expires. Default 45. A daily job expires overdue comp-off and notifies the employee.' },
+    ],
+  },
+  {
+    title: 'Earned Leave',
+    hint: 'Optional. When enabled, an Earned Leave card (Allocated / Used / Remaining) appears on the Leave dashboard.',
+    fields: [
+      { name: 'hr_earnedleaveenabled', label: 'Earned Leave Enabled', toggle: true },
+      { name: 'hr_earnedleaves', label: 'Earned Leaves / Year (Allocated)', type: 'number' },
     ],
   },
 ];

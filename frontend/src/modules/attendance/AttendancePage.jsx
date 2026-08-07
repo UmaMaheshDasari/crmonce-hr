@@ -298,13 +298,7 @@ export default function AttendancePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Attendance</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {isAbsentView
-              ? `${absentees.length} absentee${absentees.length === 1 ? '' : 's'}`
-              : allView
-                ? `${records.length} marked${absentees.length ? ` · ${absentees.length} absent` : ''}`
-                : `${serverTotal} record${serverTotal === 1 ? '' : 's'}`}
-          </p>
+          <p className="text-sm text-gray-500 mt-1">Attendance Summary</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <Link to="/attendance-requests">
