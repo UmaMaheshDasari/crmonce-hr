@@ -39,14 +39,21 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
     const effectiveName = patch.hr_name !== undefined ? patch.hr_name : current.hr_name;
     if (!String(effectiveName || '').trim()) patch.hr_name = settings.PAYROLL_SETTINGS_DEFAULTS.hr_name;
 
+    // The JSON blob holds the COMPLETE merged config (new patch over the current
+    // saved values) — it is the persistence source of truth, so the save survives
+    // even if individual scalar columns can't be provisioned.
+    const merged = {};
+    for (const f of settings.FIELDS) merged[f] = patch[f] !== undefined ? patch[f] : current[f];
+    patch.hr_settingsjson = JSON.stringify(merged);
+
     // Resilient upsert: if the table OR a column isn't provisioned yet, provision
     // once and retry; if a column still can't be created (lock/perms), strip ONLY
-    // that column and keep going — so known settings always persist and a partially
-    // provisioned table never 400s the save.
+    // that column and keep going — the JSON blob still persists the whole config.
     let saved, id = current.hr_payrollsettingid;
     let body = id ? { ...patch } : { ...settings.PAYROLL_SETTINGS_DEFAULTS, ...patch };
     let provisioned = false;
-    for (let attempt = 0; attempt < 60; attempt++) {
+    const stripped = [];
+    for (let attempt = 0; attempt < 80; attempt++) {
       try {
         saved = id ? await d365.update(ENTITY, id, body) : await d365.create(ENTITY, body);
         break;
@@ -65,7 +72,7 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
         }
         if (propMissing) {
           const prop = d365._missingPropertyName(err);
-          if (prop && body[prop] !== undefined) { delete body[prop]; continue; }   // strip & retry
+          if (prop && body[prop] !== undefined) { stripped.push(prop); delete body[prop]; continue; }   // strip & retry
         }
         throw err;
       }
@@ -73,7 +80,21 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
 
     settings.invalidate();
     const raw = await settings.getSettings();
-    res.json({ ...raw, resolved: settings.resolve(raw) });
+
+    // Verify persistence: re-read and confirm an edited field actually round-tripped.
+    // If Dataverse could persist NEITHER the JSON blob NOR the scalar columns, the
+    // save silently lost data — surface it clearly instead of pretending success.
+    const sample = Object.keys(patch).find((f) => f !== 'hr_settingsjson' && f !== 'hr_name');
+    const blobPersisted = !stripped.includes('hr_settingsjson');
+    if (sample && !blobPersisted && String(raw[sample] ?? '') !== String(patch[sample] ?? '')) {
+      global.logger?.error?.(`[payroll-settings] NOT PERSISTED — stripped columns: ${stripped.join(', ')}`);
+      return res.status(500).json({
+        error: 'Payroll settings could not be saved to Dataverse — the settings columns are not provisioned and could not be created automatically. Verify the application user has the System Customizer role (permission to add columns), then try again.',
+        stripped,
+      });
+    }
+
+    res.json({ ...raw, resolved: settings.resolve(raw), _persisted: true, ...(stripped.length ? { _stripped: stripped } : {}) });
   } catch (err) {
     console.error('[payroll-settings/update] FAILED:', err.message);
     return res.status(err.status || 400).json({ error: err.message || 'Failed to update payroll settings' });

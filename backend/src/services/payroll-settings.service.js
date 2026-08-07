@@ -168,9 +168,14 @@ async function getSettings() {
   try {
     // Value columns are optional → a not-yet-provisioned column degrades to the base
     // read (id + name) instead of throwing, so the existing row is always found.
-    const { data } = await d365.getListOptional(ENTITY_SET, { select: BASE_SELECT, optionalSelect: OPT_SELECT, top: 1, orderby: 'createdon asc' });
+    const { data } = await d365.getListOptional(ENTITY_SET, { select: BASE_SELECT, optionalSelect: `hr_settingsjson,${OPT_SELECT}`, top: 1, orderby: 'createdon asc' });
     if (data && data[0]) row = data[0];
   } catch (_) { /* table not provisioned — fall back to defaults */ }
+  // The JSON blob is the source of truth (it persists the COMPLETE config even when
+  // individual scalar columns aren't provisioned). Overlay it onto the raw row.
+  if (row.hr_settingsjson) {
+    try { const blob = JSON.parse(row.hr_settingsjson); if (blob && typeof blob === 'object') for (const f of FIELDS) if (blob[f] !== undefined && blob[f] !== null) row[f] = blob[f]; } catch { /* corrupt blob → fall back to columns */ }
+  }
   cache = merge(row);
   cacheAt = now;
   return cache;

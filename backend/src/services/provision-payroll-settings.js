@@ -61,6 +61,9 @@ const COLUMNS = [
   str('hr_LateLoginPenalty', 'Late Login Payroll Penalty (future)', 10),
   memo('hr_DefaultAllowances', 'Default Allowances (JSON)'),
   memo('hr_DefaultDeductions', 'Default Deductions (JSON)'),
+  // The COMPLETE settings as one JSON blob — the persistence source of truth, so a
+  // save survives even if individual scalar columns aren't provisioned yet.
+  memo('hr_SettingsJson', 'Settings (JSON)'),
 ];
 
 const ENTITY_BODY = {
@@ -100,7 +103,7 @@ async function createSchema(log) {
 // A cheap probe: does a core column exist on the (existing) table? If not, the
 // table was created without its columns — repair by adding them all.
 async function repairColumnsIfMissing(log) {
-  try { await d365.getList(ENTITY_SET, { select: 'hr_pfemployeepercent', top: 1 }); return; }
+  try { await d365.getList(ENTITY_SET, { select: 'hr_settingsjson,hr_pfemployeepercent', top: 1 }); return; }
   catch (e) {
     const m = e.response?.data?.error?.message || e.message;
     if (!/does not exist|Could not find a property|property named '|Invalid property/i.test(m)) return;   // some other error → leave it
