@@ -129,3 +129,33 @@ test('categoryOfType maps leave-type labels', () => {
   assert.strictEqual(eng.categoryOfType('LOP'), 'lop');
   assert.strictEqual(eng.categoryOfType('Earned Leave'), 'other');
 });
+
+// ── Opening Balance = historical used; reduces AVAILABLE only, never LOP ──────
+test('opening balance reduces available (CL 12, opening 4 → 8; SL 6, opening 1 → 5)', () => {
+  const b = eng.computeBalance({ leaves: [], ledger: [], policy: POLICY, opening: { casualUsed: 4, sickUsed: 1 } });
+  assert.strictEqual(b.casual.used, 4);
+  assert.strictEqual(b.casual.remaining, 8);          // 12 − 4
+  assert.strictEqual(b.sick.used, 1);
+  assert.strictEqual(b.sick.remaining, 5);            // 6 − 1
+  assert.strictEqual(b.lop.fromLeave, 0);             // opening is NOT LOP
+});
+
+test('computeMonthSplit: opening alone (no leave this year) creates ZERO LOP', () => {
+  const s = eng.computeMonthSplit({ leaves: [], policy: POLICY, adjustments: {}, month: 5, opening: { casualUsed: 12, sickUsed: 6, lopUsed: 3 } });
+  assert.strictEqual(s.paidLeaveDays, 0);
+  assert.strictEqual(s.lopLeaveDays, 0);              // opening (incl. lopUsed) never becomes this month's LOP
+});
+
+test('computeMonthSplit: approved leave WITHIN the opening-reduced cap is fully paid (no LOP)', () => {
+  // opening used 5 → 13 of the 18 cap remain; 3 CL this month is well within it.
+  const s = eng.computeMonthSplit({ leaves: [leave('casual', 3, 5, '2026-05-06')], policy: POLICY, adjustments: {}, month: 5, opening: { casualUsed: 4, sickUsed: 1 } });
+  assert.strictEqual(s.paidLeaveDays, 3);
+  assert.strictEqual(s.lopLeaveDays, 0);
+});
+
+test('computeMonthSplit: LOP appears only when APPROVED leave exceeds the balance', () => {
+  // opening 5 → 13 remain; 15 approved CL this month → 13 paid, 2 LOP (legit approved LOP).
+  const s = eng.computeMonthSplit({ leaves: [leave('casual', 15, 5, '2026-05-02')], policy: POLICY, adjustments: {}, month: 5, opening: { casualUsed: 4, sickUsed: 1 } });
+  assert.strictEqual(s.paidLeaveDays, 13);
+  assert.strictEqual(s.lopLeaveDays, 2);
+});

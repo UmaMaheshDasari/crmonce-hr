@@ -87,10 +87,14 @@ async function computeMonthFacts(empId, month, year, settings) {
     }
   } catch { /* no attendance rows → flagged below */ }
 
-  // Approved leave split into paid (within the annual cap) vs LOP (beyond it).
+  // Approved leave split into PAID (covered by the available balance — which already
+  // has the Opening Balance folded into "used") vs LOP (approved leave that exceeded
+  // the balance / explicit LOP-type leave). The Opening Balance only lowers the
+  // available balance here; it is NEVER itself a leave or LOP day.
   const { paidLeaveDays, lopLeaveDays } = await leaveEngine.splitMonthLeave(empId, { year, month });
 
-  // Balances for the LOP waterfall (CL → SL → Earned → Comp Off), approved data only.
+  // Balances (CL → SL → Earned → Comp Off), approved data + opening only. Shown in
+  // the "Leave Not Applied" warning so HR can decide.
   const bal = await leaveEngine.getBalance(empId, year).catch(() => null);
   const earnedCfg = settings.earnedLeave || {};
   const earnedRemaining = earnedCfg.enabled ? Math.max(0, (Number(earnedCfg.allocated) || 0) - (bal?.earned?.used || 0)) : 0;
@@ -99,10 +103,14 @@ async function computeMonthFacts(empId, month, year, settings) {
   // Uncovered absence = working − present − ½·halfDay − paid approved leave.
   const covered = presentDays + halfDays * 0.5 + paidLeaveDays;
   const uncoveredAbsent = Math.max(0, round2(workingDays - covered));
-  // Waterfall: LOP only after balances are exhausted; else "Leave Not Applied".
-  const leaveNotAppliedDays = round2(Math.min(uncoveredAbsent, available));
-  const autoLopDays = round2(Math.max(0, uncoveredAbsent - available));
-  const lopDays = round2(lopLeaveDays + autoLopDays);
+
+  // LOP (salary deduction) is ONLY Approved LOP — explicit LOP-type leave plus the
+  // approved CL/SL that exceeded the available balance (both from the leave engine).
+  // An uncovered absence with NO approved leave is NEVER auto-converted to LOP; it is
+  // flagged "Leave Not Applied" for HR. Therefore Opening Balance can never cause a
+  // salary deduction: it only reduces the available balance in the warning below.
+  const lopDays = round2(lopLeaveDays);
+  const leaveNotAppliedDays = uncoveredAbsent;           // warning only — no deduction
   const payDays = Math.max(0, round2(workingDays - lopDays));
 
   const warnings = [];
@@ -110,7 +118,9 @@ async function computeMonthFacts(empId, month, year, settings) {
   if (workingDays === 0) warnings.push({ code: 'working_days_missing', message: 'No working days are configured for this month.' });
   if (leaveNotAppliedDays > 0) warnings.push({
     code: 'leave_not_applied', days: leaveNotAppliedDays,
-    message: 'This employee has available leave balance but no approved leave request exists.',
+    message: available >= leaveNotAppliedDays
+      ? 'This employee has available leave balance but no approved leave request exists.'
+      : 'This employee has absent days with no approved leave request — approve leave or record an approved LOP (payroll did NOT auto-deduct).',
     balances: bal ? { casual: bal.casual.remaining, sick: bal.sick.remaining, earned: earnedRemaining, compOff: bal.compOff.balance } : null,
   });
 
@@ -120,7 +130,7 @@ async function computeMonthFacts(empId, month, year, settings) {
     absentDays: uncoveredAbsent, leaveNotAppliedDays, lopDays, payDays,
     overtimeHours, calendarDays: lastDay,
     warnings,
-    snapshot: { workingDays, present: presentDays, halfDays, paidLeave: round2(paidLeaveDays), lopLeave: round2(lopLeaveDays), autoLop: autoLopDays, availableBalance: available },
+    snapshot: { workingDays, present: presentDays, halfDays, paidLeave: round2(paidLeaveDays), lopLeave: round2(lopLeaveDays), availableBalance: available, openingFoldedIntoBalance: true },
   };
 }
 
