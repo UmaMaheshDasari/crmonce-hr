@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
@@ -6,6 +7,112 @@ const settings = require('../../services/payroll-settings.service');
 const { ensurePayrollSettingsTable } = require('../../services/provision-payroll-settings');
 
 const ENTITY = settings.ENTITY_SET;   // 'hr_payrollsettings'
+const LOGICAL = 'hr_payrollsetting';
+
+// GET /_diagnose — PROVE the persistence root cause with live evidence (Super Admin).
+// Non-destructive: it writes a sentinel to one field, reads it back, then restores
+// the original value. Answers the 7 evidence questions with exact Dataverse output.
+router.get('/_diagnose', requireRole('super_admin'), async (req, res) => {
+  const ev = {};
+  const raw = (e) => e?.response?.data?.error || { message: e?.message };
+  let headers;
+  try { headers = await d365.getHeaders({ 'Content-Type': 'application/json' }); }
+  catch (e) { return res.status(500).json({ error: 'Could not acquire a Dataverse token', detail: raw(e) }); }
+
+  // (1) The actual table.
+  ev['1_table'] = { entitySet: ENTITY, entityLogicalName: LOGICAL, baseUrl: d365.baseUrl };
+
+  // (2) Which columns ACTUALLY exist — straight from Dataverse metadata.
+  let existing = [];
+  try {
+    const url = `${d365.baseUrl}/EntityDefinitions(LogicalName='${LOGICAL}')/Attributes?$select=LogicalName`;
+    const r = await axios.get(url, { headers });
+    existing = (r.data.value || []).map((a) => a.LogicalName);
+    ev['2_columns'] = {
+      totalColumns: existing.length,
+      hr_settingsjson_EXISTS: existing.includes('hr_settingsjson'),
+      hr_pfemployeepercent_EXISTS: existing.includes('hr_pfemployeepercent'),
+      hr_defaultallowances_EXISTS: existing.includes('hr_defaultallowances'),
+      missingExpectedColumns: settings.FIELDS.filter((f) => !existing.includes(f)),
+      allSettingsColumnsPresent: existing.filter((c) => c.startsWith('hr_')).sort(),
+    };
+  } catch (e) { ev['2_columns'] = { error: 'metadata query failed', detail: raw(e) }; }
+
+  // Read the RAW row (no cache, no blob overlay) using only columns that exist.
+  const want = ['hr_payrollsettingid', 'hr_name', 'hr_settingsjson', 'hr_pfemployeepercent', 'hr_ptamount', 'hr_defaultallowances'].filter((c) => existing.length === 0 || existing.includes(c));
+  async function readRaw() {
+    const url = `${d365.baseUrl}/${ENTITY}?$select=${want.join(',')}&$top=1&$orderby=createdon asc`;
+    const r = await axios.get(url, { headers });
+    return (r.data.value || [])[0] || null;
+  }
+  let before;
+  try { before = await readRaw(); ev['_rowBeforeTest'] = before; }
+  catch (e) { ev['_rowBeforeTest'] = { error: 'raw read failed', detail: raw(e) }; }
+
+  const id = before?.hr_payrollsettingid;
+  if (!id) { ev['3_4_5_6_writeTest'] = { skipped: 'no settings row exists yet to test against' }; ev['7_diagnosis'] = diagnose(ev); return res.json(ev); }
+
+  // (3)+(4) Attempt a PATCH on the field the user edits, capturing the EXACT result.
+  const probeField = 'hr_pfemployeepercent';
+  const original = before[probeField];
+  const sentinel = original === '13.13' ? '14.14' : '13.13';
+  const test = { field: probeField, originalValue: original ?? null, sentinelWritten: sentinel };
+  try {
+    const r = await axios.patch(`${d365.baseUrl}/${ENTITY}(${id})`, { [probeField]: sentinel }, { headers });
+    test.patchStatus = r.status;                       // 204 = success
+    test.patchSucceeded = true;
+  } catch (e) {
+    test.patchStatus = e.response?.status;
+    test.patchSucceeded = false;
+    test.patchDataverseError = raw(e);                 // the EXACT Dataverse error
+  }
+  ev['3_4_writeTest'] = test;
+
+  // (5) The record IMMEDIATELY after save (raw DB read).
+  try { ev['5_recordAfterSave_rawDB'] = await readRaw(); }
+  catch (e) { ev['5_recordAfterSave_rawDB'] = { error: raw(e) }; }
+
+  // (6) What a page refresh actually loads (the app's real GET path: getSettings()).
+  settings.invalidate();
+  try {
+    const s = await settings.getSettings();
+    ev['6_recordAfterRefresh_appGET'] = { [probeField]: s[probeField], hr_payrollsettingid: s.hr_payrollsettingid, source: s.hr_settingsjson ? 'blob+columns' : 'columns/defaults' };
+  } catch (e) { ev['6_recordAfterRefresh_appGET'] = { error: raw(e) }; }
+
+  // Did the sentinel actually persist?
+  const rawAfter = ev['5_recordAfterSave_rawDB'];
+  ev['_sentinelPersisted'] = !!rawAfter && String(rawAfter[probeField] ?? '') === sentinel;
+
+  // Restore the original value (best-effort; only if the column exists / write worked).
+  if (test.patchSucceeded) {
+    try { await axios.patch(`${d365.baseUrl}/${ENTITY}(${id})`, { [probeField]: original ?? '' }, { headers }); ev['_restored'] = true; }
+    catch (e) { ev['_restored'] = false; ev['_restoreError'] = raw(e); }
+  }
+  settings.invalidate();
+
+  ev['7_diagnosis'] = diagnose(ev);
+  res.json(ev);
+});
+
+function diagnose(ev) {
+  const cols = ev['2_columns'] || {};
+  if (cols.hr_pfemployeepercent_EXISTS === false) {
+    return `ROOT CAUSE = MISSING COLUMNS. The Dataverse table '${ENTITY}' does NOT have the settings columns (e.g. hr_pfemployeepercent). A save silently drops those fields, so after refresh the app shows defaults. Fix: grant the application user the System Customizer role so columns can be created (or rely on the hr_settingsjson blob if it exists). Responsible: provisioning (provision-payroll-settings.js) never created them — likely a permissions/lock issue.`;
+  }
+  const test = ev['3_4_writeTest'] || {};
+  if (test.patchSucceeded === false) {
+    return `ROOT CAUSE = WRITE REJECTED. The PATCH to '${ENTITY}' failed — see 3_4_writeTest.patchDataverseError for the exact reason. Responsible: the Dataverse write itself, not the app read path.`;
+  }
+  if (ev['_sentinelPersisted'] === false) {
+    return `ROOT CAUSE = WRITE NOT PERSISTED. PATCH returned success but the value did NOT change in the DB — investigate column type / plugin. Evidence in 5_recordAfterSave_rawDB.`;
+  }
+  const appGet = ev['6_recordAfterRefresh_appGET'] || {};
+  const rawAfter = ev['5_recordAfterSave_rawDB'] || {};
+  if (ev['_sentinelPersisted'] === true && String(appGet.hr_pfemployeepercent ?? '') !== String(rawAfter.hr_pfemployeepercent ?? '')) {
+    return `ROOT CAUSE = READ PATH. The DB HAS the saved value but the app GET (getSettings) returns a different value — a read/merge bug in payroll-settings.service.js getSettings(). Compare 5_recordAfterSave_rawDB vs 6_recordAfterRefresh_appGET.`;
+  }
+  return `NO PERSISTENCE FAULT DETECTED: columns exist, PATCH succeeded, the value persisted in the DB, and the app GET returned it. If the UI still shows old values the cause is client-side (form reset / caching) — capture the browser Network tab for GET /api/payroll/settings.`;
+}
 
 // GET /  — resolved payroll settings (HR/Admin). Returns BOTH the raw row (for the
 // settings form) and the typed `resolved` config (what the engine consumes).

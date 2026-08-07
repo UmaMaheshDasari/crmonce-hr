@@ -137,6 +137,12 @@ export default function PayrollSettingsPage() {
   const [allowances, setAllowances] = useState([]);
   const [deductions, setDeductions] = useState([]);
   const [listsDirty, setListsDirty] = useState(false);
+  const [diag, setDiag] = useState(null);
+  const diagnose = useMutation({
+    mutationFn: () => payrollSettingsApi.diagnose(),
+    onSuccess: (res) => setDiag(res.data),
+    onError: (err) => setDiag({ error: err.response?.data || err.message }),
+  });
 
   const { data, isLoading } = useQuery({ queryKey: ['payroll-settings'], queryFn: payrollSettingsApi.get });
   const settings = data?.data;
@@ -186,11 +192,26 @@ export default function PayrollSettingsPage() {
         <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
           <Cog6ToothIcon className="w-5 h-5 text-white" />
         </div>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Payroll Settings</h1>
           <p className="text-sm text-gray-400">Every payroll number comes from here — nothing is hardcoded. Configure PF, tax, LOP, overtime and leave policy.</p>
         </div>
+        <button type="button" onClick={() => diagnose.mutate()} disabled={diagnose.isPending}
+          className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50">
+          {diagnose.isPending ? 'Running…' : 'Run Diagnostics'}
+        </button>
       </div>
+
+      {diag && (
+        <div className="bg-gray-900 rounded-xl p-4 relative">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Persistence Diagnostics (evidence)</p>
+            <button onClick={() => setDiag(null)} className="text-gray-500 hover:text-gray-300 text-xs">Close ✕</button>
+          </div>
+          {diag['7_diagnosis'] && <p className="text-xs font-semibold text-amber-300 mb-2">{diag['7_diagnosis']}</p>}
+          <pre className="text-[11px] leading-relaxed text-emerald-300 overflow-auto max-h-96 whitespace-pre-wrap">{JSON.stringify(diag, null, 2)}</pre>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="bg-white rounded-xl border border-gray-100 p-16 text-center text-gray-400">Loading…</div>
