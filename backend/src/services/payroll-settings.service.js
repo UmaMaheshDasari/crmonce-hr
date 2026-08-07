@@ -78,6 +78,12 @@ const JSON_FIELDS = ['hr_defaultallowances', 'hr_defaultdeductions'];
 
 const FIELDS = Object.keys(PAYROLL_SETTINGS_DEFAULTS);
 const SELECT = ['hr_payrollsettingid', ...FIELDS].join(',');
+// Base = always-present columns; the value columns are OPTIONAL so a read still
+// returns the row (and its id) even before every column is provisioned — otherwise
+// a single missing column would throw, hide the row id, and force the save onto the
+// CREATE path (duplicate rows / never updates → "not saving").
+const BASE_SELECT = 'hr_payrollsettingid,hr_name';
+const OPT_SELECT = FIELDS.filter((f) => f !== 'hr_name').join(',');
 
 let cache = null;
 let cacheAt = 0;
@@ -160,9 +166,11 @@ async function getSettings() {
   if (cache && now - cacheAt < TTL) return cache;
   let row = {};
   try {
-    const { data } = await d365.getListOptional(ENTITY_SET, { select: SELECT, optionalSelect: '', top: 1, orderby: 'createdon asc' });
+    // Value columns are optional → a not-yet-provisioned column degrades to the base
+    // read (id + name) instead of throwing, so the existing row is always found.
+    const { data } = await d365.getListOptional(ENTITY_SET, { select: BASE_SELECT, optionalSelect: OPT_SELECT, top: 1, orderby: 'createdon asc' });
     if (data && data[0]) row = data[0];
-  } catch (_) { /* not provisioned — fall back to defaults */ }
+  } catch (_) { /* table not provisioned — fall back to defaults */ }
   cache = merge(row);
   cacheAt = now;
   return cache;
