@@ -59,7 +59,14 @@ export default function NotificationBell() {
 
   useEffect(() => {
     if (!user) return;
-    const socket = io(import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000');
+    // Socket origin: in production VITE_API_URL is '/api', so stripping '/api' yields
+    // '' (falsy) — fall back to the CURRENT origin (nginx proxies /socket.io to the
+    // backend), NEVER localhost. Only dev (no VITE_API_URL) uses localhost:5000.
+    const apiUrl = import.meta.env.VITE_API_URL;
+    const socketUrl = apiUrl
+      ? (apiUrl.replace(/\/api\/?$/, '') || window.location.origin)
+      : 'http://localhost:5000';
+    const socket = io(socketUrl);
     socketRef.current = socket;
     socket.emit('register', user.id);
 

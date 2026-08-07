@@ -63,7 +63,7 @@ function ChartCard({ title, subtitle, children, height = 240 }) {
   );
 }
 
-function StatCard({ label, value, accent }) {
+function StatCard({ icon: Icon, label, value, accent }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center gap-3">
       <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${accent.bg}`}><Icon className={`w-5 h-5 ${accent.text}`} /></div>

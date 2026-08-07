@@ -31,7 +31,7 @@ function useClock() {
   return now;
 }
 
-function Kpi({ label, value, sub, iconBg, iconColor }) {
+function Kpi({ icon: Icon, label, value, sub, iconBg, iconColor }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3.5 h-full">
       <div className={`w-11 h-11 rounded-lg grid place-items-center flex-shrink-0 ${iconBg}`}>
@@ -46,7 +46,7 @@ function Kpi({ label, value, sub, iconBg, iconColor }) {
   );
 }
 
-function ActionCard({ label, value, to, iconBg, iconColor }) {
+function ActionCard({ icon: Icon, label, value, to, iconBg, iconColor }) {
   return (
     <Link to={to} className="bg-white rounded-xl border border-gray-100 p-3 flex items-center gap-3 hover:shadow-sm hover:border-gray-200 transition-all">
       <div className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 ${iconBg}`}>
