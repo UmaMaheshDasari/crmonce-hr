@@ -47,6 +47,17 @@ const COLUMNS = [
   str('hr_Website', 'Website', 120),
   str('hr_LogoUrl', 'Logo Url', 500),
   str('hr_RequiredDocs', 'Required Documents', 500),
+  // Locale / calendar (company-configurable).
+  str('hr_Country', 'Country', 60),
+  str('hr_Currency', 'Currency Code', 10),
+  str('hr_CurrencySymbol', 'Currency Symbol', 8),
+  str('hr_Timezone', 'Time Zone', 60),
+  str('hr_DateFormat', 'Date Format', 30),
+  str('hr_TimeFormat', 'Time Format', 10),
+  str('hr_FinancialYearStart', 'Financial Year Start (MM-DD)', 5),
+  str('hr_LeaveYearStart', 'Leave Year Start (MM-DD)', 5),
+  // Full config as one JSON blob — persistence fallback if a scalar column can't be provisioned.
+  memo('hr_SettingsJson', 'Settings (JSON)'),
 ];
 
 const ENTITY_BODY = {
@@ -83,12 +94,35 @@ async function createSchema(log) {
   }
 }
 
+// Add every column (idempotent). Used to self-heal an existing table whose newer
+// columns were never provisioned (a cheap probe below triggers it).
+async function addColumns(log) {
+  for (const c of COLUMNS) {
+    try { await post(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes`, c); log?.info?.(`[provision] added company column ${c.SchemaName}`); }
+    catch (e) { const m = e.response?.data?.error?.message || e.message; if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); if (!isExists(m)) log?.warn?.(`[provision] company column ${c.SchemaName}: ${m}`); }
+  }
+}
+async function repairColumnsIfMissing(log) {
+  try { await d365.getList(ENTITY_SET, { select: 'hr_settingsjson,hr_currency', top: 1 }); return; }
+  catch (e) {
+    const m = e.response?.data?.error?.message || e.message;
+    if (!/does not exist|Could not find a property|property named '|Invalid property/i.test(m)) return;
+  }
+  log?.warn?.('[provision] hr_companysettings missing newer columns — repairing');
+  try { await addColumns(log); } catch (e) { log?.warn?.(`[provision] company column repair skipped: ${e.message}`); }
+}
+
 /** Insert the CRMONCE default row if the table has no rows yet. Idempotent. */
 async function seedDefaults(log) {
   try {
     const { data } = await d365.getList(ENTITY_SET, { select: 'hr_companysettingid', top: 1 });
     if (data && data.length) { log?.info?.('[provision] company settings already seeded'); return; }
-    await d365.create(ENTITY_SET, { ...COMPANY_DEFAULTS });
+    // Resilient: strip a not-yet-provisioned column so the seed row still saves.
+    let body = { ...COMPANY_DEFAULTS };
+    for (let i = 0; i < 60; i++) {
+      try { await d365.create(ENTITY_SET, body); break; }
+      catch (err) { if (d365._isMissingProperty?.(err)) { const p = d365._missingPropertyName?.(err); if (p && body[p] !== undefined) { delete body[p]; continue; } } throw err; }
+    }
     log?.info?.('[provision] seeded company settings — CRMONCE (OPC) PRIVATE LIMITED');
   } catch (e) { log?.warn?.(`[provision] company seed skipped: ${e.message}`); }
 }
@@ -101,6 +135,7 @@ async function ensureCompanyTable(log = console, opts = {}) {
   const { retry = false, retryIntervalMs = 30000, retryTimeoutMs = 10 * 60 * 1000 } = opts;
   try {
     await d365.getList(ENTITY_SET, { top: 1 });
+    await repairColumnsIfMissing(log);  // self-heal newer columns on a pre-existing table
     await seedDefaults(log);            // ensure a row exists even if the table pre-existed
     return { status: 'exists' };
   } catch (e) {

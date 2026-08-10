@@ -4,7 +4,11 @@ const d365 = require('../../services/d365.service');
 const { toValue, toLabel } = require('../../services/picklist');
 const { computeSession, punchesFromRecord } = require('../../services/attendance.util');
 const attnCfg = require('../../services/attendance.config');
-const { rangeCounts, effectiveWorking, approvedLeaveWorkingDays } = require('../../services/attendance-summary.util');
+const { rangeCounts, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday } = require('../../services/attendance-summary.util');
+// Absent-before-grace: same rule as the attendance page — an employee is not Absent
+// today until their own shift-start + grace passes. Resolve "now" (IST) + the grace.
+const istNowMinutes = () => { const [h, m] = String(require('../../services/time.util').istHHMM() || '00:00').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const resolveAbsentGrace = async () => { try { return (await require('../../services/payroll-settings.service').getResolved()).lateLogin.graceMinutes; } catch { return 15; } };
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
 const { earliestAttendanceDate } = require('../../services/attendance-range.util');
 const holidayService = require('../../services/holiday.service');
@@ -134,11 +138,26 @@ router.get('/summary', async (req, res, next) => {
     const approvedLeavesMonth = allLeaves.filter(l => l.hr_status === approvedVal);
     const leaveDaysMonth = approvedLeaveWorkingDays(approvedLeavesMonth, monthFrom, capTo);
 
-    // Absent = elapsed working days (from first punch) − attended − approved leave.
-    // Resilient first-date: true first punch, else earliest in-range record.
+    // Absent = ENUMERATED working dates with no record and no approved leave, from the
+    // employee's first attendance date (identical to the attendance page /stats), and
+    // TODAY is skipped until this employee's shift-start + grace has passed (spec §7).
     const clampDate = firstDate || earliestRec || null;
     const workingElapsed = effectiveWorking(monthFrom, capTo, clampDate);
-    const absentDays = Math.max(0, workingElapsed - attended - leaveDaysMonth);
+    const recordDates = new Set(monthRecs.map(r => String(r.hr_date).slice(0, 10)));
+    const leaveDates = new Set();
+    approvedLeavesMonth.forEach(l => {
+      const lf = String(l.hr_fromdate || '').slice(0, 10);
+      const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      if (!lf) return;
+      const s = lf < monthFrom ? monthFrom : lf; const e = lt > capTo ? capTo : lt;
+      if (e < s) return;
+      for (let dt = new Date(`${s}T00:00:00Z`); dt <= new Date(`${e}T00:00:00Z`); dt.setUTCDate(dt.getUTCDate() + 1)) {
+        const ds = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+        if (!attnCfg.holidays.includes(ds) && !attnCfg.weekOffDays.includes(dt.getUTCDay())) leaveDates.add(ds);
+      }
+    });
+    const todayPending = capTo >= today && !gracePassedToday(shift, await resolveAbsentGrace(), istNowMinutes());
+    const absentDays = absentDatesFor(monthFrom, capTo, clampDate, ds => recordDates.has(ds), ds => leaveDates.has(ds), { today, todayPending }).length;
     const workingDays = rangeCounts(monthFrom, monthEnd).working;   // full month (display)
 
     const month = {
@@ -287,11 +306,24 @@ router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (re
       if (c.lateArrivalMin > 0) byDate[ds].late.add(r._hr_hremployee_value);
     });
     const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const nowMin = istNowMinutes();
+    const graceMin = await resolveAbsentGrace();
     const overview = weekDates.map(d => {
       const isWorking = !attnCfg.weekOffDays.includes(new Date(`${d}T00:00:00Z`).getUTCDay()) && !attnCfg.holidays.includes(d);
       const present = byDate[d].present.size;
       const late = byDate[d].late.size;
-      const absent = (isWorking && d <= today) ? Math.max(0, totalEmployees - present - onLeaveByDate[d].size) : 0;
+      let absent = 0;
+      if (isWorking && d < today) {
+        absent = Math.max(0, totalEmployees - present - onLeaveByDate[d].size);
+      } else if (isWorking && d === today) {
+        // TODAY: count an employee Absent only once their OWN shift-start + grace has
+        // passed (spec §7/§8) — pre-grace employees are "Pending", not Absent.
+        for (const e of emps) {
+          const id = e.hr_hremployeeid;
+          if (byDate[d].present.has(id) || onLeaveByDate[d].has(id)) continue;
+          if (gracePassedToday(shiftByEmp.get(id), graceMin, nowMin)) absent++;
+        }
+      }
       return { day: dayName[new Date(`${d}T00:00:00Z`).getUTCDay()], date: d, present, absent, late };
     });
 

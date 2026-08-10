@@ -137,10 +137,7 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
       { label: 'Casual Leave', value: d(b.casual?.remaining), sub: `Allocated ${d(b.casual?.entitled)} · Used ${d(b.casual?.used)}`, accent: 'bg-sky-500', pct: ((Number(b.casual?.used) || 0) / (Number(b.casual?.entitled) || 1)) * 100 },
       { label: 'Sick Leave', value: d(b.sick?.remaining), sub: `Allocated ${d(b.sick?.entitled)} · Used ${d(b.sick?.used)}`, accent: 'bg-rose-500', pct: ((Number(b.sick?.used) || 0) / (Number(b.sick?.entitled) || 1)) * 100 },
     ];
-    // Earned Leave — only when enabled in Payroll Settings.
-    if (b.earnedLeave?.enabled) {
-      list.push({ label: 'Earned Leave', value: d(b.earnedLeave?.remaining), sub: `Allocated ${d(b.earnedLeave?.allocated)} · Used ${d(b.earnedLeave?.used)}`, accent: 'bg-indigo-500', pct: ((Number(b.earnedLeave?.used) || 0) / (Number(b.earnedLeave?.allocated) || 1)) * 100 });
-    }
+    // Earned Leave is removed from the employee UI — Comp Off replaces it.
     list.push(
       { label: 'Comp Off', value: d(b.compOff?.balance), sub: `Earned ${d(b.compOff?.earned)} · Used ${d(b.compOff?.used)}`, note: b.compOff?.nextExpiry ? `Expires ${fmtDate(b.compOff.nextExpiry)}` : undefined, accent: 'bg-emerald-500' },
       { label: 'LOP (this year)', value: d(b.lop?.fromLeave), sub: 'Used · unpaid leave days', accent: 'bg-amber-500' },

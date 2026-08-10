@@ -42,12 +42,20 @@ async function withDepartments(rows) {
   } catch { return rows; }
 }
 
-// GET /policy — grace time, monthly limit, backdated window, future/approval flags.
+// GET /policy — grace time, monthly limit, backdated window, future/approval flags,
+// and the requesting employee's SHIFT START (so the Expected Login Time defaults to
+// the employee's own shift, never a fixed 09:00 — spec §4).
 router.get('/policy', async (req, res, next) => {
   try {
     const { lateLogin: p } = await payrollSettings.getResolved();
-    res.json({ graceMinutes: p.graceMinutes, maxPerMonth: p.maxPerMonth, backdatedDays: p.backdatedDays, allowFuture: p.allowFuture, approvalRequired: p.approvalRequired, attendanceMode: p.attendanceMode });
-  } catch (_) { res.json({ graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present' }); }
+    let shiftStart = '';
+    try {
+      const emp = await d365.getByIdOptional(EMP, req.user.id, { select: 'hr_hremployeeid', optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime' });
+      const attnCfg = require('../../services/attendance.config');
+      shiftStart = attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime)?.start || '';
+    } catch (_) { /* shift optional */ }
+    res.json({ graceMinutes: p.graceMinutes, maxPerMonth: p.maxPerMonth, backdatedDays: p.backdatedDays, allowFuture: p.allowFuture, approvalRequired: p.approvalRequired, attendanceMode: p.attendanceMode, shiftStart });
+  } catch (_) { res.json({ graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present', shiftStart: '' }); }
 });
 
 // GET /summary — dashboard counts (self, or HR ?employeeId; ?month=YYYY-MM).

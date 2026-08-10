@@ -3,6 +3,7 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
 const company = require('../../services/company.service');
+const companyConfig = require('../../services/company-config.service');
 const { ensureCompanyTable } = require('../../services/provision-company');
 
 const ENTITY = company.ENTITY_SET;   // 'hr_companysettings'
@@ -12,6 +13,13 @@ router.get('/', async (req, res, next) => {
   try {
     res.json(await company.getCompany());
   } catch (err) { next(err); }
+});
+
+// GET /config — the ONE aggregated, typed configuration (company + policy) that the
+// whole app can read from a single place (spec §21).
+router.get('/config', async (req, res, next) => {
+  try { res.json(await companyConfig.getConfig()); }
+  catch (err) { next(err); }
 });
 
 // PATCH /  — update company details (Super Admin only). Upserts the single row.
@@ -28,26 +36,40 @@ router.patch('/', requireRole('super_admin'), async (req, res, next) => {
       return res.status(400).json({ error: 'Company name is required.' });
     }
 
-    let saved;
-    try {
-      if (current.hr_companysettingid) {
-        saved = await d365.update(ENTITY, current.hr_companysettingid, patch);
-      } else {
-        saved = await d365.create(ENTITY, { ...company.COMPANY_DEFAULTS, ...patch });
+    // The JSON blob holds the COMPLETE merged config (new patch over current) — the
+    // persistence fallback, so a save survives even if a scalar column isn't
+    // provisioned. (Same proven approach as payroll-settings.)
+    const merged = {};
+    for (const f of company.FIELDS) merged[f] = patch[f] !== undefined ? patch[f] : current[f];
+    patch.hr_settingsjson = JSON.stringify(merged);
+
+    // Resilient upsert: provision on a missing table/column, then strip ONLY the
+    // column that still can't be created (the blob still persists everything).
+    let saved, id = current.hr_companysettingid;
+    let body = id ? { ...patch } : { ...company.COMPANY_DEFAULTS, ...patch };
+    let provisioned = false;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      try {
+        saved = id ? await d365.update(ENTITY, id, body) : await d365.create(ENTITY, body);
+        break;
+      } catch (err) {
+        const tableMissing = /Resource not found for the segment|Could not find the segment/i.test(err.message);
+        const propMissing = d365._isMissingProperty(err);
+        if ((tableMissing || propMissing) && !provisioned) {
+          await ensureCompanyTable(global.logger || console);
+          provisioned = true;
+          company.invalidate();
+          const again = await company.getCompany();
+          id = again.hr_companysettingid;
+          body = id ? { ...patch } : { ...company.COMPANY_DEFAULTS, ...patch };
+          continue;
+        }
+        if (propMissing) { const prop = d365._missingPropertyName(err); if (prop && body[prop] !== undefined) { delete body[prop]; continue; } }
+        throw err;
       }
-    } catch (err) {
-      // Table not provisioned yet → create it, then retry the upsert once.
-      if (/Resource not found for the segment|does not exist|Could not find/i.test(err.message)) {
-        await ensureCompanyTable(global.logger || console);
-        const again = await company.getCompany();
-        company.invalidate();
-        saved = again.hr_companysettingid
-          ? await d365.update(ENTITY, again.hr_companysettingid, patch)
-          : await d365.create(ENTITY, { ...company.COMPANY_DEFAULTS, ...patch });
-      } else { throw err; }
     }
 
-    company.invalidate();
+    companyConfig.invalidateAll();   // §22 — reload ALL settings caches after a save
     res.json(await company.getCompany());
   } catch (err) {
     console.error('[company/update] FAILED:', err.message);

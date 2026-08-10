@@ -31,7 +31,9 @@ const ATTACH_ACCEPT = '.pdf,.jpg,.jpeg,.png,.doc,.docx';
 function SubmitModal({ isHR, employees, policy, onClose }) {
   const qc = useQueryClient();
   const { view, viewer } = useDocumentViewer();
-  const [f, setF] = useState({ employeeId: '', date: todayStr, expectedTime: '09:00', actualTime: '', reason: '', remarks: '' });
+  // Expected Login Time defaults to the EMPLOYEE'S SHIFT START (from policy), not a
+  // fixed 09:00 (spec §4). Falls back to 09:00 only if the shift is unknown.
+  const [f, setF] = useState({ employeeId: '', date: todayStr, expectedTime: (/^\d{1,2}:\d{2}$/.test(policy?.shiftStart || '') ? policy.shiftStart : '09:00'), actualTime: '', reason: '', remarks: '' });
   const [attachment, setAttachment] = useState(null);   // shaped uploaded doc
   const [uploading, setUploading] = useState(false);
 
