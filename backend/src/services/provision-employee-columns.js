@@ -48,7 +48,8 @@ const COLUMNS = [
   str('hr_MaritalStatus', 'Marital Status', 20),
   str('hr_MarriageDate', 'Marriage Date', 20),          // shown only when Marital Status = Married
   str('hr_Nationality', 'Nationality', 60),
-  str('hr_PhotoUrl', 'Photo', 500),
+  str('hr_PhotoUrl', 'Photo', 500),                 // HR/Admin DEFAULT employee photo
+  str('hr_PersonalPhotoUrl', 'Personal Photo', 500), // employee-chosen personal photo (wins over default)
   // Address
   memo('hr_PermAddress', 'Permanent Address'),
   str('hr_City', 'City', 60),

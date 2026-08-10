@@ -8,12 +8,74 @@ import toast from 'react-hot-toast';
 import {
   UserIcon, IdentificationIcon, MapPinIcon, BuildingLibraryIcon, PhoneIcon, DocumentTextIcon,
   CheckBadgeIcon, ClockIcon, PencilIcon, ArrowUpTrayIcon, CameraIcon,
-  CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon, LockClosedIcon,
+  CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon, LockClosedIcon, TrashIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, phoneRule } from '../../utils/validators';
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
 import DocumentsManager from '../../components/DocumentsManager';
+import { getEmployeeProfilePhoto } from '../../utils/employeePhoto';
+
+// Accepted profile-photo formats + max size (validated again on the server).
+const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
+const PHOTO_MAX = 5 * 1024 * 1024;   // 5 MB
+
+// Change / preview / save / remove modal. `kind` is 'personal' (employee self-
+// service) or 'default' (HR managing an employee). Preview is a local blob shown
+// BEFORE saving; nothing is persisted until Save.
+function ProfilePhotoModal({ onClose, currentSrc, initials, kind, canRemove, onSave, saving, onRemove, removing }) {
+  // Mounted only while open (see the caller), so local state starts fresh each time.
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState('');
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
+  const pick = (f) => {
+    if (!f) return;
+    if (!PHOTO_TYPES.includes(f.type)) { toast.error('Please choose an image (JPG, PNG, GIF, WEBP or BMP).'); return; }
+    if (f.size > PHOTO_MAX) { toast.error('Image must be 5 MB or smaller.'); return; }
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(f); setPreview(URL.createObjectURL(f));
+  };
+  const shown = preview || currentSrc;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="text-base font-bold text-gray-900">{kind === 'personal' ? 'Profile Photo' : 'Default Employee Photo'}</h2>
+          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all"><XMarkIcon className="w-5 h-5" /></button>
+        </div>
+        <div className="px-5 py-5 flex flex-col items-center gap-4">
+          <div className="w-32 h-32 rounded-full overflow-hidden ring-2 ring-blue-100 bg-blue-50 flex items-center justify-center">
+            {shown
+              ? <img src={shown} alt="Preview" className="w-full h-full object-cover" />
+              : <span className="text-3xl font-bold text-[#2563EB]">{initials}</span>}
+          </div>
+          {preview && <p className="text-xs text-gray-400">Preview — not saved yet</p>}
+          <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-[#2563EB] bg-blue-50 rounded-xl hover:bg-blue-100 cursor-pointer transition-colors">
+            <ArrowUpTrayIcon className="w-4 h-4" /> {currentSrc || preview ? 'Choose a different image' : 'Choose an image'}
+            <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" className="hidden" onChange={e => pick(e.target.files?.[0])} />
+          </label>
+          <p className="text-[11px] text-gray-400 text-center">JPG, PNG, GIF, WEBP or BMP · up to 5 MB.{kind === 'personal' ? ' Removing your personal photo falls back to the default photo.' : ''}</p>
+        </div>
+        <div className="flex items-center gap-2 px-5 py-4 border-t border-gray-100">
+          {canRemove && (
+            <button onClick={onRemove} disabled={removing || saving}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 rounded-xl disabled:opacity-50 transition-colors">
+              <TrashIcon className="w-4 h-4" /> {removing ? 'Removing…' : 'Remove'}
+            </button>
+          )}
+          <div className="flex-1" />
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Cancel</button>
+          <button onClick={() => file && onSave(file)} disabled={!file || saving || removing}
+            className="px-5 py-2 bg-[#2563EB] text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            {saving ? 'Saving…' : 'Save Photo'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const GENDERS = ['Male', 'Female'];
 const MARITAL = ['Single', 'Married'];
@@ -95,7 +157,7 @@ export default function ProfilePage() {
 
   const [tab, setTab] = useState('general');
   const [editing, setEditing] = useState(false);
-  const [, setUploading] = useState('');
+  const [photoOpen, setPhotoOpen] = useState(false);
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm();
   // Marital status drives the conditional Marriage Date field.
@@ -115,6 +177,10 @@ export default function ProfilePage() {
   const badge = VERIFY_BADGE[status] || VERIFY_BADGE.verified;
   const managerName = fmtVal(emp?._reportingmanager || emp?.['_hr_manager_value@OData.Community.Display.V1.FormattedValue']);
   const initials = emp?.hr_hremployee1?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const photoSrc = getEmployeeProfilePhoto(emp);
+  // Whether the photo THIS modal manages currently exists (so "Remove" only shows
+  // when there is something to remove). Personal on /profile, default under HR.
+  const canRemoveThisKind = paramId ? !!emp?.hr_photourl : !!emp?.hr_personalphotourl;
 
   const saveMutation = useMutation({
     mutationFn: (values) => employeeApi.update(id, values),
@@ -152,23 +218,40 @@ export default function ProfilePage() {
   };
   const cancelEdit = () => { reset(emp); setEditing(false); };
 
-  // Profile photo upload (sets hr_photourl). General documents are handled by the
-  // Documents tab (DocumentsManager).
-  const uploadDoc = async (docType, file) => {
-    if (!file) return;
-    setUploading(docType);
-    try {
+  // Profile photo. On the self-service /profile route this manages the employee's
+  // PERSONAL photo; on the HR /employees/:id/profile route it manages the DEFAULT
+  // photo. The two are SEPARATE columns — one never overwrites the other. Uploads
+  // reuse the existing /documents/upload infra, then set the resolved photo field.
+  const photoKind = paramId ? 'default' : 'personal';
+
+  const savePhoto = useMutation({
+    mutationFn: async (file) => {
       const fd = new FormData();
       fd.append('file', file); fd.append('employeeId', id);
-      fd.append('documentType', 'Photo'); fd.append('name', 'Photo');
-      const res = await documentApi.upload(fd);
-      const url = res.data?.fileUrl;
-      if (url) { await employeeApi.update(id, { hr_photourl: url }); qc.invalidateQueries({ queryKey: ['employee', id] }); }
-      qc.invalidateQueries({ queryKey: ['documents', id] });
-      toast.success('Photo updated');
-    } catch (err) { toast.error(err.response?.data?.error || 'Upload failed'); }
-    finally { setUploading(''); }
-  };
+      fd.append('documentType', 'Photo'); fd.append('name', 'Profile Photo');
+      const up = await documentApi.upload(fd);
+      const fileUrl = up.data?.fileUrl;
+      if (!fileUrl) throw new Error('Upload failed');
+      return employeeApi.setPhoto(id, photoKind, fileUrl);
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['employee', id] });   // refetch → new URL + version
+      qc.invalidateQueries({ queryKey: ['employees'] });            // list avatars
+      toast.success('Photo updated'); setPhotoOpen(false);
+    },
+    onError: (e) => toast.error(e.response?.data?.error || e.message || 'Upload failed'),
+  });
+
+  const removePhoto = useMutation({
+    mutationFn: () => employeeApi.removePhoto(id, photoKind),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['employee', id] });
+      qc.invalidateQueries({ queryKey: ['employees'] });
+      toast.success(photoKind === 'personal' ? 'Personal photo removed' : 'Default photo removed');
+      setPhotoOpen(false);
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Remove failed'),
+  });
 
   if (isLoading) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400">Loading profile…</div></div>;
   if (!emp) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-500">Profile not found.</div></div>;
@@ -207,13 +290,15 @@ export default function ProfilePage() {
               <div className="flex items-start gap-4">
                 <div className="relative flex-shrink-0 group">
                   <div className="w-20 h-20 rounded-full overflow-hidden ring-2 ring-blue-100 bg-blue-50 flex items-center justify-center">
-                    {emp.hr_photourl ? <img src={emp.hr_photourl} alt={emp.hr_hremployee1} className="w-full h-full object-cover" /> : <span className="text-xl font-bold text-[#2563EB]">{initials}</span>}
+                    {photoSrc
+                      ? <img src={photoSrc} alt={emp.hr_hremployee1} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} />
+                      : <span className="text-xl font-bold text-[#2563EB]">{initials}</span>}
                   </div>
                   {canEdit && (
-                    <label className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                    <button type="button" onClick={() => setPhotoOpen(true)} aria-label="Change photo"
+                      className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
                       <CameraIcon className="w-5 h-5 text-white" />
-                      <input type="file" accept=".jpg,.jpeg,.png" className="hidden" onChange={e => uploadDoc('Photo', e.target.files?.[0])} />
-                    </label>
+                    </button>
                   )}
                 </div>
                 <div className="min-w-0 pt-0.5">
@@ -345,6 +430,20 @@ export default function ProfilePage() {
           )}
         </div>
       </div>
+
+      {photoOpen && (
+        <ProfilePhotoModal
+          onClose={() => setPhotoOpen(false)}
+          currentSrc={photoSrc}
+          initials={initials}
+          kind={photoKind}
+          canRemove={canRemoveThisKind}
+          onSave={(file) => savePhoto.mutate(file)}
+          saving={savePhoto.isPending}
+          onRemove={() => removePhoto.mutate()}
+          removing={removePhoto.isPending}
+        />
+      )}
     </div>
   );
 }

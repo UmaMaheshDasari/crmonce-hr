@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import StatusBadge from '../../components/StatusBadge';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
+import { getEmployeeProfilePhoto } from '../../utils/employeePhoto';
 
 // Parse pasted eTime rows (TSV from Excel, or CSV): Employee ID, Name, Empcode,
 // [Department], [Designation], [Shift], [Status]. Order-flexible via a header row.
@@ -230,10 +231,10 @@ export default function EmployeeList() {
                   <tr key={emp.hr_hremployeeid} className="border-b border-gray-50 hover:bg-gray-50/50 transition-all duration-150 group">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 bg-gradient-to-br ${getAvatarGradient(emp.hr_hremployee1)} rounded-full flex items-center justify-center flex-shrink-0 shadow-sm`}>
-                          <span className="text-white text-xs font-bold">
-                            {emp.hr_hremployee1?.split(' ').map(n=>n[0]).join('').slice(0,2)}
-                          </span>
+                        <div className={`w-10 h-10 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0 shadow-sm bg-gradient-to-br ${getAvatarGradient(emp.hr_hremployee1)}`}>
+                          {getEmployeeProfilePhoto(emp)
+                            ? <img src={getEmployeeProfilePhoto(emp)} alt={emp.hr_hremployee1} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} />
+                            : <span className="text-white text-xs font-bold">{emp.hr_hremployee1?.split(' ').map(n=>n[0]).join('').slice(0,2)}</span>}
                         </div>
                         <div>
                           <p className="font-semibold text-gray-900 text-sm">{emp.hr_hremployee1}</p>

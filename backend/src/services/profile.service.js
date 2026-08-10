@@ -20,8 +20,10 @@ const EMP = d365.constructor.entities.employee;
 // Fields an employee may edit on their own profile (personal / identity / address /
 // emergency / bank + photo). NOTHING else is writable by a non-HR user.
 const SELF_EDITABLE = new Set([
-  // Personal
-  'hr_phone', 'hr_altphone', 'hr_personalemail', 'hr_dob', 'hr_gender', 'hr_maritalstatus', 'hr_marriagedate', 'hr_nationality', 'hr_bloodgroup', 'hr_photourl',
+  // Personal  (NOTE: profile photos are NOT here — they go through the dedicated,
+  //  ownership-checked PUT/DELETE /employees/:id/photo so an employee can only set
+  //  their PERSONAL photo and never the HR-managed DEFAULT photo.)
+  'hr_phone', 'hr_altphone', 'hr_personalemail', 'hr_dob', 'hr_gender', 'hr_maritalstatus', 'hr_marriagedate', 'hr_nationality', 'hr_bloodgroup',
   // Identity
   'hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_uan', 'hr_pfnumber',
   // Address

@@ -20,6 +20,9 @@ export const employeeApi = {
   departments: () => api.get('/employees/meta/departments'),
   verify: (id, data) => api.patch(`/employees/${id}/verify`, data),   // HR: approve/reject/request_changes
   profileAudit: (id) => api.get(`/employees/${id}/profile-audit`),
+  // Profile photo. kind: 'personal' (employee, self only) | 'default' (HR/Admin).
+  setPhoto: (id, kind, fileUrl) => api.put(`/employees/${id}/photo`, { kind, fileUrl }),
+  removePhoto: (id, kind) => api.delete(`/employees/${id}/photo`, { params: { kind } }),
   pendingVerifications: () => api.get('/employees/verifications/pending'),
   backfillCodes: () => api.post('/employees/meta/backfill-codes'),
   syncEtime: (employees) => api.post('/employees/meta/sync-etime', { employees }),

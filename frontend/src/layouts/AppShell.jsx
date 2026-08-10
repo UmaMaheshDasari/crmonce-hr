@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
-import { companyApi } from '../api/endpoints';
+import { companyApi, employeeApi } from '../api/endpoints';
 import NotificationBell from '../components/NotificationBell';
+import { getEmployeeProfilePhoto } from '../utils/employeePhoto';
 import {
   HomeIcon, UsersIcon, ClockIcon, CurrencyDollarIcon,
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
@@ -200,6 +201,11 @@ export default function AppShell() {
   // Company identity comes from Company Settings — never hardcoded.
   const { data: companyRes } = useQuery({ queryKey: ['company'], queryFn: companyApi.get, staleTime: 600000 });
   const company = companyRes?.data;
+
+  // The signed-in user's OWN avatar (same query key as ProfilePage, so it updates
+  // the moment they change their photo). Resolved via the shared resolver.
+  const { data: meRes } = useQuery({ queryKey: ['employee', user?.id], queryFn: () => employeeApi.get(user.id), enabled: !!user?.id, staleTime: 300000 });
+  const myPhoto = getEmployeeProfilePhoto(meRes?.data);
   const companyName = company?.hr_name || 'CRMONCE (OPC) PRIVATE LIMITED';
   const companyLogo = company?.hr_logourl || '/crmonce-logo.png';
 
@@ -301,8 +307,10 @@ export default function AppShell() {
       {/* User profile + sign out */}
       <div className="flex-shrink-0 border-t border-white/[0.06] px-3 py-3 space-y-1">
         <div className={`flex items-center rounded-lg ${isCollapsed ? 'justify-center px-0 py-1' : 'gap-3 px-2 py-1.5'}`} title={isCollapsed ? `${user?.name} · ${user?.role?.replace('_', ' ')}` : undefined}>
-          <div className="w-10 h-10 flex-shrink-0 bg-gradient-to-br from-[#E84C88] to-[#D81B60] rounded-full flex items-center justify-center" style={{ boxShadow: '0 4px 12px rgba(232, 76, 136, 0.25)' }}>
-            <span className="text-white text-xs font-bold">{initials}</span>
+          <div className="w-10 h-10 flex-shrink-0 bg-gradient-to-br from-[#E84C88] to-[#D81B60] rounded-full flex items-center justify-center overflow-hidden" style={{ boxShadow: '0 4px 12px rgba(232, 76, 136, 0.25)' }}>
+            {myPhoto
+              ? <img src={myPhoto} alt={user?.name} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} />
+              : <span className="text-white text-xs font-bold">{initials}</span>}
           </div>
           {!isCollapsed && (
             <div className="min-w-0">
@@ -362,10 +370,10 @@ export default function AppShell() {
           {/* Right side */}
           <NotificationBell />
           <div className="w-px h-6 bg-gray-200" />
-          <div className="w-8 h-8 bg-gradient-to-br from-[#E84C88] to-[#D81B60] rounded-full flex items-center justify-center cursor-pointer shadow-sm">
-            <span className="text-white text-xs font-semibold">
-              {user?.name?.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}
-            </span>
+          <div className="w-8 h-8 bg-gradient-to-br from-[#E84C88] to-[#D81B60] rounded-full flex items-center justify-center cursor-pointer shadow-sm overflow-hidden">
+            {myPhoto
+              ? <img src={myPhoto} alt={user?.name} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} />
+              : <span className="text-white text-xs font-semibold">{user?.name?.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</span>}
           </div>
         </header>
 

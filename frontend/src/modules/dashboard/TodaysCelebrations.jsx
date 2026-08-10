@@ -1,15 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { celebrationsApi } from '../../api/endpoints';
+import { getEmployeeProfilePhoto, employeeInitials as initials } from '../../utils/employeePhoto';
 
 // Privacy: shows ONLY photo, name, employee id, department, designation — never the
 // underlying Date of Birth / Marriage Date (the API doesn't return them).
-const initials = (n) => String(n || '').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase();
 
 function Person({ p, accent }) {
+  const photo = getEmployeeProfilePhoto(p);
   return (
     <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-3 py-2.5">
       <div className={`w-10 h-10 rounded-full overflow-hidden flex-shrink-0 grid place-items-center ${accent.bg} ${accent.text} font-bold text-sm`}>
-        {p.photo ? <img src={p.photo} alt={p.name} className="w-full h-full object-cover" /> : initials(p.name)}
+        {photo ? <img src={photo} alt={p.name} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} /> : initials(p.name)}
       </div>
       <div className="min-w-0">
         <p className="text-sm font-semibold text-gray-900 truncate">{p.name}

@@ -10,10 +10,9 @@ import { StarIcon as StarSolid } from '@heroicons/react/24/solid';
 import { useAuth } from '../../context/AuthContext';
 import { fmtVal, fmtDate } from '../../utils/format';
 import toast from 'react-hot-toast';
+import { getEmployeeProfilePhoto } from '../../utils/employeePhoto';
 
 // ── Constants ───────────────────────────────────────────────────
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
-const photoUrl = (u) => (u ? (u.startsWith('http') ? u : API_BASE + u) : '');
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
 const YEARS = ['2024-25', '2025-26', '2026-27', '2027-28'];
 const STATUSES = ['not_started', 'in_progress', 'completed', 'exceeded', 'missed'];
@@ -467,7 +466,7 @@ function GoalCard({ goal, canEdit, canDelete, canReview, onUpdateProgress, onRev
         {/* Assigned To */}
         <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5 mb-3">
           <div className="w-9 h-9 rounded-full overflow-hidden bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-            {emp.photo ? <img src={photoUrl(emp.photo)} alt={empName} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} /> : initials}
+            {getEmployeeProfilePhoto(emp) ? <img src={getEmployeeProfilePhoto(emp)} alt={empName} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} /> : initials}
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Assigned To</p>

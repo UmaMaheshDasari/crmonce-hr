@@ -16,7 +16,7 @@ const ENTITY = d365.constructor.entities.employee;
 // ESS columns (provisioned by provision-employee-columns.js). Selected as OPTIONAL
 // so the module keeps working before the columns exist.
 const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_uan,hr_pfnumber,hr_bloodgroup';
-const PERSONAL_FIELDS = 'hr_altphone,hr_personalemail,hr_dob,hr_gender,hr_maritalstatus,hr_marriagedate,hr_nationality,hr_photourl';
+const PERSONAL_FIELDS = 'hr_altphone,hr_personalemail,hr_dob,hr_gender,hr_maritalstatus,hr_marriagedate,hr_nationality,hr_photourl,hr_personalphotourl';
 const ADDRESS_FIELDS = 'hr_permaddress,hr_city,hr_state,hr_country,hr_pincode';
 const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
 const VERIFY_FIELDS = 'hr_verifystatus,hr_verifiedby,hr_verifieddate,hr_verifynote';
@@ -26,6 +26,25 @@ const MASTER_FIELDS = 'hr_employeeid,hr_employeecode,hr_confirmationdate,hr_reli
 // The business Employee ID (EMP1039) with graceful fallbacks. hr_etimecode is the
 // device Empcode (40) — used only as a last resort so nothing renders blank.
 const employeeIdOf = (e) => e.hr_employeeid || e.hr_employeecode || e.hr_etimecode || '';
+
+// ── Profile photo ─────────────────────────────────────────────────────────────
+// TWO separate values so one never overwrites the other:
+//   hr_photourl          → HR/Admin DEFAULT employee photo
+//   hr_personalphotourl  → the employee's own PERSONAL photo (wins when present)
+// ONE resolver, used here and mirrored on the frontend (getEmployeeProfilePhoto):
+//   personal  →  default  →  '' (caller shows initials/avatar)
+const resolvePhoto = (e) => (e && (e.hr_personalphotourl || e.hr_photourl)) || '';
+const PHOTO_FIELD = { personal: 'hr_personalphotourl', default: 'hr_photourl' };
+const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+// Accept ONLY an image produced by our own /documents/upload (/uploads/<file>) or an
+// absolute http(s) image URL. Returns '' to clear, the value to set, or null=invalid.
+function validPhotoUrl(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  if (!/^(\/uploads\/[A-Za-z0-9._-]+|https?:\/\/[^\s'"<>]+)$/.test(s)) return null;
+  const ext = require('path').extname(s.split('?')[0]).toLowerCase();
+  return IMAGE_EXT.has(ext) ? s : null;   // non-image files can never become a photo
+}
 const ESS_OPTIONAL_SELECT = [MASTER_FIELDS, IDENTITY_FIELDS, PERSONAL_FIELDS, ADDRESS_FIELDS, EMERGENCY_FIELDS, VERIFY_FIELDS, BANK_FIELDS].join(',');
 // Every optional column that may not exist yet — stripped on a missing-property
 // error so a not-yet-provisioned field never blocks create/edit.
@@ -112,14 +131,14 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     // empty the whole list). Defaults are then applied below.
     const result = await d365.getListOptional(ENTITY, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,_hr_manager_value',
-      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeeid,hr_employeecode,hr_etimecode',
+      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeeid,hr_employeecode,hr_etimecode,hr_photourl,hr_personalphotourl,modifiedon',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_hremployee1 asc',
       top: pageNum * lim,
     });
     const pageData = (result.data || []).slice((pageNum - 1) * lim);
     pageData.forEach(withShiftDefaults);
-    pageData.forEach(e => { e._employeeid = employeeIdOf(e); e._empcode = e.hr_etimecode || ''; });
+    pageData.forEach(e => { e._employeeid = employeeIdOf(e); e._empcode = e.hr_etimecode || ''; e._photo = resolvePhoto(e); });
     res.json(labelsForList(ENTITY, { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
@@ -133,7 +152,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     }
     const emp = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,_hr_manager_value',
-      optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,${ESS_OPTIONAL_SELECT}`,
+      optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,modifiedon,${ESS_OPTIONAL_SELECT}`,
     });
     const out = labelsForEntity(ENTITY, withShiftDefaults(emp));
     // Completion counts the company's REQUIRED documents — and only when VERIFIED.
@@ -150,6 +169,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     out._verifystatus = out.hr_verifystatus || 'verified';     // default (no pending changes)
     out._employeeid = employeeIdOf(out);        // EMP1039 (business ID) — never the GUID
     out._empcode = out.hr_etimecode || '';      // device Empcode (40) — HR/internal only
+    out._photo = resolvePhoto(out);             // resolved profile photo (personal → default → '')
     out._reportingmanager = out[MGR_FMT] || DEFAULT_MANAGER_NAME;   // never blank
     res.json(out);
   } catch (err) { next(err); }
@@ -372,6 +392,65 @@ router.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (req
   }
 });
 
+// Read back both photo fields after a write (best-effort) so the response carries
+// the authoritative resolved photo + a version (modifiedon) for cache-busting.
+async function readPhotoState(id, fallback = {}) {
+  try {
+    return await d365.getByIdOptional(ENTITY, id, {
+      select: 'hr_hremployeeid', optionalSelect: 'hr_photourl,hr_personalphotourl,modifiedon',
+    });
+  } catch { return fallback; }
+}
+const photoResponse = (kind, e) => ({
+  ok: true, kind,
+  hr_photourl: e.hr_photourl || '',
+  hr_personalphotourl: e.hr_personalphotourl || '',
+  _photo: resolvePhoto(e),
+  modifiedon: e.modifiedon,
+});
+
+// PUT /api/employees/:id/photo  { kind:'personal'|'default', fileUrl }
+// SECURITY (enforced here, not just in the UI):
+//   • kind='personal' → ONLY the employee themselves (req.user.id === :id).
+//   • kind='default'  → ONLY HR/Admin.
+// Setting one NEVER touches the other (separate columns). 403 on any mismatch.
+router.put('/:id/photo', async (req, res, next) => {
+  try {
+    const kind = req.body?.kind === 'default' ? 'default' : 'personal';
+    const isHRWrite = ['super_admin', 'hr_manager'].includes(req.user.role);
+    const isSelf = req.user.id === req.params.id;
+    if (kind === 'default' && !isHRWrite) return res.status(403).json({ error: 'Only HR/Admin can set the default employee photo.' });
+    if (kind === 'personal' && !isSelf) return res.status(403).json({ error: 'You can only change your own personal photo.' });
+
+    const url = validPhotoUrl(req.body?.fileUrl);
+    if (url === null) return res.status(400).json({ error: 'Please upload a valid image (JPG, PNG, GIF, WEBP or BMP).' });
+    if (!url) return res.status(400).json({ error: 'No photo provided.' });
+
+    await updateStrippingOptionalShift(ENTITY, req.params.id, { [PHOTO_FIELD[kind]]: url });
+    const fresh = await readPhotoState(req.params.id, { [PHOTO_FIELD[kind]]: url });
+    profile.notifyUser(req.params.id, 'profile:updated', { photo: true });
+    res.json(photoResponse(kind, fresh));
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/employees/:id/photo?kind=personal|default — clear that ONE photo.
+// Removing the PERSONAL photo makes the resolver fall back to the DEFAULT photo,
+// then to initials — the frontend never shows a broken image. Same ownership rules.
+router.delete('/:id/photo', async (req, res, next) => {
+  try {
+    const kind = req.query.kind === 'default' ? 'default' : 'personal';
+    const isHRWrite = ['super_admin', 'hr_manager'].includes(req.user.role);
+    const isSelf = req.user.id === req.params.id;
+    if (kind === 'default' && !isHRWrite) return res.status(403).json({ error: 'Only HR/Admin can remove the default employee photo.' });
+    if (kind === 'personal' && !isSelf) return res.status(403).json({ error: 'You can only remove your own personal photo.' });
+
+    await updateStrippingOptionalShift(ENTITY, req.params.id, { [PHOTO_FIELD[kind]]: null });   // clear (null = remove value)
+    const fresh = await readPhotoState(req.params.id);
+    profile.notifyUser(req.params.id, 'profile:updated', { photo: true });
+    res.json({ ...photoResponse(kind, fresh), removed: true });
+  } catch (err) { next(err); }
+});
+
 // GET /api/employees/:id/profile-audit — change history (self or HR)
 router.get('/:id/profile-audit', async (req, res, next) => {
   try {
@@ -501,3 +580,6 @@ router.post('/meta/sync-etime', requireRole('super_admin', 'hr_manager'), async 
 });
 
 module.exports = router;
+// Exposed for access-control / resolver unit tests.
+module.exports.resolvePhoto = resolvePhoto;
+module.exports.validPhotoUrl = validPhotoUrl;
