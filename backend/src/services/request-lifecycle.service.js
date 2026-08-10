@@ -124,7 +124,11 @@ async function remove({ type, id, user }) {
   if (!['pending', 'rejected'].includes(v.canonical)) {
     const e = new Error(`A ${v.canonical} request cannot be deleted. Request a cancellation instead.`); e.status = 400; throw e;
   }
-  await v.adapter.delete(id);
+  // Permanent removal via the existing Dataverse delete (same pattern the sibling
+  // resubmit/cancel ops use with v.adapter.entity). Adapters carry `entity`, not a
+  // `delete()` method — calling v.adapter.delete() was the "adapter.delete is not a
+  // function" bug. The shared audit row below preserves history after the row is gone.
+  await d365.delete(v.adapter.entity, id);
   await writeAudit({ employeeId: v.ownerId, employeeName: v.ownerName, requestId: id, requestType: type, action: 'deleted', performedBy: user.name || user.email, detail: v.summary });
   const rec = await v.adapter.managerRecipients(v.raw).catch(() => ({}));
   const hr = await v.adapter.hrRecipients().catch(() => ({}));

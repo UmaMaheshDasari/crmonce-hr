@@ -39,8 +39,17 @@ export default function RequestLifecycleActions({ type, id, status, caps = {}, o
     onChanged?.();
   };
   const fail = (e) => toast.error(e.response?.data?.error || 'Action failed');
+  // Delete: show a legitimate business message (e.g. "an approved request cannot be
+  // deleted") but NEVER surface a raw server/runtime error to the user — show a
+  // friendly line for 5xx/unknown failures and keep the real error in the console (§8).
+  const failDelete = (e) => {
+    console.error('[request-lifecycle] delete failed:', e);   // real error preserved for debugging
+    const status = e?.response?.status;
+    const serverMsg = e?.response?.data?.error;
+    toast.error(status && status < 500 && serverMsg ? serverMsg : 'Unable to delete the request. Please try again.');
+  };
 
-  const del = useMutation({ mutationFn: () => requestLifecycleApi.remove(type, id), onSuccess: () => done('Request deleted'), onError: fail });
+  const del = useMutation({ mutationFn: () => requestLifecycleApi.remove(type, id), onSuccess: () => done('Request deleted'), onError: failDelete });
   const resub = useMutation({ mutationFn: () => requestLifecycleApi.resubmit(type, id, reason ? { reason } : {}), onSuccess: () => done('Resubmitted for approval'), onError: fail });
   const cancelReq = useMutation({ mutationFn: () => requestLifecycleApi.requestCancellation(type, id, reason), onSuccess: () => done('Cancellation requested'), onError: fail });
 
