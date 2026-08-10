@@ -234,6 +234,9 @@ server.listen(PORT, () => {
     require('./services/provision-historical-attendance')
       .ensureHistoricalAttendanceTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] historical-attendance table skipped: ${err.message}`));
+    require('./services/provision-notification-log')
+      .ensureNotificationLogTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] notification-log table skipped: ${err.message}`));
   }
 
   // Load the HR holiday calendar into attendance.config so holidays are excluded

@@ -25,6 +25,18 @@ module.exports = {
     cron:              process.env.LEAVE_REMINDER_CRON || '0 * * * *', // hourly
   },
   ccOnDecision: process.env.NOTIFY_CC_ON_DECISION === 'true',
+  // ── Notification recipient rules (configurable — NEVER hard-coded HR/info CC) ──
+  // The DEFAULTS implement the correct behaviour: informational emails go to the
+  // EMPLOYEE ONLY, with no automatic HR/manager CC. Recipients are always resolved
+  // live from Dataverse (role + reporting-manager), never a hard-coded address.
+  notify: {
+    // Missing-punch email: add age-based manager (≥48h) / HR (≥72h) CC only if a
+    // company explicitly opts in. Default OFF → employee only (§7, §14).
+    exceptionEscalationCc: process.env.NOTIFY_EXCEPTION_ESCALATION_CC === 'true',
+    // Auto "you logged in late" informational email (ONE per employee/day via the
+    // ledger). Off by default so no unexpected mail; dedupe always applies (§9).
+    lateLoginNotice: process.env.NOTIFY_LATE_LOGIN === 'true',
+  },
   teams: {
     enabled:    !!process.env.TEAMS_WEBHOOK_URL,
     webhookUrl: process.env.TEAMS_WEBHOOK_URL || '',

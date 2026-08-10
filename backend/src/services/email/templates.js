@@ -269,6 +269,51 @@ function attendanceException(d) {
 }
 
 /**
+ * Missing Punch informational email — ONE per employee/day (§7). Sent to the
+ * EMPLOYEE ONLY (no HR/manager CC by default). Employee acts by raising a
+ * correction; the ledger guarantees this is not re-sent on recalc/refresh.
+ * d: { employeeName, date, shift, inTime, outTime, raiseUrl }
+ */
+function missingPunch(d) {
+  const subject = `Missing Punch - ${d.date}`;
+  const content =
+    greet(d.employeeName) +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Your attendance for <strong>${esc(d.date)}</strong> appears to have a missing punch. Please check your attendance and submit an attendance correction if required.</p>` +
+    summaryCard('Attendance', [
+      ['Date', esc(d.date)],
+      ['Shift', esc(d.shift || '—')],
+      ['In Time', esc(d.inTime || '—')],
+      ['Out Time', esc(d.outTime || '—')],
+      ['Attendance Status', statusBadge('Missing Punch')],
+    ]) +
+    (d.raiseUrl ? `<div style="text-align:center;margin:22px 0 6px;">${button('Raise Attendance Correction', d.raiseUrl)}</div>` : '') +
+    banner('If your attendance is correct, no action is needed. Otherwise please submit an Attendance Correction so HR can update it.');
+  return { subject, html: layout({ title: subject, preheader: `Missing punch on ${d.date} — please review`, content }) };
+}
+
+/**
+ * Late Login informational email — ONE per employee/day (§9). Employee only.
+ * Purely informational (attendance stays Present); the ledger prevents repeats on
+ * recalc / dashboard / payroll.
+ * d: { employeeName, date, shift, expectedTime, actualTime }
+ */
+function lateLoginNotice(d) {
+  const subject = `Late Login - ${d.date}`;
+  const content =
+    greet(d.employeeName) +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Our attendance system recorded a late login for <strong>${esc(d.date)}</strong>. This is for your information only — no action is required.</p>` +
+    summaryCard('Attendance', [
+      ['Date', esc(d.date)],
+      ['Shift', esc(d.shift || '—')],
+      ['Expected Login', esc(d.expectedTime || '—')],
+      ['Actual Login', esc(d.actualTime || '—')],
+      ['Attendance Status', statusBadge('Late Login')],
+    ]) +
+    banner('If this looks incorrect, please raise an Attendance Correction or a Late Login request in the HR Portal.');
+  return { subject, html: layout({ title: subject, preheader: `Late login on ${d.date}`, content }) };
+}
+
+/**
  * New performance goal assigned → email to the employee.
  * d: { employeeName, goalTitle, description, quarter, financialYear, priority,
  *      weightage, dueDate, assignedBy, assignedOn, viewUrl }
@@ -301,6 +346,6 @@ module.exports = {
   statusBadge, button, profileCard, summaryCard, banner, layout,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
-  goalAssigned,
+  missingPunch, lateLoginNotice, goalAssigned,
   _esc: esc, _longText: longText,
 };

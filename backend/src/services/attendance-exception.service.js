@@ -16,6 +16,8 @@ const { detectExceptions } = require('./attendance-exception.util');
 const templates = require('./email/templates');
 const notification = require('./notification.service');
 const requestNotify = require('./request-notify.service');
+const ledger = require('./notification-ledger.service');
+const ecfg = require('./email/config');
 
 const ATT = d365.constructor.entities.attendance;
 const EMP = d365.constructor.entities.employee;
@@ -60,21 +62,25 @@ async function openExceptionsForEmployee(employeeId, { days = 14 } = {}) {
   } catch (_) { return []; }
 }
 
-/** Send the exception email (from info@crmonce.com) + in-app notification. */
-async function notifyException(emp, alert, { reminder = false, escalation = false, cc = [] } = {}) {
+/**
+ * Missing-punch notification. The EMAIL is sent AT MOST ONCE per employee+date
+ * (MISSING_PUNCH) via the ledger — so re-scans / recalc / dashboard refresh / payroll
+ * never re-send it (§8). To = employee ONLY; a manager/HR CC is added only when the
+ * company opted into escalation CC (default off — §7/§14). The in-app bell still
+ * fires each scan (it is not an email and drives the dashboard alert).
+ */
+async function notifyException(emp, alert, { cc = [], shift, inTime, outTime } = {}) {
   const to = emp.hr_email;
   const dateLabel = time.fmtDate(alert.date);
   if (to && !requestNotify.isPlaceholderEmail(to)) {
-    const { subject, html } = templates.attendanceException({
-      employeeName: emp.hr_hremployee1, date: dateLabel, issueLabel: alert.label,
-      punches: (alert.punches || []).map(t => time.to12h(t)), raiseUrl: raiseUrl(),
-      reminder, escalation,
-      ccNote: cc.length ? `A copy has been sent to ${cc.map(c => c.role).join(' and ')}.` : '',
+    const { subject, html } = templates.missingPunch({
+      employeeName: emp.hr_hremployee1, date: dateLabel, shift, inTime, outTime, raiseUrl: raiseUrl(),
     });
-    const r = await notification.sendEmail(to, subject, html, {
-      cc: cc.map(c => c.email).filter(Boolean), meta: { type: 'attendance_exception' },
+    const res = await ledger.sendOnce({
+      employeeId: emp.hr_hremployeeid, date: alert.date, type: 'MISSING_PUNCH',
+      to, cc: (cc || []).map(c => c.email).filter(Boolean), subject, html, entity: 'attendance',
     });   // `from` defaults to info@crmonce.com (GRAPH_SENDER)
-    global.logger?.[r?.success ? 'info' : 'error'](`[exception] email → ${to} (${alert.code} on ${alert.date}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+    global.logger?.info?.(`[exception] missing-punch → ${to} (${alert.code} on ${alert.date}): ${res.sent ? 'sent' : (res.skipped ? `skipped(${res.reason})` : (res.error || 'failed'))}`);
   }
   // In-app bell.
   try {
@@ -83,6 +89,17 @@ async function notifyException(emp, alert, { reminder = false, escalation = fals
       message: `${alert.label} detected on ${dateLabel}. Action required.`, date: alert.date, code: alert.code,
     });
   } catch (_) {}
+}
+
+/** Late-login informational notice — ONE per employee+date (LATE_LOGIN), employee
+ *  only. Opt-in via config.notify.lateLoginNotice. Deduped by the ledger. */
+async function sendLateLoginNotice(emp, { date, shift, expectedTime, actualTime }) {
+  const to = emp.hr_email;
+  if (!to || requestNotify.isPlaceholderEmail(to)) return { skipped: true };
+  const { subject, html } = templates.lateLoginNotice({
+    employeeName: emp.hr_hremployee1, date: time.fmtDate(date), shift, expectedTime, actualTime,
+  });
+  return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance' });
 }
 
 /** Reporting manager + HR emails for escalation CC. */
@@ -126,21 +143,34 @@ async function runScan({ days = 3, reminder = false } = {}) {
   for (const rec of recs) {
     const emp = empMap.get(rec._hr_hremployee_value);
     if (!emp) continue;
-    const c = computeSession(punchesFromRecord(rec), shiftOf(emp));
+    const shift = shiftOf(emp);
+    const c = computeSession(punchesFromRecord(rec), shift);
+    const date = String(rec.hr_date).slice(0, 10);
+    const shiftLabel = emp.hr_shiftname || `${shift.start}–${shift.end}`;
+
+    // Late-login informational notice (opt-in) — ONE per employee/day via the
+    // ledger, so recalc / dashboard / payroll never re-send it (§9).
+    if (ecfg.notify.lateLoginNotice && (c.lateArrivalMin || 0) > 0) {
+      await sendLateLoginNotice(emp, { date, shift: shiftLabel, expectedTime: shift.start, actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '' });
+    }
+
     const [ex] = detectExceptions(c);
     if (!ex) continue;
-    const date = String(rec.hr_date).slice(0, 10);
     const key = `${emp.hr_hremployeeid}|${date}`;
     if (seen.has(key)) continue; seen.add(key);
     const skip = await requestedDates(emp.hr_hremployeeid, [date]);
-    if (skip.has(date)) continue;                    // request already raised → stop reminding
-    const ageDays = daysBetween(date, today);
-    const cc = await escalationCc(emp, ageDays);
-    await notifyException(emp, { ...ex, date, punches: c.punches.map(p => p.t) }, { reminder: reminder || ageDays >= 1, escalation: ageDays >= 2, cc });
+    if (skip.has(date)) continue;                    // correction already raised → nothing to notify
+    // CC manager (≥48h) / HR (≥72h) ONLY if the company opted in; default = employee only.
+    const cc = ecfg.notify.exceptionEscalationCc ? await escalationCc(emp, daysBetween(date, today)) : [];
+    await notifyException(emp, { ...ex, date, punches: c.punches.map(p => p.t) }, {
+      cc, shift: shiftLabel,
+      inTime: c.firstPunch ? time.to12h(c.firstPunch) : '',
+      outTime: c.lastPunch ? time.to12h(c.lastPunch) : '',
+    });
     notified++;
   }
   global.logger?.info(`[exception-scan] ${from}..${today}: scanned ${recs.length} records, notified ${notified}`);
   return { scanned: recs.length, notified };
 }
 
-module.exports = { openExceptionsForEmployee, runScan, notifyException };
+module.exports = { openExceptionsForEmployee, runScan, notifyException, sendLateLoginNotice };
