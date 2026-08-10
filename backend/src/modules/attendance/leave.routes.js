@@ -12,6 +12,7 @@ const { leaveSummary, resolveDays } = require('../../services/leave-summary.util
 const leaveEngine = require('../../services/leave-engine.service');
 const { ensureLeaveLedgerTable } = require('../../services/provision-leave-ledger');
 const payrollSettings = require('../../services/payroll-settings.service');
+const { validateLeaveReason } = require('../../services/leave-reason.util');
 const sickRun = require('../../services/sick-run.service');
 const compOffSvc = require('../../services/comp-off.service');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
@@ -363,6 +364,12 @@ router.post('/', async (req, res, next) => {
     // that should be blindly written — pull them out and resolve them server-side.
     const { approverId, cc, medCertDocId, ...rest } = req.body;
     const body = { ...rest };
+
+    // Reason may be a full enterprise-length explanation (no artificial 100-char
+    // cap). Reject ONLY beyond the Dataverse column max, with a clear message — the
+    // text is never truncated. Backend + frontend + Dataverse all share this limit.
+    const reasonCheck = validateLeaveReason(body.hr_reason);
+    if (!reasonCheck.ok) return res.status(400).json({ error: reasonCheck.error });
 
     // Dynamic sender = the applicant's own company mailbox. Validate it up front
     // (empty / format / must be @crmonce.com) — no silent fallback later.

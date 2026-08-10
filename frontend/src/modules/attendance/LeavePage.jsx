@@ -15,6 +15,10 @@ import toast from 'react-hot-toast';
 // earned-leave records still render correctly.
 const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Maternity Leave', 'Paternity Leave', 'LOP'];
 
+// Leave Reason max — matches the Dataverse hr_reason column + the backend guard
+// (LEAVE_REASON_MAX). Enterprise-length text; no artificial 100-char limit.
+const REASON_MAX = 4000;
+
 const LEAVE_TYPE_ICONS = {
   'Casual Leave': { emoji: '\ud83c\udfd6', color: 'bg-sky-50 text-sky-700 border-sky-200' },
   'Sick Leave': { emoji: '\ud83e\ude7a', color: 'bg-rose-50 text-rose-700 border-rose-200' },
@@ -643,12 +647,12 @@ function ApplyLeaveModal({ onClose }) {
             <textarea
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 placeholder-gray-400 min-h-[7rem] resize-y focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
               placeholder="Explain your reason — you can use multiple lines, paragraphs and bullet points…"
-              maxLength={2000}
+              maxLength={REASON_MAX}
               rows={5}
               value={form.reason}
-              onChange={e => setForm(p => ({ ...p, reason: e.target.value.slice(0, 2000) }))}
+              onChange={e => setForm(p => ({ ...p, reason: e.target.value.slice(0, REASON_MAX) }))}
             />
-            <p className="text-xs text-gray-400 mt-1 text-right tabular-nums">{form.reason.length}/2000</p>
+            <p className="text-xs text-gray-400 mt-1 text-right tabular-nums">{form.reason.length}/{REASON_MAX}</p>
           </div>
 
           {/* Approver (required) */}
