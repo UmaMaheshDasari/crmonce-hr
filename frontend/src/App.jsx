@@ -86,7 +86,8 @@ function AppRoutes() {
         <Route path="payroll" element={<PayrollPage />} />
         <Route path="payroll-dashboard" element={<ProtectedRoute roles={['super_admin','hr_manager']}><PayrollDashboardPage /></ProtectedRoute>} />
         <Route path="payroll-automation" element={<ProtectedRoute roles={['super_admin','hr_manager']}><AutomationPage /></ProtectedRoute>} />
-        <Route path="salary-structure" element={<SalaryStructurePage />} />
+        {/* Salary Structure = HR/Admin only. Employees see their pay via My Payslips. */}
+        <Route path="salary-structure" element={<ProtectedRoute roles={['super_admin','hr_manager']}><SalaryStructurePage /></ProtectedRoute>} />
         <Route path="advance-salary" element={<AdvanceSalaryPage />} />
         <Route path="payroll-settings" element={<ProtectedRoute roles={['super_admin']}><PayrollSettingsPage /></ProtectedRoute>} />
         <Route path="pt-master" element={<ProtectedRoute roles={['super_admin','hr_manager']}><PTMasterPage /></ProtectedRoute>} />
@@ -94,7 +95,9 @@ function AppRoutes() {
         <Route path="performance" element={<PerformancePage />} />
         <Route path="goals" element={<GoalsPage />} />
         <Route path="tax-declarations" element={<TaxDeclarationPage />} />
-        <Route path="documents" element={<ProtectedRoute roles={['super_admin','hr_manager']}><DocumentsPage /></ProtectedRoute>} />
+        {/* Documents: HR sees all (management); an employee sees ONLY their own —
+            the page and the /api/documents backend both self-scope by role. */}
+        <Route path="documents" element={<DocumentsPage />} />
         <Route path="activities" element={<ActivitiesPage />} />
         <Route path="company-settings" element={<ProtectedRoute roles={['super_admin']}><CompanySettingsPage /></ProtectedRoute>} />
         <Route path="import-export" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ImportExportPage /></ProtectedRoute>} />

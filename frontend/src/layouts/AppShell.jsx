@@ -75,6 +75,23 @@ const NAV = [
   },
 ];
 
+// Employee (ESS) navigation — self-service ONLY. A normal Employee never sees the
+// Employees-management entity, Salary Structure, or any other-employee data. These
+// items reuse the SAME routes/pages as admin/HR (no duplicate modules); the pages
+// and the backend both self-scope to the logged-in employee (req.user.id). Admin,
+// HR and recruiter keep the full grouped NAV above.
+const EMPLOYEE_NAV = [
+  { to: '/',                    label: 'My Dashboard',             icon: HomeIcon, exact: true },
+  { to: '/attendance',          label: 'My Attendance',            icon: ClockIcon },
+  { to: '/attendance-requests', label: 'My Attendance Correction', icon: PencilSquareIcon },
+  { to: '/leave',               label: 'My Leave',                 icon: CalendarDaysIcon },
+  { to: '/comp-off',            label: 'My Comp Off',              icon: ArrowPathIcon },
+  { to: '/late-login',          label: 'My Late Login',            icon: ClockIcon },
+  { to: '/documents',           label: 'My Documents',             icon: DocumentTextIcon },
+  { to: '/payroll',             label: 'My Payslips',              icon: CurrencyDollarIcon },
+  { to: '/profile',             label: 'My Profile',               icon: UserCircleIcon },
+];
+
 const LABEL_MAP = {
   '/':            'Dashboard',
   '/profile':     'My Profile',
@@ -186,9 +203,14 @@ export default function AppShell() {
   const companyName = company?.hr_name || 'CRMONCE (OPC) PRIVATE LIMITED';
   const companyLogo = company?.hr_logourl || '/crmonce-logo.png';
 
+  // A normal Employee gets the curated self-service nav (no Employees management,
+  // no Salary Structure, no other-employee data). Everyone else (Super Admin, HR,
+  // Recruiter) gets the full grouped NAV, still filtered per-item by role below.
+  const navSource = user?.role === 'employee' ? EMPLOYEE_NAV : NAV;
+
   // Role visibility. Groups keep only the children the user may see; a group with
   // no visible children is hidden entirely. Standalone items filter as before.
-  const visibleNav = NAV.map(item => {
+  const visibleNav = navSource.map(item => {
     if (item.children) {
       const kids = item.children.filter(c => !c.roles || hasRole(...c.roles));
       return kids.length ? { ...item, children: kids } : null;
@@ -212,9 +234,9 @@ export default function AppShell() {
   // the single open group; clicking the open one collapses it.
   const groupContainsActive = (item) => item.children.some(c => c.to === currentPath);
   useEffect(() => {
-    const active = NAV.find(i => i.children && i.children.some(c => c.to === currentPath));
+    const active = navSource.find(i => i.children && i.children.some(c => c.to === currentPath));
     setExpandedMenu(active ? active.group : null);
-  }, [currentPath]);
+  }, [currentPath, navSource]);
   const isGroupOpen = (item) => expandedMenu === item.group;
   const toggleGroup = (item) => setExpandedMenu(cur => (cur === item.group ? null : item.group));
 

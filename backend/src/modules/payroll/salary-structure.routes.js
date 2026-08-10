@@ -9,6 +9,16 @@ const ENTITY = d365.constructor.entities.salaryStructure;   // 'hr_salarystructu
 const EMP = d365.constructor.entities.employee;
 const HR_ROLES = ['super_admin', 'hr_manager'];
 
+// Salary Structure is an HR/Admin module — it is NOT available to normal employees
+// (they see their pay via My Payslips). Block the employee role outright on every
+// read; the write routes are already requireRole(HR). Returns 403 Forbidden.
+function blockEmployees(req, res, next) {
+  if (req.user?.role === 'employee') {
+    return res.status(403).json({ error: 'Salary Structure is not available for employees. Please use My Payslips.' });
+  }
+  next();
+}
+
 const tableMissing = (err) =>
   d365._isBadSegment?.(err) ||
   /Resource not found for the segment|Could not find a property|does not exist|was not found|404/i.test(err?.message || '');
@@ -78,8 +88,8 @@ async function resequence(employeeId, log) {
 
 const labelFor = (name, date) => `${name || 'Employee'} · ${date || ''}`.trim();
 
-// ── GET /  — list latest/active revisions (HR all; employee → own only) ──
-router.get('/', async (req, res, next) => {
+// ── GET /  — list latest/active revisions (HR/Admin only; employees are blocked) ──
+router.get('/', blockEmployees, async (req, res, next) => {
   try {
     const isHR = HR_ROLES.includes(req.user.role);
     const targetId = isHR ? (req.query.employeeId || null) : req.user.id;
@@ -99,7 +109,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // ── GET /employee/:employeeId  — full salary history timeline for one employee ──
-router.get('/employee/:employeeId', async (req, res, next) => {
+router.get('/employee/:employeeId', blockEmployees, async (req, res, next) => {
   try {
     const isHR = HR_ROLES.includes(req.user.role);
     if (!isHR && req.params.employeeId !== req.user.id) return res.status(403).json({ error: 'Access denied' });
@@ -112,7 +122,7 @@ router.get('/employee/:employeeId', async (req, res, next) => {
 });
 
 // ── GET /:id  — a single revision ──
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', blockEmployees, async (req, res, next) => {
   try {
     const row = await d365.getByIdOptional(ENTITY, req.params.id, { select: svc.SELECT });
     const shaped = svc.shape(row);
@@ -198,3 +208,4 @@ router.delete('/:id', requireRole('super_admin'), async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.blockEmployees = blockEmployees;   // exposed for access-control tests
