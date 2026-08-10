@@ -56,3 +56,38 @@ test('EVENTS registry: the three shipped event types are present', () => {
   assert.ok(svc.EVENTS.marriage_anniversary);
   assert.ok(svc.EVENTS.work_anniversary);
 });
+
+// ── settings merge precedence (the persistence-bug fix) ───────────────────────
+// The read is I/O (can't be unit-tested from here) but merge() is the pure core
+// that decides column-vs-default precedence. These prove a saved DB value ALWAYS
+// wins over the default, and that an empty read falls back to defaults.
+
+test('merge: an empty row returns the DEFAULTS (unprovisioned table safety net)', () => {
+  const m = svc.merge({});
+  assert.strictEqual(m.hr_birthdayenabled, svc.DEFAULTS.hr_birthdayenabled);
+  assert.strictEqual(m.hr_sendtime, '09:00');
+});
+
+test('merge: a saved DB column ALWAYS overrides the default (never reverts)', () => {
+  const m = svc.merge({
+    hr_celebrationsettingid: 'row-123',
+    hr_sendtime: '18:30',
+    hr_birthdaysubject: 'Custom Subject',
+  });
+  assert.strictEqual(m.hr_sendtime, '18:30');               // saved value wins
+  assert.strictEqual(m.hr_birthdaysubject, 'Custom Subject');
+  assert.strictEqual(m.hr_celebrationsettingid, 'row-123'); // id preserved → save UPDATES (no duplicate row)
+  // untouched fields still fall back to defaults
+  assert.strictEqual(m.hr_marriagesubject, svc.DEFAULTS.hr_marriagesubject);
+});
+
+test('merge: a saved "false" toggle is preserved (not shadowed by the true default)', () => {
+  const m = svc.merge({ hr_birthdayenabled: 'false' });
+  assert.strictEqual(m.hr_birthdayenabled, 'false');
+});
+
+test('merge: empty-string / null columns fall back to default (present-check, not truthy)', () => {
+  const m = svc.merge({ hr_sendtime: '', hr_birthdaysubject: null });
+  assert.strictEqual(m.hr_sendtime, svc.DEFAULTS.hr_sendtime);          // '' is absent → default
+  assert.strictEqual(m.hr_birthdaysubject, svc.DEFAULTS.hr_birthdaysubject); // null is absent → default
+});

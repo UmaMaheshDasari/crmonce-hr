@@ -37,14 +37,23 @@ const shape = (r) => ({
 
 /** Raw opening-balance row for an employee/year, or null. Never throws. */
 async function getOpeningRow(employeeId, year) {
-  try {
-    const { data } = await d365.getListOptional(OPEN, {
-      select: OPEN_BASE, optionalSelect: OPEN_OPT,
-      filter: `hr_employeeid eq '${employeeId}' and hr_year eq '${year}'`,
-      top: 1,
-    });
-    return data && data[0] ? data[0] : null;
-  } catch { return null; }
+  const filter = `hr_employeeid eq '${employeeId}' and hr_year eq '${year}'`;
+  // Resilient read: strip ONLY a not-yet-provisioned column and retry, so a column
+  // gap can never fail the read → return null → make upsert CREATE a duplicate row.
+  let cols = [...OPEN_BASE.split(','), ...OPEN_OPT.split(',')];
+  for (let i = 0; i <= cols.length; i++) {
+    try {
+      const { data } = await d365.getList(OPEN, { select: cols.join(','), filter, top: 1 });
+      return data && data[0] ? data[0] : null;
+    } catch (err) {
+      if (d365._isMissingProperty?.(err)) {
+        const prop = d365._missingPropertyName?.(err);
+        if (prop && cols.includes(prop)) { cols = cols.filter((c) => c !== prop); continue; }
+      }
+      return null;   // table missing / genuinely absent → null (upsert creates the first row)
+    }
+  }
+  return null;
 }
 
 /**

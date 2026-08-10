@@ -56,7 +56,14 @@ export default function CelebrationsPage() {
         hr_worksubject: t.work_anniversary.subject, hr_workbody: t.work_anniversary.body, hr_worknotif: t.work_anniversary.notif,
       });
     },
-    onSuccess: () => { toast.success('Celebration settings saved'); qc.invalidateQueries({ queryKey: ['celebration-settings'] }); },
+    onSuccess: (res) => {
+      toast.success('Celebration settings saved');
+      // Re-sync the form from the SERVER's confirmed persisted value (the PUT returns
+      // the fresh settings) — never keep stale local state that would look reverted
+      // after a refresh. The `!form` init guard alone never re-synced after a save.
+      if (res?.data) setForm(structuredClone(res.data));
+      qc.invalidateQueries({ queryKey: ['celebration-settings'] });
+    },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to save'),
   });
 

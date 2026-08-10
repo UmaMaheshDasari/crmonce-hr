@@ -43,7 +43,6 @@ const DEFAULTS = {
   hr_worknotif: '🏆 Happy Work Anniversary, {firstName}! {years} year(s) with CRMONCE.',
 };
 const FIELDS = Object.keys(DEFAULTS);
-const SELECT = ['hr_celebrationsettingid', ...FIELDS].join(',');
 // Only these are writable via the settings PUT (whitelist).
 const WRITABLE = FIELDS.filter(f => f !== 'hr_name');
 
@@ -61,10 +60,23 @@ async function getSettingsRow() {
   const now = Date.now();
   if (cache && now - cacheAt < TTL) return cache;
   let row = {};
-  try {
-    const { data } = await d365.getListOptional(SETTINGS_SET, { select: SELECT, optionalSelect: '', top: 1, orderby: 'createdon asc' });
-    if (data && data[0]) row = data[0];
-  } catch (_) { /* not provisioned yet → defaults */ }
+  // Resilient read: strip ONLY a not-yet-provisioned column and retry — never let a
+  // single missing column drop the whole row (which would return DEFAULTS and, worse,
+  // make updateSettings CREATE a duplicate because the row id was lost).
+  let cols = ['hr_celebrationsettingid', ...FIELDS];
+  for (let i = 0; i <= cols.length; i++) {
+    try {
+      const { data } = await d365.getList(SETTINGS_SET, { select: cols.join(','), top: 1, orderby: 'createdon asc' });
+      row = (data && data[0]) || {};
+      break;
+    } catch (err) {
+      if (d365._isMissingProperty?.(err)) {
+        const prop = d365._missingPropertyName?.(err);
+        if (prop && cols.includes(prop)) { cols = cols.filter((c) => c !== prop); continue; }
+      }
+      break;   // table missing / other error → defaults (row stays {})
+    }
+  }
   cache = merge(row); cacheAt = now;
   return cache;
 }
@@ -301,5 +313,5 @@ module.exports = {
   getSettings, updateSettings, celebrationsToday, findToday, runDaily, listLogs,
   EVENTS, SETTINGS_SET, LOGS_SET, invalidate,
   // exposed for tests
-  mmdd, yearOf, matchesToday, fill, firstNameOf, todayIST,
+  merge, DEFAULTS, mmdd, yearOf, matchesToday, fill, firstNameOf, todayIST,
 };
