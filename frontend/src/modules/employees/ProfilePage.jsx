@@ -15,7 +15,7 @@ import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
 import DocumentsManager from '../../components/DocumentsManager';
 import Avatar from '../../components/Avatar';
-import { getEmployeeProfilePhoto } from '../../utils/employeePhoto';
+import { getEmployeeProfilePhoto, employeeInitials } from '../../utils/employeePhoto';
 
 // Accepted profile-photo formats + max size (validated again on the server).
 const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
@@ -201,7 +201,7 @@ export default function ProfilePage() {
   const status = emp?._verifystatus || emp?.hr_verifystatus || 'verified';
   const badge = VERIFY_BADGE[status] || VERIFY_BADGE.verified;
   const managerName = fmtVal(emp?._reportingmanager || emp?.['_hr_manager_value@OData.Community.Display.V1.FormattedValue']);
-  const initials = emp?.hr_hremployee1?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const initials = employeeInitials(emp?.hr_hremployee1);   // central rule (first+last / first-two)
   const photoSrc = getEmployeeProfilePhoto(emp);
   // Whether the photo THIS modal manages currently exists (so "Remove" only shows
   // when there is something to remove). Personal on /profile, default under HR.

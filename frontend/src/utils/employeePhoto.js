@@ -68,16 +68,16 @@ export function hasEmployeePhoto(emp) {
   return !!rawPhoto(emp);
 }
 
-/** Initials fallback — two letters, upper-case (e.g. "Uma Mahesh" → "UM"), or '?'. */
+/**
+ * Initials fallback, generated from the ACTUAL name (never hardcoded), upper-cased:
+ *   • 2+ names → first letter of the FIRST + first letter of the LAST name
+ *       "Vishwesh Boina" → "VB",  "Uma Mahesh" → "UM",  "Uma Mahesh Kumar" → "UK"
+ *   • single name → its first TWO letters   "Vishwesh" → "VI"
+ *   • empty / null / whitespace → "?"
+ */
 export function employeeInitials(name) {
-  return (
-    String(name || '')
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((n) => n[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase() || '?'
-  );
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
