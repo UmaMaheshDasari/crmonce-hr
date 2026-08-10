@@ -137,4 +137,43 @@ function approvedLeaveWorkingDays(leaves = [], from, to, opts = {}) {
   return counted.size;
 }
 
-module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking, approvedLeaveWorkingDays };
+// ── Absent enumeration + before-grace rule (spec §7/§8) — the SINGLE definition of
+// an employee's Absent working dates, reused by the attendance list, the stats
+// cards, the dashboard, reports and payroll so every surface agrees. ─────────────
+const hhmmToMin = (s) => { const [h, m] = String(s || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+
+/** Has this employee's (shift start + grace) already passed today? Day shifts only;
+ *  night/unknown shifts are treated as eligible so their absents are never hidden. */
+function gracePassedToday(shift, graceMin, nowMin) {
+  if (!shift || shift.isNight) return true;
+  // Strictly AFTER the grace window: at exactly shift+grace (e.g. 09:15) the employee
+  // is still on time / Pending; Absent only applies after it (09:16+), per spec §4/§7.
+  return nowMin > (hhmmToMin(shift.start) + (Number(graceMin) || 0));
+}
+
+/**
+ * Working dates in [from, capTo] (excl holiday / weekly-off), on/after `firstDate`,
+ * with NO attendance record and NO approved leave → the employee's ABSENT days.
+ * When opts.todayPending is true, opts.today is skipped (before shift+grace = Pending,
+ * not Absent). `hasRecord(ds)` / `onLeave(ds)` are predicates for one employee.
+ */
+function absentDatesFor(from, capTo, firstDate, hasRecord, onLeave, opts = {}) {
+  if (!firstDate) return [];
+  const start = from < firstDate ? firstDate : from;
+  if (!capTo || capTo < start) return [];
+  const { today, todayPending = false } = opts;
+  const out = [];
+  const end = new Date(`${capTo}T00:00:00Z`);
+  for (let d = new Date(`${start}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+    if (holidaysOf(opts).includes(ds) || weekOffsOf(opts).includes(d.getUTCDay())) continue;
+    if (hasRecord(ds) || onLeave(ds)) continue;
+    if (todayPending && ds === today) continue;
+    out.push(ds);
+  }
+  return out;
+}
+const holidaysOf = (opts) => (opts && opts.holidays) || attnCfg.holidays;
+const weekOffsOf = (opts) => (opts && opts.weekOffDays) || attnCfg.weekOffDays;
+
+module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday };

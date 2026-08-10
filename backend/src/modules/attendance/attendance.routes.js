@@ -241,6 +241,18 @@ const EMP_ENTITY = d365.constructor.entities.employee;
 const resolveShift = () => attnCfg.resolveShift();
 const SHIFT_COLS = 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime';
 const shiftOf = (emp) => attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime);
+
+// Absent-before-grace (spec §7/§8): each employee is NEVER Absent today until their
+// OWN shift-start + configured grace has elapsed. gracePassedToday + absentDatesFor
+// live in attendance-summary.util (shared by list / stats / dashboard). Here we just
+// resolve "now" (IST) and the grace window.
+function istNowMinutes() { const [h, m] = String(time.istHHMM() || '00:00').split(':').map(Number); return (h || 0) * 60 + (m || 0); }
+// The grace window (minutes) for the absent cutoff — the SAME configured Late Login
+// grace, so "Present until shift+grace" is consistent everywhere. Default 15.
+async function resolveAbsentGrace() {
+  try { return (await require('../../services/payroll-settings.service').getResolved()).lateLogin.graceMinutes; }
+  catch { return 15; }
+}
 async function getEmployeeShift(employeeId) {
   try {
     // Optional columns: degrade to defaults if the shift columns don't exist.
@@ -674,7 +686,7 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
 });
 
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
-const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays } = require('../../services/attendance-summary.util');
+const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday } = require('../../services/attendance-summary.util');
 const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
@@ -685,28 +697,6 @@ const fmtDur = (h) => {
   return H === 0 ? `${M}m` : (M === 0 ? `${H}h` : `${H}h ${M}m`);
 };
 const fmtMin = (m) => fmtDur((Number(m) || 0) / 60);
-
-// The ONE definition of an employee's Absent working dates in a range — used by
-// BOTH /stats (the card counts them) and /absentees (the list shows them), so the
-// Absent CARD and the Absent LIST can never disagree. A date is Absent when it is a
-// working day (not holiday / weekly-off), on/after the employee's first attendance
-// date, up to capTo, with NO attendance record and NO approved leave. This replaces
-// the old "Working − Attended − Leave" formula, which under-counted whenever a punch
-// landed on a non-working day (attended could exceed working and zero out absences).
-function absentDatesFor(from, capTo, firstDate, hasRecord, onLeave) {
-  if (!firstDate) return [];
-  const start = from < firstDate ? firstDate : from;
-  if (!capTo || capTo < start) return [];
-  const out = [];
-  const end = new Date(`${capTo}T00:00:00Z`);
-  for (let d = new Date(`${start}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-    const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-    if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(d.getUTCDay())) continue;
-    if (hasRecord(ds) || onLeave(ds)) continue;
-    out.push(ds);
-  }
-  return out;
-}
 
 /**
  * SINGLE SOURCE OF TRUTH for range attendance figures (Present/Half/Incomplete/
@@ -795,6 +785,10 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   // Each employee's Working Days start at their FIRST attendance date (never
   // before their first punch) and end at min(to, today). An employee with no
   // attendance history at all has 0 working days → never marked Absent.
+  // Per-employee grace evaluation: is today still "Pending Attendance" (pre-grace)?
+  const nowMin = istNowMinutes();
+  const graceMin = await resolveAbsentGrace();
+  const todayInRange = capTo >= today;
   const perEmployee = scope.map(e => {
     const recordSet = recordDatesByEmp[e.hr_hremployeeid] || new Set();
     const leaveSet = leaveDatesByEmp[e.hr_hremployeeid] || new Set();
@@ -805,8 +799,10 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     const working = effectiveWorking(from, capTo, firstDate);
     const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays });
     // Absent = ENUMERATED working dates with no record and no leave (identical to
-    // /absentees) — never the Working−Attended−Leave formula.
-    summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds)).length;
+    // /absentees) — never the Working−Attended−Leave formula. Today counts only once
+    // this employee's own shift-start + grace has passed (spec §7/§8).
+    const todayPending = todayInRange && !gracePassedToday(shiftOf(e), graceMin, nowMin);
+    summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds), { today, todayPending }).length;
     return { emp: e, leaveDays, working, firstDate, summary };
   });
 
@@ -964,14 +960,19 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
       const ds = String(r.hr_date || '').slice(0, 10);
       if (ds && (!firstInRange[r._hr_hremployee_value] || ds < firstInRange[r._hr_hremployee_value])) firstInRange[r._hr_hremployee_value] = ds;
     });
+    const nowMin = istNowMinutes();
+    const graceMin = await resolveAbsentGrace();
+    const todayInRange = capTo >= today;
     const CAP = 5000;
     const rows = [];
     for (const e of scope) {
       const firstDate = firstMap.get(String(e.hr_hremployeeid)) || firstInRange[e.hr_hremployeeid] || null;
       if (!firstDate) continue;   // no attendance history → never counted absent (matches /stats)
+      const todayPending = todayInRange && !gracePassedToday(shiftOf(e), graceMin, nowMin);
       const dates = absentDatesFor(from, capTo, firstDate,
         ds => active.has(`${e.hr_hremployeeid}|${ds}`),
-        ds => onLeave.has(`${e.hr_hremployeeid}|${ds}`));
+        ds => onLeave.has(`${e.hr_hremployeeid}|${ds}`),
+        { today, todayPending });
       for (const ds of dates) {
         rows.push({ employee: e.hr_hremployee1 || 'Employee', department: e.hr_department || '', designation: e.hr_designation || '', date: ds, status: 'absent' });
         if (rows.length >= CAP) break;

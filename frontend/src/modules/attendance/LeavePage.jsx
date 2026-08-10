@@ -9,7 +9,11 @@ import { useAuth } from '../../context/AuthContext';
 import { format, differenceInCalendarDays, subDays } from 'date-fns';
 import toast from 'react-hot-toast';
 
-const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Paternity Leave', 'LOP'];
+// Selectable leave types in the employee application. Earned Leave is intentionally
+// NOT offered — Comp Off replaces it (applied via the "use Comp Off" option / the
+// Comp Off module). The 'Earned Leave' icon below is kept only so any HISTORICAL
+// earned-leave records still render correctly.
+const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Maternity Leave', 'Paternity Leave', 'LOP'];
 
 const LEAVE_TYPE_ICONS = {
   'Casual Leave': { emoji: '\ud83c\udfd6', color: 'bg-sky-50 text-sky-700 border-sky-200' },
