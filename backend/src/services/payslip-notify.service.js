@@ -4,7 +4,7 @@
  * email never blocks/rolls back the approval.
  */
 const { sendEmail, GRAPH_SENDER } = require('./notification.service');
-const { buildPayslipPdf, monthYear } = require('./payslip.service');
+const { buildPayslipPdf, monthYear, computeFigures } = require('./payslip.service');
 const { inTenant } = require('./email/sender');
 const companySvc = require('./company.service');
 const T = require('./email/templates');
@@ -26,14 +26,19 @@ async function emailPayslip({ payroll, employee, company }) {
     // Sender = the company mailbox when it's a tenant address, else info@crmonce.com.
     const from = company.hr_email && inTenant(company.hr_email) ? company.hr_email : GRAPH_SENDER;
 
-    const gross = payroll.hr_gross != null ? payroll.hr_gross : (payroll.hr_basic || 0) + (payroll.hr_allowances || 0);
+    // Use the SAME canonical figures as the PDF + on-screen view (computeFigures) so
+    // the email body can never disagree with the attachment. `hr_deductions` is only
+    // the "Other Deductions" bucket — NOT the total — so it must never be shown as
+    // Total Deductions (that was the "email shows ₹0" bug). No recalculation of PF/PT/
+    // TDS/LOP here — computeFigures just aggregates the already-stored payroll values.
+    const f = computeFigures(payroll);
     const content =
       `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear ${T._esc(employee.hr_hremployee1 || 'Employee')},</p>` +
       `<p style="margin:0 0 4px;color:#374151;">Your salary slip for <strong>${T._esc(my)}</strong> is attached (PDF).</p>` +
       T.summaryCard('Salary Summary', [
-        ['Gross Salary', T._esc(inr(gross))],
-        ['Total Deductions', T._esc(inr(payroll.hr_deductions || 0))],
-        ['Net Pay', `<strong>${T._esc(inr(payroll.hr_netpay || 0))}</strong>`],
+        ['Gross Salary', T._esc(inr(f.gross))],
+        ['Total Deductions', T._esc(inr(f.deductions))],
+        ['Net Pay', `<strong>${T._esc(inr(f.net))}</strong>`],
       ]) +
       T.banner('This payslip is confidential. Please contact HR for any discrepancy.');
     const html = T.layout({ title: subject, preheader: `Salary slip for ${my}`, content });
