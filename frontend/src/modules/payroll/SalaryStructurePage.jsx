@@ -11,6 +11,7 @@ import { fmtDate } from '../../utils/format';
 import { calculateProfessionalTax } from '../../utils/professionalTax';
 import SearchSelect from '../../components/SearchSelect';
 import Modal, { ModalBody, ModalFooter } from '../../components/Modal';
+import EmployeeAvatar from '../../components/Avatar';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -28,12 +29,11 @@ const STATUS_BADGE = {
   draft: 'bg-amber-50 text-amber-700 ring-amber-600/20',
 };
 
-// ── Initials avatar ──
+// ── Avatar — delegates to the shared component (resolver + broken-image → initials) ──
 function Avatar({ name, photo, size = 'md' }) {
-  const cls = size === 'sm' ? 'w-9 h-9 text-xs' : 'w-11 h-11 text-sm';
-  const initials = (name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
-  if (photo) return <img src={photo} alt={name} className={`${cls} rounded-full object-cover ring-2 ring-white shadow`} />;
-  return <div className={`${cls} rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center ring-2 ring-white shadow`}>{initials}</div>;
+  const box = size === 'sm' ? 'w-9 h-9' : 'w-11 h-11';
+  const txt = size === 'sm' ? 'text-xs' : 'text-sm';
+  return <EmployeeAvatar name={name} photo={photo} className={`${box} rounded-full bg-indigo-100 ring-2 ring-white shadow`} initialsClassName={`${txt} text-indigo-700 font-bold`} />;
 }
 
 // ── Create / Edit modal ──
