@@ -68,8 +68,18 @@ perfRouter.patch('/:id', requirePermission('performance:write'), async (req, res
 });
 
 // ── DOCUMENTS ─────────────────────────────────────────────────────
+// Multer writes to disk here. A CUSTOM UPLOAD_DIR is not created anywhere else
+// (server.js only ensures the default ./uploads), so on a fresh/custom path the
+// disk write fails → 500 "upload failed". Ensure the directory exists up front.
+const UPLOAD_DIR = process.env.UPLOAD_DIR || './uploads';
+try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); }
+catch (e) { (global.logger || console).warn?.(`[documents] could not ensure upload dir ${UPLOAD_DIR}: ${e.message}`); }
 const storage = multer.diskStorage({
-  destination: process.env.UPLOAD_DIR || './uploads',
+  destination: (req, file, cb) => {
+    // Re-ensure per request too, in case the dir was removed at runtime.
+    try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch { /* ignore — cb still points at it */ }
+    cb(null, UPLOAD_DIR);
+  },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${uuidv4()}${ext}`);
