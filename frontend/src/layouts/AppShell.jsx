@@ -9,7 +9,7 @@ import {
   BriefcaseIcon, ChartBarIcon, DocumentTextIcon,
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, ChevronDownIcon, PencilSquareIcon,
-  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, Cog6ToothIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
+  BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
   Squares2X2Icon, ArrowPathIcon, GiftIcon, XCircleIcon,
 } from '@heroicons/react/24/outline';
 
@@ -55,7 +55,9 @@ const NAV = [
       { to: '/salary-structure',   label: 'Salary Structure',   icon: BanknotesIcon },
       { to: '/advance-salary',     label: 'Advance Salary',     icon: BanknotesIcon },
       { to: '/pt-master',          label: 'Professional Tax',   icon: ScaleIcon, roles: ['super_admin', 'hr_manager'] },
-      { to: '/payroll-settings',   label: 'Payroll Settings',   icon: Cog6ToothIcon, roles: ['super_admin'] },
+      // 'Payroll Settings' is intentionally NOT a standalone entry — it lives inside
+      // Company Settings → Payroll & Policies (Super Admin), so it has ONE nav home.
+      // Its /payroll-settings route is preserved for deep links / backward compat.
       { to: '/tax-declarations',   label: 'Tax Declarations',   icon: DocumentTextIcon },
     ],
   },

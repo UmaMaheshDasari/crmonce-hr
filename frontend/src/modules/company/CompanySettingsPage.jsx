@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { companyApi } from '../../api/endpoints';
-import { BuildingOffice2Icon, CurrencyDollarIcon, ScaleIcon, CalendarDaysIcon, GiftIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
+import { CurrencyDollarIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import PayrollSettingsPage from '../payroll/PayrollSettingsPage';
-import PTMasterPage from '../payroll/PTMasterPage';
-import HolidaysPage from '../attendance/HolidaysPage';
-import CelebrationsPage from '../celebrations/CelebrationsPage';
 
 // General tab = company identity + locale/calendar. Everything is company-configurable
 // and stored in hr_companysettings (single source of truth) — never hard-coded.
@@ -123,16 +120,17 @@ function GeneralTab() {
   );
 }
 
-// Company Settings = the single source of truth, organized into professional tabs.
-// Each policy tab reuses the EXISTING settings screen/service (no duplicate stores).
-// The standalone routes (/payroll-settings, /pt-master, /holidays, /celebrations)
-// still work — this is the unified entry point.
+// Company Settings tabs. Each tab reuses the EXISTING settings screen/service — no
+// duplicate stores. To keep every setting in exactly ONE navigation location, only
+// settings whose audience matches this (Super-Admin) page are embedded here:
+//   • General  → company identity + locale (this page)
+//   • Payroll & Policies → the Payroll Settings master form (its standalone sidebar
+//     entry is removed, so it lives ONLY here + its /payroll-settings route)
+// Professional Tax, Holidays and Celebrations keep their OWN sidebar entries (they
+// are HR-manager / employee facing) so they are not duplicated here.
 const TABS = [
-  { key: 'general', label: 'General', icon: BuildingOffice2Icon, render: () => <GeneralTab /> },
+  { key: 'general', label: 'General', icon: GlobeAltIcon, render: () => <GeneralTab /> },
   { key: 'payroll', label: 'Payroll & Policies', icon: CurrencyDollarIcon, render: () => <PayrollSettingsPage /> },
-  { key: 'tax', label: 'Tax & Statutory', icon: ScaleIcon, render: () => <PTMasterPage /> },
-  { key: 'holidays', label: 'Holidays', icon: CalendarDaysIcon, render: () => <HolidaysPage /> },
-  { key: 'notifications', label: 'Notifications', icon: GiftIcon, render: () => <CelebrationsPage /> },
 ];
 
 export default function CompanySettingsPage() {
