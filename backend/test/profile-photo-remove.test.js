@@ -46,12 +46,13 @@ async function del(targetId, kind, user) {
   return { status: res.status, body: await res.json().catch(() => ({})) };
 }
 
-test('employee removes their OWN personal photo → 200, clears ONLY hr_personalphotourl', async () => {
+test('employee removes their photo → 200, clears personal AND suppresses the default (photoremoved=true)', async () => {
   const { status, body } = await del(EMP, 'personal', employee(EMP));
   assert.strictEqual(status, 200);
   assert.strictEqual(body.removed, true);
   assert.strictEqual(updateCalls.length, 1);
-  assert.deepStrictEqual(updateCalls[0].payload, { hr_personalphotourl: null }, 'only the photo field is cleared');
+  // Only photo state is touched: clear personal + set the removed flag (no other field).
+  assert.deepStrictEqual(updateCalls[0].payload, { hr_personalphotourl: null, hr_photoremoved: 'true' });
 });
 
 test("employee CANNOT remove another employee's personal photo → 403, nothing written", async () => {

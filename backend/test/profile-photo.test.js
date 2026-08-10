@@ -34,11 +34,20 @@ test('resolvePhoto: neither photo → "" (caller renders initials, never a broke
   assert.strictEqual(resolvePhoto(null), '');
 });
 
-test('resolvePhoto: removing personal falls back to default (the §11 flow)', () => {
-  const before = { hr_personalphotourl: '/uploads/me.jpg', hr_photourl: '/uploads/hr.jpg' };
-  const afterRemove = { hr_personalphotourl: '', hr_photourl: '/uploads/hr.jpg' };
-  assert.strictEqual(resolvePhoto(before), '/uploads/me.jpg');
-  assert.strictEqual(resolvePhoto(afterRemove), '/uploads/hr.jpg');
+test('resolvePhoto: hr_photoremoved="true" SUPPRESSES the default → "" (show initials)', () => {
+  // The employee removed their photo: personal cleared + removed flag set. The default
+  // (CRMONCE) is NOT restored — the resolver returns '' so the Avatar shows initials.
+  assert.strictEqual(resolvePhoto({ hr_photourl: '/uploads/crmonce.png', hr_photoremoved: 'true' }), '');
+  assert.strictEqual(resolvePhoto({ hr_personalphotourl: '', hr_photourl: '/uploads/hr.jpg', hr_photoremoved: 'true' }), '');
+});
+
+test('resolvePhoto: a personal photo still wins even if the removed flag is stale true', () => {
+  // Uploading a new photo clears the flag, but even if it lingered, personal wins.
+  assert.strictEqual(resolvePhoto({ hr_personalphotourl: '/uploads/new.jpg', hr_photoremoved: 'true' }), '/uploads/new.jpg');
+});
+
+test('resolvePhoto: without the removed flag, default still shows (unchanged)', () => {
+  assert.strictEqual(resolvePhoto({ hr_personalphotourl: '', hr_photourl: '/uploads/hr.jpg' }), '/uploads/hr.jpg');
 });
 
 // ── image-only URL validation (server-side; never trust the client) ──

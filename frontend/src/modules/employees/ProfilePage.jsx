@@ -203,9 +203,11 @@ export default function ProfilePage() {
   const managerName = fmtVal(emp?._reportingmanager || emp?.['_hr_manager_value@OData.Community.Display.V1.FormattedValue']);
   const initials = employeeInitials(emp?.hr_hremployee1);   // central rule (first+last / first-two)
   const photoSrc = getEmployeeProfilePhoto(emp);
-  // Whether the photo THIS modal manages currently exists (so "Remove" only shows
-  // when there is something to remove). Personal on /profile, default under HR.
-  const canRemoveThisKind = paramId ? !!emp?.hr_photourl : !!emp?.hr_personalphotourl;
+  // Show "Remove Photo" whenever a photo is CURRENTLY DISPLAYED. On self-service
+  // (/profile) that means any displayed photo — personal OR the default — so the
+  // employee can remove the default too (removal suppresses it → initials). Under HR
+  // management (/employees/:id/profile) it targets the default column.
+  const canRemoveThisKind = paramId ? !!emp?.hr_photourl : !!photoSrc;
 
   const saveMutation = useMutation({
     mutationFn: (values) => employeeApi.update(id, values),

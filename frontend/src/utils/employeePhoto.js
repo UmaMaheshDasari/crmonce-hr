@@ -30,9 +30,13 @@ function isUsable(raw) {
 /** Raw stored value with the correct priority (before URL construction). */
 function rawPhoto(emp) {
   if (!emp) return '';
-  for (const v of [emp.hr_personalphotourl, emp.personalPhoto, emp.hr_photourl, emp._photo, emp.photo]) {
-    if (isUsable(v)) return String(v).trim();
-  }
+  // Personal photo always wins.
+  for (const v of [emp.hr_personalphotourl, emp.personalPhoto]) if (isUsable(v)) return String(v).trim();
+  // No personal photo: if the employee REMOVED their photo, suppress the default so
+  // the caller shows initials (the CRMONCE default is not restored).
+  if (String(emp.hr_photoremoved).toLowerCase() === 'true') return '';
+  // Else the default photo, or the backend-resolved value (already accounts for removal).
+  for (const v of [emp.hr_photourl, emp._photo, emp.photo]) if (isUsable(v)) return String(v).trim();
   return '';
 }
 

@@ -17,6 +17,7 @@
  */
 const d365 = require('./d365.service');
 const { toValue } = require('./picklist');
+const { resolvePhoto } = require('./employee-photo.util');
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
 
@@ -150,7 +151,7 @@ function fill(tpl, ctx) { return String(tpl ?? '').replace(/\{(\w+)\}/g, (_, k) 
 
 // ── employee scan ─────────────────────────────────────────────────────────────
 const EMP_SELECT = 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,hr_status,hr_joiningdate';
-const EMP_OPT = 'hr_dob,hr_maritalstatus,hr_marriagedate,hr_photourl,hr_personalphotourl,hr_employeeid,hr_employeecode,hr_etimecode';
+const EMP_OPT = 'hr_dob,hr_maritalstatus,hr_marriagedate,hr_photourl,hr_personalphotourl,hr_photoremoved,hr_employeeid,hr_employeecode,hr_etimecode';
 
 async function activeEmployees() {
   const { data } = await d365.getListOptional(EMP, {
@@ -165,7 +166,7 @@ const shapePublic = (e, extra = {}) => ({
   employeeId: e.hr_employeeid || e.hr_employeecode || e.hr_etimecode || '',
   department: e.hr_department || '',
   designation: e.hr_designation || '',
-  photo: e.hr_personalphotourl || e.hr_photourl || '',
+  photo: resolvePhoto(e),
   ...extra,   // years (public) — never the underlying date
 });
 
