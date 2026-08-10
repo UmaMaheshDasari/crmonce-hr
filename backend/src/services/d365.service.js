@@ -158,6 +158,45 @@ class D365Service {
     }
   }
 
+  // Like getByIdOptional, but strips ONLY the specific not-yet-provisioned column and
+  // retries — so a SINGLE missing optional field never drops ALL the optional columns
+  // (which would blank out Identity/Address/Bank/etc. on a record). Falls back to the
+  // primary select only if the missing column can't be identified.
+  async getByIdResilient(entity, id, { select, optionalSelect, ...rest }) {
+    let opt = String(optionalSelect || '').split(',').map(s => s.trim()).filter(Boolean);
+    for (let i = 0; i <= opt.length; i++) {
+      try {
+        return await this.getById(entity, id, { ...rest, select: [select, ...opt].filter(Boolean).join(',') });
+      } catch (err) {
+        if (opt.length && this._isMissingProperty(err)) {
+          const prop = this._missingPropertyName(err);
+          if (prop && opt.includes(prop)) { opt = opt.filter((c) => c !== prop); continue; }
+          return await this.getById(entity, id, { ...rest, select });   // can't name it → primary only
+        }
+        throw err;
+      }
+    }
+    return await this.getById(entity, id, { ...rest, select });
+  }
+
+  // List variant of getByIdResilient — strips only the missing optional column(s).
+  async getListResilient(entity, { select, optionalSelect, ...rest }) {
+    let opt = String(optionalSelect || '').split(',').map(s => s.trim()).filter(Boolean);
+    for (let i = 0; i <= opt.length; i++) {
+      try {
+        return await this.getList(entity, { ...rest, select: [select, ...opt].filter(Boolean).join(',') });
+      } catch (err) {
+        if (opt.length && this._isMissingProperty(err)) {
+          const prop = this._missingPropertyName(err);
+          if (prop && opt.includes(prop)) { opt = opt.filter((c) => c !== prop); continue; }
+          return await this.getList(entity, { ...rest, select });
+        }
+        throw err;
+      }
+    }
+    return await this.getList(entity, { ...rest, select });
+  }
+
   // Surface the FULL Dataverse OData error instead of a bare "status code 400".
   // Keeps err.response intact (so _isMissingProperty etc. still work).
   _enrich(err, op) {

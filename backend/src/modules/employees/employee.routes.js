@@ -129,7 +129,7 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     // Shift columns are OPTIONAL: if the Dataverse columns don't exist
     // yet, the query degrades to the base columns instead of failing (which would
     // empty the whole list). Defaults are then applied below.
-    const result = await d365.getListOptional(ENTITY, {
+    const result = await d365.getListResilient(ENTITY, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,_hr_manager_value',
       optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeeid,hr_employeecode,hr_etimecode,hr_photourl,hr_personalphotourl,modifiedon',
       filter: filters.join(' and ') || undefined,
@@ -150,7 +150,10 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     if (req.user.role === 'employee' && req.params.id !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    const emp = await d365.getByIdOptional(ENTITY, req.params.id, {
+    // Resilient read: a single not-yet-provisioned optional column (e.g. a newly
+    // added field) is stripped and retried, so it NEVER drops all the ESS fields
+    // (Identity/Address/Bank/Emergency/Personal/Master) from My Profile.
+    const emp = await d365.getByIdResilient(ENTITY, req.params.id, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,_hr_manager_value',
       optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,modifiedon,${ESS_OPTIONAL_SELECT}`,
     });
@@ -329,7 +332,7 @@ router.patch('/:id', async (req, res, next) => {
 
     // Diff against the current record (for audit + verification decisions).
     let current = {};
-    try { current = await d365.getByIdOptional(ENTITY, req.params.id, { select: 'hr_hremployee1', optionalSelect: ESS_OPTIONAL_SELECT }); } catch { /* best-effort */ }
+    try { current = await d365.getByIdResilient(ENTITY, req.params.id, { select: 'hr_hremployee1', optionalSelect: ESS_OPTIONAL_SELECT }); } catch { /* best-effort */ }
     const changes = profile.diffChanges(current, raw);
 
     // A self-service change to PAN / Aadhaar / Bank / Address requires HR re-verification.
