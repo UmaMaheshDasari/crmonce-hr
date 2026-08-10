@@ -29,6 +29,7 @@ function ProfilePhotoModal({ onClose, currentSrc, initials, kind, canRemove, onS
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState('');
   const [srcError, setSrcError] = useState(false);   // a broken currentSrc falls back to initials
+  const [confirming, setConfirming] = useState(false);   // "Remove your profile photo?" confirmation
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   const pick = (f) => {
@@ -43,37 +44,59 @@ function ProfilePhotoModal({ onClose, currentSrc, initials, kind, canRemove, onS
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h2 className="text-base font-bold text-gray-900">{kind === 'personal' ? 'Profile Photo' : 'Default Employee Photo'}</h2>
-          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all"><XMarkIcon className="w-5 h-5" /></button>
-        </div>
-        <div className="px-5 py-5 flex flex-col items-center gap-4">
-          <div className="w-32 h-32 rounded-full overflow-hidden ring-2 ring-blue-100 bg-blue-50 flex items-center justify-center">
-            {shown
-              ? <img src={shown} alt="Preview" className="w-full h-full object-cover" onError={() => setSrcError(true)} />
-              : <span className="text-3xl font-bold text-[#2563EB]">{initials}</span>}
-          </div>
-          {preview && <p className="text-xs text-gray-400">Preview — not saved yet</p>}
-          <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-[#2563EB] bg-blue-50 rounded-xl hover:bg-blue-100 cursor-pointer transition-colors">
-            <ArrowUpTrayIcon className="w-4 h-4" /> {currentSrc || preview ? 'Choose a different image' : 'Choose an image'}
-            <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" className="hidden" onChange={e => pick(e.target.files?.[0])} />
-          </label>
-          <p className="text-[11px] text-gray-400 text-center">JPG, PNG, GIF, WEBP or BMP · up to 5 MB.{kind === 'personal' ? ' Removing your personal photo falls back to the default photo.' : ''}</p>
-        </div>
-        <div className="flex items-center gap-2 px-5 py-4 border-t border-gray-100">
-          {canRemove && (
-            <button onClick={onRemove} disabled={removing || saving}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 rounded-xl disabled:opacity-50 transition-colors">
-              <TrashIcon className="w-4 h-4" /> {removing ? 'Removing…' : 'Remove'}
-            </button>
-          )}
-          <div className="flex-1" />
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Cancel</button>
-          <button onClick={() => file && onSave(file)} disabled={!file || saving || removing}
-            className="px-5 py-2 bg-[#2563EB] text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-            {saving ? 'Saving…' : 'Save Photo'}
-          </button>
-        </div>
+        {confirming ? (
+          // ── Confirmation: "Remove your profile photo?" ──
+          <>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h2 className="text-base font-bold text-gray-900">Remove your profile photo?</h2>
+              <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all"><XMarkIcon className="w-5 h-5" /></button>
+            </div>
+            <div className="px-5 py-5">
+              <p className="text-sm text-gray-500 leading-relaxed">Your profile photo will be removed and your default avatar will be shown.</p>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
+              <button onClick={() => setConfirming(false)} disabled={removing} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 transition-colors">Cancel</button>
+              <button onClick={onRemove} disabled={removing}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-xl hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                <TrashIcon className="w-4 h-4" /> {removing ? 'Removing…' : 'Remove Photo'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h2 className="text-base font-bold text-gray-900">{kind === 'personal' ? 'Profile Photo' : 'Default Employee Photo'}</h2>
+              <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all"><XMarkIcon className="w-5 h-5" /></button>
+            </div>
+            <div className="px-5 py-5 flex flex-col items-center gap-4">
+              <div className="w-32 h-32 rounded-full overflow-hidden ring-2 ring-blue-100 bg-blue-50 flex items-center justify-center">
+                {shown
+                  ? <img src={shown} alt="Preview" className="w-full h-full object-cover" onError={() => setSrcError(true)} />
+                  : <span className="text-3xl font-bold text-[#2563EB]">{initials}</span>}
+              </div>
+              {preview && <p className="text-xs text-gray-400">Preview — not saved yet</p>}
+              <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-[#2563EB] bg-blue-50 rounded-xl hover:bg-blue-100 cursor-pointer transition-colors">
+                <ArrowUpTrayIcon className="w-4 h-4" /> {currentSrc || preview ? 'Choose a different image' : 'Choose an image'}
+                <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" className="hidden" onChange={e => pick(e.target.files?.[0])} />
+              </label>
+              <p className="text-[11px] text-gray-400 text-center">JPG, PNG, GIF, WEBP or BMP · up to 5 MB.{kind === 'personal' ? ' Removing your personal photo falls back to the default photo.' : ''}</p>
+            </div>
+            <div className="flex items-center gap-2 px-5 py-4 border-t border-gray-100">
+              {canRemove && (
+                <button onClick={() => setConfirming(true)} disabled={removing || saving}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 rounded-xl disabled:opacity-50 transition-colors">
+                  <TrashIcon className="w-4 h-4" /> Remove Photo
+                </button>
+              )}
+              <div className="flex-1" />
+              <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Cancel</button>
+              <button onClick={() => file && onSave(file)} disabled={!file || saving || removing}
+                className="px-5 py-2 bg-[#2563EB] text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                {saving ? 'Saving…' : 'Save Photo'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -247,12 +270,13 @@ export default function ProfilePage() {
   const removePhoto = useMutation({
     mutationFn: () => employeeApi.removePhoto(id, photoKind),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['employee', id] });
-      qc.invalidateQueries({ queryKey: ['employees'] });
-      toast.success(photoKind === 'personal' ? 'Personal photo removed' : 'Default photo removed');
+      await qc.invalidateQueries({ queryKey: ['employee', id] });   // refetch → Avatar falls back to default/initials
+      qc.invalidateQueries({ queryKey: ['employees'] });            // list avatars
+      toast.success(photoKind === 'personal' ? 'Photo removed' : 'Default photo removed');
       setPhotoOpen(false);
     },
-    onError: (e) => toast.error(e.response?.data?.error || 'Remove failed'),
+    // Friendly message to the user; real error kept in the console/logs for debugging.
+    onError: (e) => { console.error('[profile] remove photo failed:', e); toast.error('Unable to remove profile photo. Please try again.'); },
   });
 
   if (isLoading) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400">Loading profile…</div></div>;
