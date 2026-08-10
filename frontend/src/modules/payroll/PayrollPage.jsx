@@ -247,7 +247,7 @@ export default function PayrollPage() {
     finally { setDownloadingReport(''); }
   };
 
-  const totalNet = records.reduce((s, r) => s + (r.hr_netpay || 0), 0);
+  const totalNet = records.reduce((s, r) => s + (r._net ?? r.hr_netpay ?? 0), 0);
 
   const summaryCards = [
     {
@@ -407,16 +407,16 @@ export default function PayrollPage() {
                       </span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm text-gray-700 font-medium tabular-nums">₹{r.hr_basic?.toLocaleString('en-IN') || '—'}</span>
+                      <span className="text-sm text-gray-700 font-medium tabular-nums">₹{(r._basic ?? r.hr_basic)?.toLocaleString('en-IN') || '—'}</span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm text-emerald-600 font-semibold tabular-nums">+₹{r.hr_allowances?.toLocaleString('en-IN') || '0'}</span>
+                      <span className="text-sm text-emerald-600 font-semibold tabular-nums">+₹{(r._allowances ?? r.hr_allowances)?.toLocaleString('en-IN') || '0'}</span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm text-red-500 font-semibold tabular-nums">-₹{r.hr_deductions?.toLocaleString('en-IN') || '0'}</span>
+                      <span className="text-sm text-red-500 font-semibold tabular-nums">-₹{(r._deductions ?? r.hr_deductions)?.toLocaleString('en-IN') || '0'}</span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm font-bold text-gray-900 tabular-nums">₹{r.hr_netpay?.toLocaleString('en-IN') || '—'}</span>
+                      <span className="text-sm font-bold text-gray-900 tabular-nums">₹{(r._net ?? r.hr_netpay)?.toLocaleString('en-IN') || '—'}</span>
                     </td>
                     <td className="px-5 py-4">
                       {(() => {

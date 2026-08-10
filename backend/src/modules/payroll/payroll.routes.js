@@ -21,7 +21,7 @@ const salaryStructure = require('../../services/salary-structure.service');
 const payrollSettings = require('../../services/payroll-settings.service');
 const ptMaster = require('../../services/pt-master.service');
 const activity = require('../../services/activity.service');
-const { buildPayslipPdf, payslipModel } = require('../../services/payslip.service');
+const { buildPayslipPdf, payslipModel, computeFigures } = require('../../services/payslip.service');
 const { emailPayslip } = require('../../services/payslip-notify.service');
 const { buildReport } = require('../../services/payroll-reports.service');
 
@@ -156,6 +156,18 @@ payrollRouter.get('/', requirePermission('payroll:read'), async (req, res, next)
       top: pageNum * lim,
     });
     const pageData = (result.data || []).slice((pageNum - 1) * lim);
+    // Attach the AUTHORITATIVE totals from the SAME engine the Payroll Detail + Payslip
+    // use (computeFigures) so all three screens agree. hr_allowances / hr_deductions are
+    // only the "Other" buckets — NOT the totals — so the list must never show them raw.
+    for (const r of pageData) {
+      const f = computeFigures(r);
+      const basic = Number(r.hr_basic) || 0;
+      r._basic = basic;
+      r._allowances = f.gross - basic;   // total of ALL allowances (HRA/special/medical/conveyance/other/OT)
+      r._deductions = f.deductions;      // PF + Professional Tax + TDS + LOP + advance + other deductions
+      r._gross = f.gross;
+      r._net = f.net;
+    }
     res.json(labelsForList('hr_hrpayrolls', { data: pageData, count: result.count }));
   } catch (err) { next(err); }
 });
