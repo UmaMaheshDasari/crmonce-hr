@@ -1,46 +1,62 @@
 /**
- * THE single employee-profile-photo resolver — used EVERYWHERE a photo is shown so
- * the selection logic is never duplicated per component.
+ * THE single employee-profile-photo resolver — used EVERYWHERE (via <Avatar/>) so
+ * the selection + URL logic is never duplicated per component.
  *
- * Priority (same on the backend, employee.routes resolvePhoto):
- *   1. Personal photo  (employee-chosen)      → hr_personalphotourl / personalPhoto
- *   2. Default photo    (HR/Admin-set)          → hr_photourl
- *   3. Backend-resolved `photo`/`_photo`        → already personal→default from the API
- *   4. ''  → caller shows initials / default avatar (never a broken image)
+ * Priority (same as the backend, employee.routes resolvePhoto):
+ *   1. Personal photo (employee-chosen)   → hr_personalphotourl / personalPhoto
+ *   2. Default photo  (HR/Admin-set)        → hr_photourl
+ *   3. Backend-resolved `photo`/`_photo`     → already personal→default from the API
+ *   4. ''  → caller shows initials (never a broken image)
  *
- * Files live under the API server's /uploads (served statically), so a relative
- * "/uploads/x.jpg" is made absolute against the API ORIGIN (not the /api base).
- * A cache-busting ?v=<modifiedon> is appended so a REPLACED photo is never served
- * from a stale browser cache.
+ * URL: uploaded files live on the API server. The SPA is hosted separately and only
+ * proxies `/api` to the backend, so a bare "/uploads/x.jpg" is NOT reachable from
+ * the browser in production. We therefore serve photos through the API base
+ * (`/api/uploads/...`, images-only mount) — reachable in every deployment. A
+ * cache-busting `?v=<modifiedon>` is appended so a REPLACED photo is never served
+ * stale.
  */
-const ORIGIN = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
+// Same source of truth as the axios client (src/api/client.js): '/api' in prod,
+// 'http://localhost:5000/api' in dev. Trailing slash stripped.
+const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
 
-function absolutize(raw) {
-  if (!raw) return '';
-  if (/^(https?:|data:|blob:)/i.test(raw)) return raw;   // already absolute / inline
-  return ORIGIN + (raw.startsWith('/') ? raw : `/${raw}`);
+// A stored value is USABLE only if it is a real, non-sentinel string.
+function isUsable(raw) {
+  if (raw === null || raw === undefined) return false;
+  const s = String(raw).trim();
+  if (!s) return false;
+  return !['null', 'undefined', 'false', '0', 'nan'].includes(s.toLowerCase());
 }
 
-/** Raw stored value with correct priority (before absolutize/version). */
+/** Raw stored value with the correct priority (before URL construction). */
 function rawPhoto(emp) {
   if (!emp) return '';
-  return (
-    emp.hr_personalphotourl ||
-    emp.personalPhoto ||
-    emp.hr_photourl ||
-    emp._photo ||
-    emp.photo ||
-    ''
-  );
+  for (const v of [emp.hr_personalphotourl, emp.personalPhoto, emp.hr_photourl, emp._photo, emp.photo]) {
+    if (isUsable(v)) return String(v).trim();
+  }
+  return '';
+}
+
+/** Turn a stored value into a browser-reachable, validated <img src>, or ''. */
+function toSrc(raw) {
+  if (!isUsable(raw)) return '';
+  const s = String(raw).trim();
+  // Already absolute / inline — trust as-is (an external CDN URL or data/blob).
+  if (/^(https?:|data:|blob:)/i.test(s)) return s;
+  // Anything else must be an uploaded file → serve it through the API base.
+  const rel = s.replace(/^\/api(?=\/uploads\/)/i, '');          // normalise an /api-prefixed path
+  const path = rel.startsWith('/uploads/') ? rel
+    : `/uploads/${rel.replace(/^\/+/, '')}`;                     // bare filename → /uploads/<file>
+  return `${API_BASE}${path}`;
 }
 
 /**
  * @param {object} emp - an employee-like object (raw hr_* record OR an enriched
- *   { photo, modifiedon } card). Missing fields are simply skipped.
- * @returns {string} a ready-to-use <img src> URL, or '' when there is no photo.
+ *   { photo, modifiedon } card). Missing fields are skipped.
+ * @returns {string} a ready-to-use, validated <img src> URL, or '' when there is
+ *   no usable photo (the caller then shows initials).
  */
 export function getEmployeeProfilePhoto(emp) {
-  const url = absolutize(rawPhoto(emp));
+  const url = toSrc(rawPhoto(emp));
   if (!url) return '';
   const v = emp?.modifiedon || emp?._photoVersion;
   if (!v) return url;
@@ -52,12 +68,13 @@ export function hasEmployeePhoto(emp) {
   return !!rawPhoto(emp);
 }
 
-/** Initials fallback — two letters, upper-case (or '?'). */
+/** Initials fallback — two letters, upper-case (e.g. "Uma Mahesh" → "UM"), or '?'. */
 export function employeeInitials(name) {
   return (
     String(name || '')
       .trim()
       .split(/\s+/)
+      .filter(Boolean)
       .map((n) => n[0])
       .join('')
       .slice(0, 2)

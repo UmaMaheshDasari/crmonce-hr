@@ -10,7 +10,7 @@ import { StarIcon as StarSolid } from '@heroicons/react/24/solid';
 import { useAuth } from '../../context/AuthContext';
 import { fmtVal, fmtDate } from '../../utils/format';
 import toast from 'react-hot-toast';
-import { getEmployeeProfilePhoto } from '../../utils/employeePhoto';
+import Avatar from '../../components/Avatar';
 
 // ── Constants ───────────────────────────────────────────────────
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
@@ -449,7 +449,6 @@ function GoalCard({ goal, canEdit, canDelete, canReview, onUpdateProgress, onRev
   const status = STATUS_CONFIG[goal.hr_status] || STATUS_CONFIG.not_started;
   const emp = goal._employee || {};
   const empName = emp.name || goal.hr_employeename || '—';
-  const initials = empName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
 
   return (
     <div className={`bg-white rounded-xl border border-gray-100 border-l-4 ${priority.border} shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col`}>
@@ -465,9 +464,7 @@ function GoalCard({ goal, canEdit, canDelete, canReview, onUpdateProgress, onRev
 
         {/* Assigned To */}
         <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5 mb-3">
-          <div className="w-9 h-9 rounded-full overflow-hidden bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-            {getEmployeeProfilePhoto(emp) ? <img src={getEmployeeProfilePhoto(emp)} alt={empName} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} /> : initials}
-          </div>
+          <Avatar emp={emp} name={empName} className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex-shrink-0" initialsClassName="text-white text-xs font-bold" />
           <div className="min-w-0">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Assigned To</p>
             <p className="text-sm font-semibold text-gray-900 truncate">{empName}</p>

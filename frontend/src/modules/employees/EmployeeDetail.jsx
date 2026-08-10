@@ -8,7 +8,7 @@ import LeaveBalance from '../attendance/LeaveBalance';
 import { formatDuration } from '../../utils/formatDuration';
 import { fmtTime, fmtVal, fmtDate } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
-import { getEmployeeProfilePhoto } from '../../utils/employeePhoto';
+import Avatar from '../../components/Avatar';
 
 const STATUS_STYLES = {
   active: 'bg-emerald-50 text-emerald-700 ring-emerald-600/10',
@@ -77,8 +77,6 @@ export default function EmployeeDetail() {
     </div>
   );
 
-  const initials = emp.hr_hremployee1?.split(' ').map(n=>n[0]).join('').slice(0,2);
-  const photoSrc = getEmployeeProfilePhoto(emp);
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -95,11 +93,7 @@ export default function EmployeeDetail() {
         <div className="h-28 bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50" />
         <div className="px-8 pb-8">
           <div className="flex flex-col sm:flex-row sm:items-end gap-5 -mt-14">
-            <div className={`w-24 h-24 rounded-2xl overflow-hidden flex items-center justify-center ring-4 ring-white shadow-lg flex-shrink-0 bg-gradient-to-br ${getAvatarGradient(emp.hr_hremployee1)}`}>
-              {photoSrc
-                ? <img src={photoSrc} alt={emp.hr_hremployee1} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} />
-                : <span className="text-white text-2xl font-bold">{initials}</span>}
-            </div>
+            <Avatar emp={emp} className={`w-24 h-24 rounded-2xl ring-4 ring-white shadow-lg flex-shrink-0 bg-gradient-to-br ${getAvatarGradient(emp.hr_hremployee1)}`} initialsClassName="text-white text-2xl font-bold" />
             <div className="flex-1 pt-2">
               <div className="flex items-start justify-between flex-wrap gap-3">
                 <div>

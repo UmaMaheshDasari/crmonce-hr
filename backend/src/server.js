@@ -88,12 +88,23 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// ── Static uploads ────────────────────────────────────────────────
+const UPLOADS_DIR = path.resolve(process.env.UPLOAD_DIR || './uploads');
+app.use('/uploads', express.static(UPLOADS_DIR));
+// Also serve IMAGES ONLY under /api/uploads. The SPA is hosted separately and only
+// proxies /api to this backend, so a bare "/uploads/x.jpg" is unreachable from the
+// browser in production — routing profile photos through /api makes them load in
+// EVERY deployment (dev proxy + prod same-origin). Restricted to image extensions
+// so this never widens exposure of non-image documents (Aadhaar/PAN/cheque PDFs).
+// Registered BEFORE the /api rate limiter so avatar loads never count against it.
+app.use('/api/uploads', (req, res, next) => {
+  if (!/\.(jpe?g|png|gif|webp|bmp)$/i.test(req.path)) return res.status(404).end();
+  next();
+}, express.static(UPLOADS_DIR));
+
 // ── Rate limiting ─────────────────────────────────────────────────
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 50,  message: { error: 'Too many auth requests' } }));
 app.use('/api',      rateLimit({ windowMs: 15 * 60 * 1000, max: 500, message: { error: 'Too many requests' } }));
-
-// ── Static uploads ────────────────────────────────────────────────
-app.use('/uploads', express.static(path.resolve(process.env.UPLOAD_DIR || './uploads')));
 
 // ── Health check ──────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

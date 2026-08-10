@@ -14,6 +14,7 @@ import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRu
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
 import DocumentsManager from '../../components/DocumentsManager';
+import Avatar from '../../components/Avatar';
 import { getEmployeeProfilePhoto } from '../../utils/employeePhoto';
 
 // Accepted profile-photo formats + max size (validated again on the server).
@@ -27,6 +28,7 @@ function ProfilePhotoModal({ onClose, currentSrc, initials, kind, canRemove, onS
   // Mounted only while open (see the caller), so local state starts fresh each time.
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState('');
+  const [srcError, setSrcError] = useState(false);   // a broken currentSrc falls back to initials
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   const pick = (f) => {
@@ -36,7 +38,7 @@ function ProfilePhotoModal({ onClose, currentSrc, initials, kind, canRemove, onS
     if (preview) URL.revokeObjectURL(preview);
     setFile(f); setPreview(URL.createObjectURL(f));
   };
-  const shown = preview || currentSrc;
+  const shown = preview || (srcError ? '' : currentSrc);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
@@ -48,7 +50,7 @@ function ProfilePhotoModal({ onClose, currentSrc, initials, kind, canRemove, onS
         <div className="px-5 py-5 flex flex-col items-center gap-4">
           <div className="w-32 h-32 rounded-full overflow-hidden ring-2 ring-blue-100 bg-blue-50 flex items-center justify-center">
             {shown
-              ? <img src={shown} alt="Preview" className="w-full h-full object-cover" />
+              ? <img src={shown} alt="Preview" className="w-full h-full object-cover" onError={() => setSrcError(true)} />
               : <span className="text-3xl font-bold text-[#2563EB]">{initials}</span>}
           </div>
           {preview && <p className="text-xs text-gray-400">Preview — not saved yet</p>}
@@ -289,11 +291,7 @@ export default function ProfilePage() {
             <div className="flex-1 min-w-0">
               <div className="flex items-start gap-4">
                 <div className="relative flex-shrink-0 group">
-                  <div className="w-20 h-20 rounded-full overflow-hidden ring-2 ring-blue-100 bg-blue-50 flex items-center justify-center">
-                    {photoSrc
-                      ? <img src={photoSrc} alt={emp.hr_hremployee1} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} />
-                      : <span className="text-xl font-bold text-[#2563EB]">{initials}</span>}
-                  </div>
+                  <Avatar emp={emp} className="w-20 h-20 rounded-full ring-2 ring-blue-100 bg-blue-50" initialsClassName="text-xl font-bold text-[#2563EB]" />
                   {canEdit && (
                     <button type="button" onClick={() => setPhotoOpen(true)} aria-label="Change photo"
                       className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">

@@ -1,17 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { celebrationsApi } from '../../api/endpoints';
-import { getEmployeeProfilePhoto, employeeInitials as initials } from '../../utils/employeePhoto';
+import Avatar from '../../components/Avatar';
 
 // Privacy: shows ONLY photo, name, employee id, department, designation — never the
 // underlying Date of Birth / Marriage Date (the API doesn't return them).
 
 function Person({ p, accent }) {
-  const photo = getEmployeeProfilePhoto(p);
   return (
     <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-3 py-2.5">
-      <div className={`w-10 h-10 rounded-full overflow-hidden flex-shrink-0 grid place-items-center ${accent.bg} ${accent.text} font-bold text-sm`}>
-        {photo ? <img src={photo} alt={p.name} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none'; }} /> : initials(p.name)}
-      </div>
+      <Avatar emp={p} name={p.name} className={`w-10 h-10 rounded-full flex-shrink-0 ${accent.bg}`} initialsClassName={`font-bold text-sm ${accent.text}`} />
       <div className="min-w-0">
         <p className="text-sm font-semibold text-gray-900 truncate">{p.name}
           {p.years ? <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${accent.bg} ${accent.text}`}>{p.years} yr{p.years === 1 ? '' : 's'}</span> : null}
