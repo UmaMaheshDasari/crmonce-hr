@@ -54,6 +54,17 @@ test('sendOnce sends the first time, SKIPS every repeat (recalc/refresh/payroll)
   assert.strictEqual(store.rows.filter(r => r.status === 'sent').length, 1);
 });
 
+// ── CONCURRENCY: the same event fired at the same instant (e.g. two overlapping
+//    runs) must still send EXACTLY ONE email — the in-process per-key lock serializes
+//    the calls so the second sees the first recorded and skips. ──
+test('concurrent sends of the SAME event → exactly ONE email (in-process serialization)', async () => {
+  const results = await Promise.all([send(), send(), send(), send()]);
+  assert.strictEqual(results.filter(r => r.sent).length, 1, 'exactly one actually sent');
+  assert.strictEqual(results.filter(r => r.skipped).length, 3, 'the rest skipped');
+  assert.strictEqual(notification.getOutbox().length, 1, 'only ONE email left the system');
+  assert.strictEqual(store.rows.filter(r => r.status === 'sent').length, 1);
+});
+
 // ── §20 I: same employee, another DATE → allowed ──
 test('a different date is a new notification (allowed)', async () => {
   await send({ date: '2026-08-10' });

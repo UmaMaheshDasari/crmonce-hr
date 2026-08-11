@@ -1,6 +1,27 @@
 const cron = require('node-cron');
 
+/**
+ * True only for the ONE process that should own the scheduler. Under PM2 cluster
+ * mode every worker runs server.js (and thus initJobs), so without this gate each
+ * cron fires once PER worker → duplicate emails/notifications. PM2 sets
+ * NODE_APP_INSTANCE to the 0-based worker index; the scheduler runs only on instance
+ * '0'. Fork mode / plain `node` / dev has no NODE_APP_INSTANCE → runs normally.
+ * SCHEDULER_ENABLED=false force-disables it (e.g. a dedicated scheduler process).
+ */
+function isSchedulerInstance() {
+  if (process.env.SCHEDULER_ENABLED === 'false') return false;
+  const inst = process.env.NODE_APP_INSTANCE;
+  return inst === undefined || inst === '' || inst === '0';
+}
+
 function initJobs() {
+  // Register the scheduler in exactly ONE process — every other PM2 worker is a no-op
+  // so scheduled notifications are sent once, not once-per-worker.
+  if (!isSchedulerInstance()) {
+    global.logger?.info(`Cron scheduler NOT started on worker instance ${process.env.NODE_APP_INSTANCE} (runs only on the primary instance)`);
+    return;
+  }
+
   // Attendance sync is handled by zk-push.service.js (push+proxy mode) — no pull cron.
 
   // Attendance Exception scan: detect missing-punch exceptions on completed days and
@@ -64,4 +85,4 @@ function initJobs() {
   global.logger?.info('Cron jobs initialized');
 }
 
-module.exports = { initJobs };
+module.exports = { initJobs, isSchedulerInstance };

@@ -65,16 +65,32 @@ let store = d365Store;
 /** Inject a custom store (tests). Pass nothing to restore the Dataverse store. */
 function setStore(s) { store = s || d365Store; }
 
+// In-process serialization per event key. Two overlapping sends of the SAME logical
+// event in this process (e.g. a cron run + a manual "Run Now") must not both pass the
+// hasSent check and double-send — the second waits for the first, then sees it
+// recorded and skips. (Cross-process duplication is prevented by running the scheduler
+// in ONE process — see jobs/index.isSchedulerInstance.)
+const _inflight = new Map();   // key → Promise
+
 /**
  * Send an informational email AT MOST ONCE per (employeeId, date, type).
  * @returns {Promise<{sent?:boolean, skipped?:boolean, reason?:string, error?:string}>}
  */
-async function sendOnce({ employeeId, date, type, to, cc, subject, html, from, attachments, requestId, entity }) {
-  if (!to) return { skipped: true, reason: 'no_recipient' };
+async function sendOnce(opts) {
+  if (!opts.to) return { skipped: true, reason: 'no_recipient' };
+  const key = keyOf(opts.employeeId, opts.date, opts.type);
+  while (_inflight.has(key)) { await _inflight.get(key).catch(() => {}); }   // await any in-flight same-key send
+  const run = _sendOnce(opts, key);
+  _inflight.set(key, run);
+  try { return await run; }
+  finally { if (_inflight.get(key) === run) _inflight.delete(key); }
+}
+
+async function _sendOnce({ employeeId, date, type, to, cc, subject, html, from, attachments, requestId, entity }, key) {
   if (store === d365Store) await ensureTable();
 
   if (await store.hasSent(employeeId, date, type)) {
-    global.logger?.info?.(`[notif-ledger] duplicate suppressed: ${keyOf(employeeId, date, type)} → ${to}`);
+    global.logger?.info?.(`[notif-ledger] duplicate suppressed: ${key} → ${to}`);
     return { skipped: true, reason: 'already_sent' };
   }
 
