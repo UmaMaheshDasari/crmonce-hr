@@ -220,7 +220,7 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       const structure = await salaryStructure.getActiveStructure(d365, emp.hr_hremployeeid, asOf);
       if (!structure) {
         noStructure++;
-        warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'no_salary_structure', message: 'No active Salary Structure — payroll skipped (Employee-Master salary is never used).' });
+        warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'no_salary_structure', message: `Salary Structure not found for the payroll period (no revision effective on or before ${month}/${year}).` });
         continue;
       }
       const earnings = { basic: structure.basic, hra: structure.hra, special: structure.special, medical: structure.medical, conveyance: structure.conveyance, otherAllowance: structure.otherAllowance };
@@ -308,7 +308,7 @@ async function validateGeneration(req, res, next) {
       const existing = await d365.getListOptional(PAYROLL, { select: 'hr_hrpayrollid', optionalSelect: 'hr_locked', filter: `_hr_hremployee_value eq '${emp.hr_hremployeeid}' and hr_month eq ${month} and hr_year eq ${year}`, top: 1 });
       if (existing.data?.[0]?.hr_locked === 'true') { lockedCount++; continue; }
       const structure = await salaryStructure.getActiveStructure(d365, emp.hr_hremployeeid, asOf);
-      if (!structure) { blocked++; warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'no_salary_structure', message: 'No active Salary Structure — this employee will be skipped.' }); continue; }
+      if (!structure) { blocked++; warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'no_salary_structure', message: `Salary Structure not found for the payroll period (no revision effective on or before ${month}/${year}).` }); continue; }
       const att = await computeMonthFacts(emp.hr_hremployeeid, month, year, settings);
       for (const w of att.warnings) warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, ...w });
       ready++;

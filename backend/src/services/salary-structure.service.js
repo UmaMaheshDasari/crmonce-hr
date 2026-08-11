@@ -162,30 +162,27 @@ async function getEffectiveStructure(d365, employeeId, asOfDate) {
 }
 
 /**
- * The LATEST ACTIVE salary structure for an employee — the ONLY source payroll
- * may read (Employee-Master salary is never used, old/superseded revisions are
- * ignored). Prefers the latest active revision effective on/before `asOfDate`;
- * if none is effective yet, falls back to the latest active revision. Returns a
- * shaped object or null (→ payroll must warn "No Salary Structure", not guess).
+ * The salary structure that APPLIES to a payroll period — selected by Effective From
+ * ONLY: the latest revision whose `hr_effectivefrom` is on/before `asOfDate`,
+ * IGNORING the mutable active/superseded flag (an older, now-superseded revision is
+ * exactly what an earlier period needs). There is NO date-blind fallback: if no
+ * revision is effective on/before the period, this returns null so payroll flags
+ * "Salary Structure not found for the payroll period" — a future/current structure is
+ * NEVER used for an earlier period. Returns a shaped object or null.
+ *
+ * (Name kept for call-site stability; selection is effective-date based, not status.)
  */
 async function getActiveStructure(d365, employeeId, asOfDate) {
   const ENTITY = d365.constructor.entities.salaryStructure;
   const q = `'${String(employeeId).replace(/'/g, "''")}'`;
   const asOf = String(asOfDate || '').slice(0, 10);
   try {
-    if (asOf) {
-      const r = await d365.getListOptional(ENTITY, {
-        select: SELECT,
-        filter: `hr_employeeid eq ${q} and hr_status eq 'active' and hr_effectivefrom le '${asOf}'`,
-        orderby: 'hr_effectivefrom desc,createdon desc', top: 1,
-      });
-      if (r.data && r.data[0]) return shape(r.data[0]);
-    }
-    const r2 = await d365.getListOptional(ENTITY, {
-      select: SELECT, filter: `hr_employeeid eq ${q} and hr_status eq 'active'`,
+    const r = await d365.getListOptional(ENTITY, {
+      select: SELECT,
+      filter: `hr_employeeid eq ${q}${asOf ? ` and hr_effectivefrom le '${asOf}'` : ''}`,
       orderby: 'hr_effectivefrom desc,createdon desc', top: 1,
     });
-    return r2.data && r2.data[0] ? shape(r2.data[0]) : null;
+    return r.data && r.data[0] ? shape(r.data[0]) : null;
   } catch { return null; }
 }
 
