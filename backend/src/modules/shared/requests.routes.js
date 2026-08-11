@@ -39,6 +39,7 @@ router.get('/:type/:id', async (req, res, next) => {
       type: req.params.type, id: req.params.id, status: v.canonical,
       summary: v.summary, cancellation: v.cancellation,
       capabilities: {
+        canEdit: v.adapter.canEdit !== false && v.canonical === 'pending',
         canDelete: v.adapter.canDelete !== false && ['pending', 'rejected'].includes(v.canonical),
         canResubmit: v.adapter.canResubmit !== false && v.canonical === 'rejected',
         canRequestCancellation: v.adapter.canCancel !== false && ['approved', 'manager_approved'].includes(v.canonical) && !v.cancellation,
@@ -57,6 +58,13 @@ router.get('/:type/:id/audit', async (req, res, next) => {
 
 router.delete('/:type/:id', async (req, res, next) => {
   try { res.json(await lifecycle.remove({ type: req.params.type, id: req.params.id, user: req.user })); }
+  catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
+
+// Edit a PENDING request in place (owner only). 2-segment path — never collides with
+// the 4-segment cancellation PATCH routes below.
+router.patch('/:type/:id', async (req, res, next) => {
+  try { res.json(await lifecycle.edit({ type: req.params.type, id: req.params.id, edits: req.body?.edits || {}, user: req.user })); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 

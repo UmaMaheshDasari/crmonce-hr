@@ -1,9 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { historicalAttendanceApi, employeeApi, documentApi } from '../../api/endpoints';
+import { historicalAttendanceApi, employeeApi, documentApi, requestLifecycleApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import { useDocumentViewer } from '../../components/DocumentViewer';
 import Button from '../../components/Button';
+import RequestLifecycleActions from '../../components/RequestLifecycleActions';
+
+// Canonical lifecycle status (more_info counts as still-pending / editable).
+const canonHist = (r) => (r.status === 'rejected' ? 'rejected' : r.status === 'approved' ? 'approved' : 'pending');
 import { PlusIcon, XMarkIcon, CheckIcon, PaperClipIcon, ClockIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 import { format, subMonths } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -20,10 +24,13 @@ const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—'
 const fmtT = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy, HH:mm') : '—'; } catch { return '—'; } };
 const todayStr = new Date().toISOString().slice(0, 10);
 
-function RaiseModal({ isHR, employees, monthsBack, onClose }) {
+function RaiseModal({ isHR, employees, monthsBack, editRecord, onClose }) {
   const qc = useQueryClient();
   const { view, viewer } = useDocumentViewer();
-  const [f, setF] = useState({ employeeId: '', date: todayStr, inTime: '09:00', outTime: '18:00', reason: '', comments: '' });
+  const isEdit = !!editRecord;
+  const [f, setF] = useState(editRecord
+    ? { employeeId: editRecord.employeeId || '', date: String(editRecord.date || '').slice(0, 10), inTime: editRecord.inTime || '', outTime: editRecord.outTime || '', reason: editRecord.reason || '', comments: editRecord.comments || '' }
+    : { employeeId: '', date: todayStr, inTime: '09:00', outTime: '18:00', reason: '', comments: '' });
   const [attachment, setAttachment] = useState(null);
   const [uploading, setUploading] = useState(false);
   const minDate = format(subMonths(new Date(), monthsBack || 6), 'yyyy-MM-dd');
@@ -42,8 +49,12 @@ function RaiseModal({ isHR, employees, monthsBack, onClose }) {
   };
 
   const mut = useMutation({
-    mutationFn: () => historicalAttendanceApi.create({ ...f, attachmentId: attachment?.id || undefined }),
-    onSuccess: () => { toast.success('Historical Attendance request submitted'); qc.invalidateQueries({ queryKey: ['hist-attendance'] }); onClose(); },
+    // Editing a PENDING request changes date/time/reason via the shared lifecycle
+    // (owner + pending enforced server-side; status/approval never touched).
+    mutationFn: () => isEdit
+      ? requestLifecycleApi.edit('historical_attendance', editRecord.id, { date: f.date, inTime: f.inTime, outTime: f.outTime, reason: f.reason, comments: f.comments })
+      : historicalAttendanceApi.create({ ...f, attachmentId: attachment?.id || undefined }),
+    onSuccess: () => { toast.success(isEdit ? 'Historical Attendance updated' : 'Historical Attendance request submitted'); qc.invalidateQueries({ queryKey: ['hist-attendance'] }); onClose(); },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to submit'),
   });
   const invalid = (isHR && !f.employeeId) || !f.date || !f.reason.trim();
@@ -52,12 +63,12 @@ function RaiseModal({ isHR, employees, monthsBack, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl my-8">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-bold text-gray-900">Raise Historical Attendance</h2>
+          <h2 className="text-lg font-bold text-gray-900">{isEdit ? 'Edit Historical Attendance' : 'Raise Historical Attendance'}</h2>
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
           <p className="text-xs text-gray-500">Record attendance for a past date you were marked Absent — within the last {monthsBack || 6} months. HR approval replaces the day's record (no duplicate row).</p>
-          {isHR && (
+          {isHR && !isEdit && (
             <div><label className="block text-xs font-semibold text-gray-600 mb-1">Employee</label>
               <select className={inp} value={f.employeeId} onChange={e => setF(p => ({ ...p, employeeId: e.target.value }))}>
                 <option value="">Select employee…</option>
@@ -95,7 +106,7 @@ function RaiseModal({ isHR, employees, monthsBack, onClose }) {
         </div>
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
-          <Button onClick={() => mut.mutate()} loading={mut.isPending} disabled={invalid}>Submit</Button>
+          <Button onClick={() => mut.mutate()} loading={mut.isPending} disabled={invalid}>{isEdit ? 'Save Changes' : 'Submit'}</Button>
         </div>
       </div>
       {viewer}
@@ -108,6 +119,7 @@ export default function HistoricalAttendanceRequestsPage() {
   const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
   const qc = useQueryClient();
   const [show, setShow] = useState(false);
+  const [editRecord, setEditRecord] = useState(null);   // employee editing their own pending request
   const [statusF, setStatusF] = useState('');
 
   const { data: policyRes } = useQuery({ queryKey: ['hist-attendance-policy'], queryFn: () => historicalAttendanceApi.policy().then(r => r.data) });
@@ -206,6 +218,16 @@ export default function HistoricalAttendanceRequestsPage() {
                         </>
                       )}
                       {r.approverComment && <span title={r.approverComment} className="inline-flex items-center text-gray-400"><ClockIcon className="w-3.5 h-3.5" /></span>}
+                      {/* Employee self-service on their OWN request (Edit/Delete pending;
+                          Edit&Resubmit/Delete rejected; approved → History only). */}
+                      {user?.id && r.employeeId === user.id && (
+                        <RequestLifecycleActions
+                          type="historical_attendance" id={r.id} status={canonHist(r)}
+                          caps={{ canCancel: false }}
+                          onEdit={() => setEditRecord(r)}
+                          invalidateKeys={[['hist-attendance']]}
+                        />
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -216,6 +238,7 @@ export default function HistoricalAttendanceRequestsPage() {
       </div>
 
       {show && <RaiseModal isHR={hr} employees={employees} monthsBack={monthsBack} onClose={() => setShow(false)} />}
+      {editRecord && <RaiseModal isHR={hr} employees={employees} monthsBack={monthsBack} editRecord={editRecord} onClose={() => setEditRecord(null)} />}
     </div>
   );
 }

@@ -180,13 +180,39 @@ router.patch('/:id/reject', requireRole('super_admin', 'hr_manager'), async (req
   }
 });
 
-// ── DELETE /:id  — cancel a PENDING request (owner) or any (Super Admin) ──
+// ── PATCH /:id  — employee edits their OWN PENDING request (amount / reason / EMI) ──
+// Owner-only; never editable once it has left 'pending'. Status is never employee-editable.
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const current = advance.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: advance.SELECT }));
+    const isSuperAdmin = req.user.role === 'super_admin';
+    if (!isSuperAdmin && current.employeeId !== req.user.id) return res.status(403).json({ error: 'You can only modify your own request.' });
+    if (current.status !== 'pending') return res.status(409).json({ error: 'This request can no longer be modified.' });
+    const body = {};
+    if (req.body.amount !== undefined) { const amt = Math.round(Number(req.body.amount) || 0); if (!(amt > 0)) return res.status(400).json({ error: 'Advance amount must be greater than 0.' }); body.hr_amount = amt; }
+    if (req.body.reason !== undefined) { const r = String(req.body.reason).trim(); if (!r) return res.status(400).json({ error: 'Please provide a reason.' }); body.hr_reason = r; }
+    if (req.body.emi !== undefined) body.hr_emi = Math.max(0, Math.round(Number(req.body.emi) || 0));
+    if (!Object.keys(body).length) return res.json(current);
+    const updated = advance.shape(await d365.update(ENTITY, req.params.id, body));
+    await enrich([updated]);
+    res.json(updated);
+  } catch (err) {
+    console.error('[advance/edit] FAILED:', err.message);
+    res.status(err.status || 400).json({ error: err.message || 'Failed to update advance' });
+  }
+});
+
+// ── DELETE /:id  — remove a PENDING/REJECTED request (owner or Super Admin) ──
+// An advance that has begun/finished salary recovery (any amount recovered, or status
+// approved/completed) is a committed financial record and can NEVER be deleted — not
+// even by a super admin. Only pending or rejected requests (no money moved) are removable.
 router.delete('/:id', async (req, res, next) => {
   try {
     const current = advance.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: advance.SELECT }));
     const isSuperAdmin = req.user.role === 'super_admin';
-    if (!isSuperAdmin && current.employeeId !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-    if (!isSuperAdmin && current.status !== 'pending') return res.status(400).json({ error: 'Only pending requests can be cancelled.' });
+    if (!isSuperAdmin && current.employeeId !== req.user.id) return res.status(403).json({ error: 'You can only modify your own request.' });
+    if ((current.recovered || 0) > 0) return res.status(409).json({ error: 'This request can no longer be deleted — salary recovery has already begun.' });
+    if (!['pending', 'rejected'].includes(current.status)) return res.status(409).json({ error: 'This request can no longer be deleted.' });
     await d365.delete(ENTITY, req.params.id);
     res.json({ message: 'Advance request removed' });
   } catch (err) {

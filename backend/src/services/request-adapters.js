@@ -58,7 +58,9 @@ registerAdapter({
   },
   cancelledPatch: () => ({ hr_status: toValue('hr_leave_status', 'cancelled') }),
   resubmitPatch: () => ({ hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_l2status: '' }),
-  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason' }),
+  // Editable while PENDING (or on resubmit): reason + dates + days. Leave TYPE stays
+  // fixed (option-set) and status fields are never employee-editable.
+  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', fromDate: 'hr_fromdate', toDate: 'hr_todate', days: 'hr_days' }),
   summary: (r) => `${toLabel('hr_leave_type', r.hr_leavetype) || 'Leave'} ${String(r.hr_startdate || '').slice(0, 10)}→${String(r.hr_enddate || '').slice(0, 10)}`,
   managerRecipients: (r) => managerRecipientsFor(r._hr_hremployee_value),
   hrRecipients,
@@ -130,8 +132,34 @@ registerAdapter({
   },
   cancelledPatch: () => ({ hr_status: 'rejected' }),
   resubmitPatch: () => ({ hr_status: 'pending' }),
-  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', remarks: 'hr_remarks' }),
+  // Editable while PENDING (or on resubmit): the correction content itself.
+  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', remarks: 'hr_remarks', date: 'hr_attendancedate', punchType: 'hr_punchtype', requestedTime: 'hr_requestedtime' }),
   summary: (r) => `Attendance Correction ${String(r.hr_date || '').slice(0, 10)}`,
+  managerRecipients: (r) => managerRecipientsFor(r.hr_employeeid),
+  hrRecipients,
+  employeeContact: (r) => contactFor(r.hr_employeeid),
+});
+
+// ── 6. Historical Attendance (text status; pending / approved / rejected / more_info) ──
+// An APPROVED request has already upserted the day's attendance record, so it is a
+// factual record — cancellation is off. Delete (pending/rejected) and Edit (pending) /
+// Edit & Resubmit (rejected) apply. more_info is treated as still-pending (editable).
+registerAdapter({
+  type: 'historical_attendance', label: 'Historical Attendance', entity: 'hr_histattendances',
+  canCancel: false,
+  async get(id) { return d365.getById('hr_histattendances', id, { select: 'hr_histattendanceid,hr_employeeid,hr_employeename,hr_status,hr_date' }); },
+  ownerId: (r) => r.hr_employeeid,
+  ownerName: (r) => r.hr_employeename || '',
+  status(r) {
+    const s = r.hr_status;
+    if (s === 'rejected') return 'rejected';
+    if (s === 'approved') return 'approved';
+    return 'pending';   // pending or more_info → still editable
+  },
+  cancelledPatch: () => ({ hr_status: 'rejected' }),
+  resubmitPatch: () => ({ hr_status: 'pending' }),
+  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', comments: 'hr_comments', date: 'hr_date', inTime: 'hr_intime', outTime: 'hr_outtime' }),
+  summary: (r) => `Historical Attendance ${String(r.hr_date || '').slice(0, 10)}`,
   managerRecipients: (r) => managerRecipientsFor(r.hr_employeeid),
   hrRecipients,
   employeeContact: (r) => contactFor(r.hr_employeeid),

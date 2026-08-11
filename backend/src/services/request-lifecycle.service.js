@@ -138,6 +138,20 @@ async function remove({ type, id, user }) {
   return { deleted: true };
 }
 
+/** EDIT — modify a PENDING request's own content in place (no new cycle, no status
+ *  change). Owner-only; a request that has left 'pending' can no longer be modified. */
+async function edit({ type, id, edits, user }) {
+  const v = await view({ type, id }); assertOwner(v, user);
+  if (v.adapter.canEdit === false) { const e = new Error(`${v.adapter.label} requests cannot be edited here.`); e.status = 400; throw e; }
+  if (v.canonical !== 'pending') { const e = new Error('This request can no longer be modified.'); e.status = 409; throw e; }
+  const patch = v.adapter.applyEdits(edits || {});
+  if (Object.keys(patch).length) {
+    await d365.update(v.adapter.entity, id, patch);
+    await writeAudit({ employeeId: v.ownerId, employeeName: v.ownerName, requestId: id, requestType: type, action: 'edited', performedBy: user.name || user.email, detail: v.summary });
+  }
+  return v.adapter.get(id);
+}
+
 /** EDIT & RESUBMIT — rejected → new pending cycle (audit history preserved). */
 async function resubmit({ type, id, edits, user }) {
   const v = await view({ type, id }); assertOwner(v, user);
@@ -243,7 +257,7 @@ async function listCancellations({ status = 'pending' } = {}) {
 
 module.exports = {
   registerAdapter, getAdapter, knownTypes,
-  view, remove, resubmit, requestCancellation,
+  view, edit, remove, resubmit, requestCancellation,
   cancellationManagerDecide, cancellationHrDecide,
   getAudit, listCancellations, writeAudit,
 };

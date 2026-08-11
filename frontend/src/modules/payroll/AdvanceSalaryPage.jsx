@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { advanceApi, employeeApi } from '../../api/endpoints';
 import {
-  BanknotesIcon, PlusIcon, XMarkIcon, CheckIcon, ClockIcon, TrashIcon, ChevronDownIcon,
+  BanknotesIcon, PlusIcon, XMarkIcon, CheckIcon, ClockIcon, TrashIcon, ChevronDownIcon, PencilSquareIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate } from '../../utils/format';
@@ -26,19 +26,25 @@ function Modal({ title, subtitle, onClose, size = 'md', children }) {
   return <Dialog title={title} subtitle={subtitle} onClose={onClose} size={size}>{children}</Dialog>;
 }
 
-function ApplyModal({ isHR, employees, onClose }) {
+function ApplyModal({ isHR, employees, record, onClose }) {
   const qc = useQueryClient();
-  const { register, handleSubmit } = useForm({ defaultValues: { requestedDate: new Date().toISOString().slice(0, 10) } });
+  const isEdit = !!record;
+  const { register, handleSubmit } = useForm({ defaultValues: isEdit
+    ? { amount: record.amount, emi: record.emi || '', reason: record.reason, requestedDate: record.requestedDate || new Date().toISOString().slice(0, 10) }
+    : { requestedDate: new Date().toISOString().slice(0, 10) } });
   const mut = useMutation({
-    mutationFn: (v) => advanceApi.apply({ ...v, amount: Number(v.amount), emi: v.emi ? Number(v.emi) : 0 }),
-    onSuccess: () => { toast.success('Advance request submitted'); qc.invalidateQueries({ queryKey: ['advances'] }); qc.invalidateQueries({ queryKey: ['advance-balance'] }); onClose(); },
+    mutationFn: (v) => isEdit
+      // Edit a PENDING request in place (owner + pending enforced server-side).
+      ? advanceApi.update(record.id, { amount: Number(v.amount), emi: v.emi ? Number(v.emi) : 0, reason: v.reason })
+      : advanceApi.apply({ ...v, amount: Number(v.amount), emi: v.emi ? Number(v.emi) : 0 }),
+    onSuccess: () => { toast.success(isEdit ? 'Advance request updated' : 'Advance request submitted'); qc.invalidateQueries({ queryKey: ['advances'] }); qc.invalidateQueries({ queryKey: ['advance-balance'] }); onClose(); },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to submit request'),
   });
   return (
-    <Modal title="Apply for Advance Salary" subtitle="Your request goes to HR for approval." onClose={onClose}>
+    <Modal title={isEdit ? 'Edit Advance Request' : 'Apply for Advance Salary'} subtitle={isEdit ? 'Update your pending request.' : 'Your request goes to HR for approval.'} onClose={onClose}>
       <form onSubmit={handleSubmit(v => mut.mutate(v))} className="flex flex-col min-h-0 flex-1">
         <ModalBody className="space-y-4">
-        {isHR && (
+        {isHR && !isEdit && (
           <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Employee (optional — defaults to you)</label>
             <select className={inputCls} {...register('employeeId')}>
               <option value="">Myself</option>
@@ -58,7 +64,7 @@ function ApplyModal({ isHR, employees, onClose }) {
         </ModalBody>
         <ModalFooter>
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
-          <button type="submit" disabled={mut.isPending} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50">{mut.isPending ? 'Submitting…' : 'Submit Request'}</button>
+          <button type="submit" disabled={mut.isPending} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50">{mut.isPending ? 'Saving…' : (isEdit ? 'Save Changes' : 'Submit Request')}</button>
         </ModalFooter>
       </form>
     </Modal>
@@ -125,7 +131,7 @@ function RejectModal({ record, onClose }) {
   );
 }
 
-function AdvanceCard({ record, isHR, onApprove, onReject, onDelete }) {
+function AdvanceCard({ record, isHR, onApprove, onReject, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
   const e = record._employee || {};
   return (
@@ -180,8 +186,14 @@ function AdvanceCard({ record, isHR, onApprove, onReject, onDelete }) {
           <button onClick={() => onReject(record)} className="flex-1 py-2 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg flex items-center justify-center gap-1.5"><XMarkIcon className="w-4 h-4" /> Reject</button>
         </div>
       )}
-      {record.status === 'pending' && !isHR && onDelete && (
-        <button onClick={() => onDelete(record)} className="mt-3 text-xs text-gray-400 hover:text-red-500 inline-flex items-center gap-1"><TrashIcon className="w-3.5 h-3.5" /> Cancel request</button>
+      {record.status === 'pending' && !isHR && (
+        <div className="mt-3 flex items-center gap-4">
+          {onEdit && <button onClick={() => onEdit(record)} className="text-xs text-gray-400 hover:text-indigo-600 inline-flex items-center gap-1"><PencilSquareIcon className="w-3.5 h-3.5" /> Edit</button>}
+          {onDelete && <button onClick={() => onDelete(record)} className="text-xs text-gray-400 hover:text-red-500 inline-flex items-center gap-1"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>}
+        </div>
+      )}
+      {record.status === 'rejected' && !isHR && onDelete && (
+        <button onClick={() => onDelete(record)} className="mt-3 text-xs text-gray-400 hover:text-red-500 inline-flex items-center gap-1"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
       )}
     </div>
   );
@@ -193,6 +205,7 @@ export default function AdvanceSalaryPage() {
   const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
 
   const [showApply, setShowApply] = useState(false);
+  const [editRec, setEditRec] = useState(null);
   const [approveRec, setApproveRec] = useState(null);
   const [rejectRec, setRejectRec] = useState(null);
   const [tab, setTab] = useState(hr ? 'pending' : 'mine');
@@ -211,7 +224,7 @@ export default function AdvanceSalaryPage() {
     onSuccess: () => { toast.success('Request cancelled'); qc.invalidateQueries({ queryKey: ['advances'] }); },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to cancel'),
   });
-  const handleDelete = (r) => { if (window.confirm('Cancel this advance request?')) delMut.mutate(r.id); };
+  const handleDelete = (r) => { if (window.confirm('Delete this advance request? This action cannot be undone.')) delMut.mutate(r.id); };
 
   const tabs = hr ? [['pending', 'Pending Approval'], ['all', 'All Advances']] : [['mine', 'My Advances']];
 
@@ -255,11 +268,12 @@ export default function AdvanceSalaryPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
-          {rows.map(r => <AdvanceCard key={r.id} record={r} isHR={hr} onApprove={setApproveRec} onReject={setRejectRec} onDelete={handleDelete} />)}
+          {rows.map(r => <AdvanceCard key={r.id} record={r} isHR={hr} onApprove={setApproveRec} onReject={setRejectRec} onDelete={handleDelete} onEdit={setEditRec} />)}
         </div>
       )}
 
       {showApply && <ApplyModal isHR={hr} employees={employees} onClose={() => setShowApply(false)} />}
+      {editRec && <ApplyModal isHR={hr} employees={employees} record={editRec} onClose={() => setEditRec(null)} />}
       {approveRec && <ApproveModal record={approveRec} onClose={() => setApproveRec(null)} />}
       {rejectRec && <RejectModal record={rejectRec} onClose={() => setRejectRec(null)} />}
     </div>

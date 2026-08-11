@@ -1,8 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leaveApi, employeeApi } from '../../api/endpoints';
+import { leaveApi, employeeApi, requestLifecycleApi } from '../../api/endpoints';
 import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import Button from '../../components/Button';
+import RequestLifecycleActions from '../../components/RequestLifecycleActions';
+
+// Canonical lifecycle status for a leave row (mirrors the backend 'leave' adapter):
+// cancelled / rejected / approved / manager_approved (L1 approved) / pending.
+function canonicalLeaveStatus(leave) {
+  const s = String(leave?.hr_status || '').toLowerCase();
+  if (s === 'cancelled') return 'cancelled';
+  if (s === 'rejected') return 'rejected';
+  if (s === 'approved') return 'approved';
+  if (String(leave?.hr_l1status || '').toLowerCase() === 'approved') return 'manager_approved';
+  return 'pending';
+}
 import LeaveBalance from './LeaveBalance';
 import { CertUploader, CertReview } from '../../components/MedicalCertificate';
 import { useAuth } from '../../context/AuthContext';
@@ -407,16 +419,19 @@ function LeaveActions({ leave, user, isHR }) {
   );
 }
 
-function ApplyLeaveModal({ onClose }) {
+function ApplyLeaveModal({ onClose, editLeave }) {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const isEdit = !!editLeave;
 
   // Employee profile drives gender/marital eligibility for Maternity / Paternity.
   const { data: meRes } = useQuery({ queryKey: ['employee', user?.id], queryFn: () => employeeApi.get(user.id), enabled: !!user?.id });
   const me = meRes?.data;
   const gender = String(me?.hr_gender || '').toLowerCase();
   const isMarried = String(me?.hr_maritalstatus || '').toLowerCase() === 'married';
-  const [form, setForm] = useState({ type: 'Casual Leave', from: '', to: '', reason: '' });
+  const [form, setForm] = useState(editLeave
+    ? { type: editLeave.hr_leavetype || 'Casual Leave', from: String(editLeave.hr_fromdate || '').slice(0, 10), to: String(editLeave.hr_todate || '').slice(0, 10), reason: editLeave.hr_reason || '' }
+    : { type: 'Casual Leave', from: '', to: '', reason: '' });
   const [approverId, setApproverId] = useState('');
   const [cc, setCc] = useState([]);              // selected employee ids
   const [ccSearch, setCcSearch] = useState('');
@@ -448,21 +463,27 @@ function ApplyLeaveModal({ onClose }) {
     setCc(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   const mutation = useMutation({
-    // Business data + the selected approver/cc. The backend attaches the
-    // hr_hremployee lookup and resolves approver/cc details server-side.
-    mutationFn: () => leaveApi.apply({
-      hr_leavetype: form.type,
-      hr_fromdate: form.from,
-      hr_todate: form.to,
-      hr_reason: form.reason,
-      hr_days: differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1,
-      hr_status: 'pending',
-      approverId,
-      cc,
-      medCertDocId: certDoc?.id || undefined,   // Sick-leave medical certificate (if uploaded)
-    }),
-    onSuccess: () => { toast.success('Leave applied!'); qc.invalidateQueries({ queryKey: ['leaves'] }); onClose(); },
-    onError: (err) => toast.error(err.response?.data?.error || 'Failed to apply leave'),
+    // Editing a PENDING leave changes ONLY dates/days/reason via the shared lifecycle
+    // (owner + pending enforced server-side; type/approval/status never touched). A new
+    // application goes through the full apply flow (approver/cc/cert).
+    mutationFn: () => isEdit
+      ? requestLifecycleApi.edit('leave', editLeave.hr_hrleaveid, {
+          fromDate: form.from, toDate: form.to, reason: form.reason,
+          days: differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1,
+        })
+      : leaveApi.apply({
+          hr_leavetype: form.type,
+          hr_fromdate: form.from,
+          hr_todate: form.to,
+          hr_reason: form.reason,
+          hr_days: differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1,
+          hr_status: 'pending',
+          approverId,
+          cc,
+          medCertDocId: certDoc?.id || undefined,   // Sick-leave medical certificate (if uploaded)
+        }),
+    onSuccess: () => { toast.success(isEdit ? 'Leave request updated' : 'Leave applied!'); qc.invalidateQueries({ queryKey: ['leaves'] }); qc.invalidateQueries({ queryKey: ['leave-balance'] }); onClose(); },
+    onError: (err) => toast.error(err.response?.data?.error || (isEdit ? 'Failed to update leave' : 'Failed to apply leave')),
   });
 
   const days = form.from && form.to ? differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1 : 0;
@@ -525,8 +546,8 @@ function ApplyLeaveModal({ onClose }) {
               <DocumentTextIcon className="w-5 h-5 text-indigo-600" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900">Apply for Leave</h2>
-              <p className="text-xs text-gray-500 mt-0.5">Fill in the details below</p>
+              <h2 className="text-lg font-bold text-gray-900">{isEdit ? 'Edit Leave Request' : 'Apply for Leave'}</h2>
+              <p className="text-xs text-gray-500 mt-0.5">{isEdit ? 'Update the dates or reason of your pending request' : 'Fill in the details below'}</p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
@@ -730,9 +751,11 @@ function ApplyLeaveModal({ onClose }) {
             fullWidth
             onClick={() => mutation.mutate()}
             loading={mutation.isPending}
-            disabled={!form.from || !form.to || !approverId || form.from < earliestStr || !!exhausted || certMissing}
+            disabled={isEdit
+              ? (!form.from || !form.to || !form.reason.trim() || form.from > form.to)
+              : (!form.from || !form.to || !approverId || form.from < earliestStr || !!exhausted || certMissing)}
           >
-            Submit Application
+            {isEdit ? 'Save Changes' : 'Submit Application'}
           </Button>
         </div>
       </div>
@@ -757,6 +780,7 @@ function getOverallStatusLabel(leave) {
 export default function LeavePage() {
   const { isHR, user } = useAuth();
   const [showModal, setShowModal] = useState(false);
+  const [editLeave, setEditLeave] = useState(null);   // employee editing their own pending/rejected leave
   const [filter, setFilter] = useState('pending');
 
   // Standard leave list query
@@ -901,8 +925,19 @@ export default function LeavePage() {
                       )}
                     </div>
 
-                    {/* Approve / Reject actions */}
-                    <LeaveActions leave={leave} user={user} isHR={isHR} />
+                    {/* Approve / Reject actions (managers / HR) */}
+                    <div className="flex flex-col items-end gap-2">
+                      <LeaveActions leave={leave} user={user} isHR={isHR} />
+                      {/* Employee self-service on their OWN leave: pending → Edit/Delete;
+                          rejected → Edit&Resubmit/Delete; approved → Request Cancellation. */}
+                      {user?.id && leave._hr_hremployee_value === user.id && (
+                        <RequestLifecycleActions
+                          type="leave" id={leave.hr_hrleaveid} status={canonicalLeaveStatus(leave)}
+                          onEdit={() => setEditLeave(leave)}
+                          invalidateKeys={[['leaves'], ['leave-balance']]}
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -912,6 +947,7 @@ export default function LeavePage() {
       </div>
 
       {showModal && <ApplyLeaveModal onClose={() => setShowModal(false)} />}
+      {editLeave && <ApplyLeaveModal editLeave={editLeave} onClose={() => setEditLeave(null)} />}
     </div>
   );
 }

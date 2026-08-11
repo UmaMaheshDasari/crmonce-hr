@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
-import { attendanceRequestApi } from '../../api/endpoints';
+import { attendanceRequestApi, requestLifecycleApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 
@@ -18,26 +18,36 @@ const CORRECTION_TYPES = [
 
 // Employees submit an Attendance Correction here to fix a PAST attendance record.
 // It never affects their ability to punch (check in/out) going forward.
-export default function MissingPunchModal({ open, onClose, defaultDate, defaultType }) {
+export default function MissingPunchModal({ open, onClose, defaultDate, defaultType, editRecord }) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const isEdit = !!editRecord;
   const [form, setForm] = useState({ attendanceDate: '', punchType: 'missing_check_out', requestedTime: '', reason: '' });
 
   useEffect(() => {
-    if (open) setForm(f => ({
-      ...f,
-      attendanceDate: defaultDate || f.attendanceDate || new Date().toISOString().slice(0, 10),
-      punchType: defaultType || f.punchType,   // pre-filled from the detected exception
-    }));
-  }, [open, defaultDate, defaultType]);
+    if (!open) return;
+    if (editRecord) {
+      // Editing a PENDING correction — prefill from the existing request.
+      setForm({ attendanceDate: editRecord.date || '', punchType: editRecord.punchType || 'missing_check_out', requestedTime: editRecord.requestedTime || '', reason: editRecord.reason || '' });
+    } else {
+      setForm(f => ({
+        ...f,
+        attendanceDate: defaultDate || f.attendanceDate || new Date().toISOString().slice(0, 10),
+        punchType: defaultType || f.punchType,   // pre-filled from the detected exception
+      }));
+    }
+  }, [open, defaultDate, defaultType, editRecord]);
 
   const submit = useMutation({
-    mutationFn: () => attendanceRequestApi.submit(form),
+    mutationFn: () => isEdit
+      // Edit a PENDING request in place via the shared lifecycle (owner + pending enforced server-side).
+      ? requestLifecycleApi.edit('attendance_correction', editRecord.id, { date: form.attendanceDate, punchType: form.punchType, requestedTime: form.requestedTime, reason: form.reason })
+      : attendanceRequestApi.submit(form),
     onSuccess: () => {
-      toast.success('Attendance correction request submitted for approval');
+      toast.success(isEdit ? 'Attendance correction updated' : 'Attendance correction request submitted for approval');
       qc.invalidateQueries({ queryKey: ['attendance-requests'] });
       onClose();
-      setForm(f => ({ ...f, requestedTime: '', reason: '' }));
+      if (!isEdit) setForm(f => ({ ...f, requestedTime: '', reason: '' }));
     },
     onError: (e) => toast.error(e.response?.data?.error || 'Could not submit request'),
   });
@@ -50,7 +60,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h3 className="text-base font-bold text-gray-900">Request Attendance Correction</h3>
+          <h3 className="text-base font-bold text-gray-900">{isEdit ? 'Edit Attendance Correction' : 'Request Attendance Correction'}</h3>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100"><XMarkIcon className="w-5 h-5 text-gray-500" /></button>
         </div>
         <div className="p-5 space-y-3.5">
@@ -87,7 +97,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-100">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={() => submit.mutate()} disabled={!canSubmit || submit.isPending}>
-            {submit.isPending ? 'Submitting…' : 'Submit Request'}
+            {submit.isPending ? 'Saving…' : (isEdit ? 'Save Changes' : 'Submit Request')}
           </Button>
         </div>
       </div>

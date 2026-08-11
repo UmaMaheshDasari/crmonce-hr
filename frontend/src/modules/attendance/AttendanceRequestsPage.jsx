@@ -6,6 +6,7 @@ import { attendanceRequestApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import MissingPunchModal from './MissingPunchModal';
+import RequestLifecycleActions from '../../components/RequestLifecycleActions';
 
 const STATUS_STYLE = {
   pending: 'bg-amber-50 text-amber-700', approved: 'bg-emerald-50 text-emerald-700', rejected: 'bg-red-50 text-red-700',
@@ -17,6 +18,7 @@ export default function AttendanceRequestsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [comment, setComment] = useState({});   // per-request comment
   const [modalOpen, setModalOpen] = useState(false);
+  const [editRecord, setEditRecord] = useState(null);   // employee editing their own pending request
 
   const { data, isLoading } = useQuery({
     queryKey: ['attendance-requests', statusFilter],
@@ -40,7 +42,7 @@ export default function AttendanceRequestsPage() {
           <p className="text-sm text-gray-400">Attendance corrections {isHR() ? '— review & approve' : '— your submitted requests'}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button icon={PlusIcon} onClick={() => setModalOpen(true)}>Request Attendance Correction</Button>
+          <Button icon={PlusIcon} onClick={() => { setEditRecord(null); setModalOpen(true); }}>Request Attendance Correction</Button>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
             className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
             <option value="">All Status</option>
@@ -62,14 +64,14 @@ export default function AttendanceRequestsPage() {
                 <th className="px-4 py-3">Requested</th>
                 <th className="px-4 py-3">Reason</th>
                 <th className="px-4 py-3">Status</th>
-                {isHR() && <th className="px-4 py-3">Action</th>}
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {isLoading && !rows.length ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={isHR() ? 7 : 6} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>
               ) : !rows.length ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400 flex-col">
+                <tr><td colSpan={isHR() ? 7 : 6} className="px-4 py-10 text-center text-gray-400 flex-col">
                   <ClockIcon className="w-8 h-8 mx-auto text-gray-200 mb-2" />No attendance requests.
                 </td></tr>
               ) : rows.map(r => (
@@ -82,10 +84,10 @@ export default function AttendanceRequestsPage() {
                   <td className="px-4 py-3">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${STATUS_STYLE[r.status] || 'bg-gray-100 text-gray-500'}`}>{r.status}</span>
                   </td>
-                  {isHR() && (
-                    <td className="px-4 py-3">
-                      {r.status === 'pending' ? (
-                        <div className="flex items-center gap-2">
+                  <td className="px-4 py-3">
+                    {isHR() ? (
+                      r.status === 'pending' ? (
+                        <div className="flex items-center gap-2 justify-end">
                           <input value={comment[r.id] || ''} onChange={e => setComment(c => ({ ...c, [r.id]: e.target.value }))} placeholder="Comment"
                             className="w-28 px-2 py-1 text-xs border border-gray-200 rounded-lg bg-gray-50 outline-none" />
                           <button onClick={() => act.mutate({ id: r.id, action: 'approved' })} disabled={act.isPending}
@@ -94,10 +96,20 @@ export default function AttendanceRequestsPage() {
                             className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50" title="Reject"><XMarkIcon className="w-4 h-4" /></button>
                         </div>
                       ) : (
-                        <span className="text-xs text-gray-400">{r.approvedBy ? `by ${r.approvedBy}` : '—'}</span>
-                      )}
-                    </td>
-                  )}
+                        <span className="text-xs text-gray-400 flex justify-end">{r.approvedBy ? `by ${r.approvedBy}` : '—'}</span>
+                      )
+                    ) : (
+                      // Employee self-service on their OWN request. Approved → History only
+                      // (attendance corrections can't be cancelled once applied — a factual record).
+                      <RequestLifecycleActions
+                        type="attendance_correction" id={r.id} status={r.status}
+                        caps={{ canCancel: false }}
+                        onEdit={() => { setEditRecord(r); setModalOpen(true); }}
+                        onChanged={() => qc.invalidateQueries({ queryKey: ['attendance-requests'] })}
+                        invalidateKeys={[['attendance-requests'], ['attendance']]}
+                      />
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -105,7 +117,7 @@ export default function AttendanceRequestsPage() {
         </div>
       </div>
 
-      <MissingPunchModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <MissingPunchModal open={modalOpen} onClose={() => { setModalOpen(false); setEditRecord(null); }} editRecord={editRecord} />
     </div>
   );
 }
