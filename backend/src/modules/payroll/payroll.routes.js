@@ -104,13 +104,17 @@ async function computeMonthFacts(empId, month, year, settings) {
   const covered = presentDays + halfDays * 0.5 + paidLeaveDays;
   const uncoveredAbsent = Math.max(0, round2(workingDays - covered));
 
-  // LOP (salary deduction) is ONLY Approved LOP — explicit LOP-type leave plus the
-  // approved CL/SL that exceeded the available balance (both from the leave engine).
-  // An uncovered absence with NO approved leave is NEVER auto-converted to LOP; it is
-  // flagged "Leave Not Applied" for HR. Therefore Opening Balance can never cause a
-  // salary deduction: it only reduces the available balance in the warning below.
-  const lopDays = round2(lopLeaveDays);
-  const leaveNotAppliedDays = uncoveredAbsent;           // warning only — no deduction
+  // LOP policy (Company Setting `unapprovedAbsenceAsLop`, default ON):
+  //  • ON  — EVERY non-paid working day is LOP: applied LOP (explicit LOP-type leave +
+  //          approved CL/SL beyond the cap) AND an uncovered absence with no leave at all.
+  //          So Payable Days = paid attendance (Present + ½·Half-day + Paid Leave + Comp Off).
+  //          `uncoveredAbsent` already includes the applied-LOP leave days, so this is a
+  //          superset of lopLeaveDays — never a double count.
+  //  • OFF — legacy: only applied LOP is deducted; an uncovered absence stays payable and
+  //          is merely flagged "Leave Not Applied" for HR (Opening Balance never deducts).
+  const autoDeductAbsence = settings.unapprovedAbsenceAsLop !== false;
+  const lopDays = round2(autoDeductAbsence ? uncoveredAbsent : lopLeaveDays);
+  const leaveNotAppliedDays = uncoveredAbsent;           // days with no approved leave (surfaced to HR)
   const payDays = Math.max(0, round2(workingDays - lopDays));
 
   const warnings = [];
@@ -118,9 +122,13 @@ async function computeMonthFacts(empId, month, year, settings) {
   if (workingDays === 0) warnings.push({ code: 'working_days_missing', message: 'No working days are configured for this month.' });
   if (leaveNotAppliedDays > 0) warnings.push({
     code: 'leave_not_applied', days: leaveNotAppliedDays,
-    message: available >= leaveNotAppliedDays
-      ? 'This employee has available leave balance but no approved leave request exists.'
-      : 'This employee has absent days with no approved leave request — approve leave or record an approved LOP (payroll did NOT auto-deduct).',
+    message: autoDeductAbsence
+      ? (available >= leaveNotAppliedDays
+        ? 'This employee has available leave balance but no approved leave request — these absent days were deducted as LOP (approve leave to reverse).'
+        : 'This employee has absent days with no approved leave request — deducted as LOP (approve leave or record an approved LOP to reverse).')
+      : (available >= leaveNotAppliedDays
+        ? 'This employee has available leave balance but no approved leave request exists.'
+        : 'This employee has absent days with no approved leave request — approve leave or record an approved LOP (payroll did NOT auto-deduct).'),
     balances: bal ? { casual: bal.casual.remaining, sick: bal.sick.remaining, earned: earnedRemaining, compOff: bal.compOff.balance } : null,
   });
 
@@ -561,3 +569,4 @@ payrollRouter.post('/:id/email', requirePermission('payroll:read'), async (req, 
 module.exports = payrollRouter;
 module.exports.runGeneration = runGeneration;    // reused by the Automation orchestrator
 module.exports.finalizeMonth = finalizeMonth;
+module.exports.computeMonthFacts = computeMonthFacts;   // exported for unit tests (attendance → payable/LOP)
