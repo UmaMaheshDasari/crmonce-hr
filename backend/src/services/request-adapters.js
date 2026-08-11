@@ -12,6 +12,7 @@
 const d365 = require('./d365.service');
 const { toValue, toLabel } = require('./picklist');
 const { registerAdapter } = require('./request-lifecycle.service');
+const { rangeCounts } = require('./attendance-summary.util');   // working-days calc (weekends + holidays excluded)
 
 const E = d365.constructor.entities;
 const EMP = E.employee;
@@ -58,9 +59,17 @@ registerAdapter({
   },
   cancelledPatch: () => ({ hr_status: toValue('hr_leave_status', 'cancelled') }),
   resubmitPatch: () => ({ hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_l2status: '' }),
-  // Editable while PENDING (or on resubmit): reason + dates + days. Leave TYPE stays
-  // fixed (option-set) and status fields are never employee-editable.
-  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', fromDate: 'hr_fromdate', toDate: 'hr_todate', days: 'hr_days' }),
+  // Editable while PENDING (or on resubmit): reason + dates. Leave TYPE stays fixed
+  // (option-set) and status fields are never employee-editable. hr_days is ALWAYS
+  // recomputed from the dates (working days only) — never trust a client day count.
+  applyEdits: (e) => {
+    const out = mapEdits(e, { reason: 'hr_reason', fromDate: 'hr_fromdate', toDate: 'hr_todate' });
+    if (e.fromDate && e.toDate) {
+      const f = String(e.fromDate).slice(0, 10), t = String(e.toDate).slice(0, 10);
+      if (f && t && t >= f) out.hr_days = String(rangeCounts(f, t).working);
+    }
+    return out;
+  },
   summary: (r) => `${toLabel('hr_leave_type', r.hr_leavetype) || 'Leave'} ${String(r.hr_startdate || '').slice(0, 10)}→${String(r.hr_enddate || '').slice(0, 10)}`,
   managerRecipients: (r) => managerRecipientsFor(r._hr_hremployee_value),
   hrRecipients,

@@ -18,7 +18,7 @@ function canonicalLeaveStatus(leave) {
 import LeaveBalance from './LeaveBalance';
 import { CertUploader, CertReview } from '../../components/MedicalCertificate';
 import { useAuth } from '../../context/AuthContext';
-import { format, differenceInCalendarDays, subDays } from 'date-fns';
+import { format, subDays } from 'date-fns';
 import toast from 'react-hot-toast';
 
 // Selectable leave types in the employee application. Earned Leave is intentionally
@@ -466,17 +466,19 @@ function ApplyLeaveModal({ onClose, editLeave }) {
     // Editing a PENDING leave changes ONLY dates/days/reason via the shared lifecycle
     // (owner + pending enforced server-side; type/approval/status never touched). A new
     // application goes through the full apply flow (approver/cc/cert).
+    // hr_days here is the eligible WORKING-day count for display parity; the backend
+    // ALWAYS recomputes it from the dates (weekends + holidays excluded), so a tampered
+    // client value can never be stored.
     mutationFn: () => isEdit
       ? requestLifecycleApi.edit('leave', editLeave.hr_hrleaveid, {
-          fromDate: form.from, toDate: form.to, reason: form.reason,
-          days: differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1,
+          fromDate: form.from, toDate: form.to, reason: form.reason, days,
         })
       : leaveApi.apply({
           hr_leavetype: form.type,
           hr_fromdate: form.from,
           hr_todate: form.to,
           hr_reason: form.reason,
-          hr_days: differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1,
+          hr_days: days,
           hr_status: 'pending',
           approverId,
           cc,
@@ -486,7 +488,17 @@ function ApplyLeaveModal({ onClose, editLeave }) {
     onError: (err) => toast.error(err.response?.data?.error || (isEdit ? 'Failed to update leave' : 'Failed to apply leave')),
   });
 
-  const days = form.from && form.to ? differenceInCalendarDays(new Date(form.to), new Date(form.from)) + 1 : 0;
+  // Eligible WORKING days for the range — weekends + company holidays excluded. Comes
+  // from the backend (the SAME calc it stores) so the preview can never disagree with
+  // what's saved. A calendar-day span would wrongly count Sat/Sun/holidays.
+  const validRange = !!form.from && !!form.to && form.from <= form.to;
+  const { data: wdRes, isFetching: wdLoading } = useQuery({
+    queryKey: ['leave-working-days', form.from, form.to],
+    queryFn: () => leaveApi.workingDays({ from: form.from, to: form.to }).then(r => r.data),
+    enabled: validRange,
+    placeholderData: (prev) => prev,
+  });
+  const days = validRange ? (wdRes?.workingDays ?? 0) : 0;
 
   // Current leave balance (self) — shown before applying (req 5) and used to build
   // the dynamic leave-type dropdown / block exhausted types (req 6, req 3).
@@ -512,7 +524,10 @@ function ApplyLeaveModal({ onClose, editLeave }) {
     if (t === 'Sick Leave') return (sickRem ?? 1) > 0;
     return true;
   });
-  if (bal && (compRem ?? 0) > 0) availableTypes.splice(Math.min(2, availableTypes.length), 0, 'Comp Off');
+  // Comp Off is ALWAYS offered (position 3) — it is DISABLED in the UI, not hidden,
+  // when the balance is 0, so the option is always visible.
+  availableTypes.splice(Math.min(2, availableTypes.length), 0, 'Comp Off');
+  const compAvailable = (compRem ?? 0) > 0;
 
   // If the selected type is no longer available, fall back to the first available.
   useEffect(() => {
@@ -592,19 +607,25 @@ function ApplyLeaveModal({ onClose, editLeave }) {
               {availableTypes.map(t => {
                 const cfg = LEAVE_TYPE_ICONS[t] || LEAVE_TYPE_ICONS['LOP'];
                 const isSelected = form.type === t;
+                const disabled = t === 'Comp Off' && !compAvailable;   // shown but not selectable at 0 balance
                 return (
                   <button
                     key={t}
                     type="button"
+                    disabled={disabled}
+                    title={disabled ? 'No Comp Off balance available' : undefined}
                     onClick={() => setForm(p => ({ ...p, type: t }))}
                     className={`flex flex-col items-center gap-1 px-3 py-3 rounded-xl border-2 text-xs font-medium transition-all duration-150 ${
-                      isSelected
+                      disabled
+                        ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
+                        : isSelected
                         ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm ring-2 ring-indigo-500/20'
                         : 'border-gray-150 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
                     }`}
                   >
                     <span className="text-base">{cfg.emoji}</span>
                     <span className="leading-tight text-center">{t}</span>
+                    {t === 'Comp Off' && <span className="text-[10px] text-gray-400">{Number(compRem || 0)} available</span>}
                   </button>
                 );
               })}
@@ -634,18 +655,23 @@ function ApplyLeaveModal({ onClose, editLeave }) {
             </div>
           </div>
 
-          {/* Days Badge */}
-          {days > 0 && (
-            <div className="flex items-center justify-center">
+          {/* Days Badge — eligible WORKING days (0 when the range is only weekends/holidays) */}
+          {validRange && (
+            <div className="flex flex-col items-center justify-center gap-2">
               <div className="inline-flex items-center gap-3 bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 rounded-2xl px-6 py-3">
-                <div className="w-11 h-11 bg-indigo-600 text-white rounded-full flex items-center justify-center text-lg font-bold shadow-md shadow-indigo-200">
-                  {days}
+                <div className={`w-11 h-11 ${days > 0 ? 'bg-indigo-600 shadow-indigo-200' : 'bg-gray-300 shadow-gray-100'} text-white rounded-full flex items-center justify-center text-lg font-bold shadow-md`}>
+                  {wdLoading && !wdRes ? '…' : days}
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-indigo-900">day{days > 1 ? 's' : ''} of leave</p>
+                  <p className="text-sm font-bold text-indigo-900">day{days === 1 ? '' : 's'} of leave</p>
                   <p className="text-xs text-indigo-500">{form.from && format(new Date(form.from), 'dd MMM')} - {form.to && format(new Date(form.to), 'dd MMM yyyy')}</p>
                 </div>
               </div>
+              {days === 0 && !wdLoading && (
+                <p className="flex items-center gap-2 text-xs font-medium text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                  <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" /> No working days selected. Please select at least one working day — weekends and company holidays don't count.
+                </p>
+              )}
             </div>
           )}
 
@@ -751,9 +777,9 @@ function ApplyLeaveModal({ onClose, editLeave }) {
             fullWidth
             onClick={() => mutation.mutate()}
             loading={mutation.isPending}
-            disabled={isEdit
+            disabled={days <= 0 || (isEdit
               ? (!form.from || !form.to || !form.reason.trim() || form.from > form.to)
-              : (!form.from || !form.to || !approverId || form.from < earliestStr || !!exhausted || certMissing)}
+              : (!form.from || !form.to || !approverId || form.from < earliestStr || !!exhausted || certMissing))}
           >
             {isEdit ? 'Save Changes' : 'Submit Application'}
           </Button>

@@ -9,6 +9,16 @@ const { verifyApprovalToken } = require('../../services/approval-token');
 const { resolveSender } = require('../../services/email/sender');
 const time = require('../../services/time.util');
 const { leaveSummary, resolveDays } = require('../../services/leave-summary.util');
+const { rangeCounts } = require('../../services/attendance-summary.util');
+
+// AUTHORITATIVE leave-day count: WORKING days only in [from, to] — excludes weekly-offs
+// (attnCfg.weekOffDays) and company holidays (attnCfg.holidays, kept fresh from the
+// hr_holidays calendar). The ONE calc the whole system uses; never a calendar-day span.
+function leaveWorkingDays(from, to) {
+  const f = String(from || '').slice(0, 10), t = String(to || '').slice(0, 10);
+  if (!f || !t || t < f) return 0;
+  try { return rangeCounts(f, t).working; } catch { return 0; }
+}
 const leaveEngine = require('../../services/leave-engine.service');
 const { ensureLeaveLedgerTable } = require('../../services/provision-leave-ledger');
 const payrollSettings = require('../../services/payroll-settings.service');
@@ -357,6 +367,16 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
   return leave;
 }
 
+// GET /api/attendance/leave/working-days?from=&to= — the eligible working-day count for
+// a range (weekends + company holidays excluded). The SAME calc the create uses, so the
+// form's live preview always matches what the backend will store.
+router.get('/working-days', requirePermission('attendance:read'), (req, res) => {
+  const from = String(req.query.from || '').slice(0, 10);
+  const to = String(req.query.to || '').slice(0, 10);
+  const rc = (from && to && to >= from) ? rangeCounts(from, to) : { calendar: 0, holidays: 0, weeklyOff: 0, working: 0 };
+  res.json({ from, to, workingDays: rc.working, calendarDays: rc.calendar, holidays: rc.holidays, weeklyOff: rc.weeklyOff });
+});
+
 // POST /api/attendance/leave — Employee applies for leave
 router.post('/', async (req, res, next) => {
   try {
@@ -395,6 +415,16 @@ router.post('/', async (req, res, next) => {
     if (fromDate < earliest) {
       return res.status(400).json({ error: `You can apply backdated leave only within the last ${maxBackdated} days.` });
     }
+
+    // AUTHORITATIVE day count — recompute WORKING days from the dates and IGNORE any
+    // client-supplied hr_days (weekends + company holidays never count). A range with
+    // no working day is rejected. Every downstream check (Comp Off balance, medical
+    // certificate, stored hr_days) uses this value.
+    const workingDays = leaveWorkingDays(fromDate, toDate);
+    if (workingDays <= 0) {
+      return res.status(400).json({ error: 'No working days in the selected range. Please select at least one working day — weekends and company holidays do not count.' });
+    }
+    body.hr_days = workingDays;
 
     // Balance guard (req 6): block a fully-exhausted Casual/Sick leave. The UI also
     // blocks it, but never trust the client. Best-effort — a lookup failure never

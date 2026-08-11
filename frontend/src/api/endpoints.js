@@ -65,6 +65,7 @@ export const attendanceRequestApi = {
 export const leaveApi = {
   list: (params) => api.get('/attendance/leave', { params }),
   apply: (data) => api.post('/attendance/leave', data),
+  workingDays: (params) => api.get('/attendance/leave/working-days', { params }),
   approve: (id, status, remarks) => api.patch(`/attendance/leave/${id}`, { status, remarks }),
   approveL1: (id, action, remarks) => api.patch(`/attendance/leave/${id}/l1`, { action, remarks }),
   approveL2: (id, action, remarks) => api.patch(`/attendance/leave/${id}/l2`, { action, remarks }),
