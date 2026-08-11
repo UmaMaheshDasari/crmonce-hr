@@ -227,14 +227,15 @@ export default function CompOffPage() {
                           <button onClick={() => expireMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100"><ClockIcon className="w-3.5 h-3.5" /> Expire</button>
                         </>
                       )}
-                      {/* Delete: pending / rejected always; approved only when UNUSED (else disabled). */}
-                      {hr && ['pending', 'rejected'].includes(r.status) && (
+                      {/* Delete is an EMPLOYEE action on their OWN records — HR/Admin never see it
+                          (and the backend 403s them). Pending/rejected always; approved only when
+                          UNUSED (else shown disabled with a tooltip). */}
+                      {!hr && ['pending', 'rejected'].includes(r.status) && (
                         <button onClick={() => setConfirmDelete(r)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
                       )}
-                      {hr && r.status === 'approved' && (r.deletable
+                      {!hr && r.status === 'approved' && (r.deletable
                         ? <button onClick={() => setConfirmDelete(r)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
                         : <span title="Used Comp Off cannot be deleted." className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-gray-300 bg-gray-50 rounded-lg cursor-not-allowed"><TrashIcon className="w-3.5 h-3.5" /> Delete</span>)}
-                      {!hr && r.status === 'pending' && <span className="text-xs text-gray-400">Awaiting HR</span>}
                     </div>
                   </td>
                 </tr>

@@ -27,6 +27,7 @@ const findDow = (t, ex = []) => { for (let d = 1; d <= 31; d++) { const ds = `20
 const WEEKLY_OFF = findDow(6);
 const WEEKDAY = findDow(2, [HOLIDAY]);
 const EMP = 'e1';
+const OWNER = { id: EMP, role: 'employee' };            // the employee who owns the comp-off
 
 const autoRow = (over = {}) => ({ hr_compoffid: 'a1', hr_type: 'auto', hr_employeeid: EMP, hr_employeename: 'Vishwesh', hr_year: '2026', hr_days: '1', hr_workeddate: HOLIDAY, hr_status: 'pending', hr_ledgerlinked: 'false', ...over });
 const attRow = (over = {}) => ({ _hr_hremployee_value: EMP, hr_date: HOLIDAY, hr_status: PRESENT, hr_intime: '09:00', hr_effectivehours: 8.3, ...over });
@@ -148,28 +149,47 @@ function deleteHarness({ row, balance }) {
 
 test('12. pending delete → record removed, no ledger change', async () => {
   const { ledger, deletes } = deleteHarness({ row: autoRow({ hr_status: 'pending', hr_ledgerlinked: 'false' }), balance: 0 });
-  const res = await compOff.remove('a1');
+  const res = await compOff.remove('a1', OWNER);
   assert.strictEqual(res.deleted, true);
   assert.deepStrictEqual(deletes, ['a1']);
   assert.strictEqual(ledger.length, 0);
 });
 test('13. rejected delete → record removed', async () => {
   const { deletes } = deleteHarness({ row: autoRow({ hr_status: 'rejected', hr_ledgerlinked: 'false' }), balance: 0 });
-  await compOff.remove('a1');
+  await compOff.remove('a1', OWNER);
   assert.deepStrictEqual(deletes, ['a1']);
 });
 test('14/20. approved UNUSED delete → ledger reversed (−days) then removed', async () => {
   const { ledger, deletes } = deleteHarness({ row: autoRow({ hr_status: 'approved', hr_ledgerlinked: 'true', hr_days: '1' }), balance: 3 });
-  await compOff.remove('a1');
+  await compOff.remove('a1', OWNER);
   assert.strictEqual(ledger.length, 1);
   assert.strictEqual(Number(ledger[0].days), -1, 'reversal credit is negative');
   assert.deepStrictEqual(deletes, ['a1']);
 });
 test('15. approved USED delete → blocked, nothing removed', async () => {
   const { ledger, deletes } = deleteHarness({ row: autoRow({ hr_status: 'approved', hr_ledgerlinked: 'true', hr_days: '1' }), balance: 0 });
-  await assert.rejects(() => compOff.remove('a1'), /already been used/);
+  await assert.rejects(() => compOff.remove('a1', OWNER), /already been used/);
   assert.strictEqual(deletes.length, 0);
   assert.strictEqual(ledger.length, 0);
+});
+
+// ── authorization: delete is employee-only, own-record-only ──
+test('Auth: HR / Admin cannot delete (403) — even a pending record', async () => {
+  const { deletes } = deleteHarness({ row: autoRow({ hr_status: 'pending' }), balance: 0 });
+  await assert.rejects(() => compOff.remove('a1', { id: 'admin-1', role: 'super_admin' }), /not available for HR/i);
+  await assert.rejects(() => compOff.remove('a1', { id: 'hr-1', role: 'hr_manager' }), /not available for HR/i);
+  assert.strictEqual(deletes.length, 0);
+});
+test('Auth: an employee cannot delete another employee\'s comp-off (403)', async () => {
+  const { deletes } = deleteHarness({ row: autoRow({ hr_status: 'pending', hr_employeeid: EMP }), balance: 0 });
+  await assert.rejects(() => compOff.remove('a1', { id: 'other-emp', role: 'employee' }), /only delete your own/i);
+  assert.strictEqual(deletes.length, 0);
+});
+test('Auth: an employee deletes their OWN pending comp-off → success', async () => {
+  const { deletes } = deleteHarness({ row: autoRow({ hr_status: 'pending', hr_employeeid: EMP }), balance: 0 });
+  const res = await compOff.remove('a1', { id: EMP, role: 'employee' });
+  assert.strictEqual(res.deleted, true);
+  assert.deepStrictEqual(deletes, ['a1']);
 });
 
 // ── manual grants are NOT attendance-verified (HR discretion) ──

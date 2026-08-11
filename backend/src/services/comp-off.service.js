@@ -461,13 +461,19 @@ async function isCompOffUsed(employeeId, days, year) {
 }
 
 /**
- * DELETE a comp-off (HR). Pending / rejected / cancelled / expired → just remove (no
- * balance to touch — they never hold a live credit). Approved + ledger-credited → allowed
- * ONLY while still UNUSED: reverse the ledger credit first, then delete. A USED approved
- * comp-off can NEVER be deleted. The backend is authoritative (does not trust the UI).
+ * DELETE a comp-off. This is an EMPLOYEE-only action on THEIR OWN record — HR/Admin
+ * manage comp-off via Approve/Reject and can never delete (403). An employee may delete
+ * only their own record (403 otherwise). Pending / rejected / cancelled / expired → just
+ * remove (no live credit). Approved + ledger-credited → allowed ONLY while still UNUSED:
+ * reverse the ledger credit first, then delete; a USED approved comp-off can NEVER be
+ * deleted (409). Backend-authoritative — never relies on the UI hiding the button.
  */
-async function remove(id) {
+async function remove(id, user) {
   const row = await getRaw(id);
+  // ── Authorization (enforced here, not just in React) ──
+  const role = String(user?.role || '');
+  if (role === 'super_admin' || role === 'hr_manager') { const e = new Error('Delete is not available for HR/Admin. Use Approve or Reject.'); e.status = 403; throw e; }
+  if (user?.id && String(row.hr_employeeid) !== String(user.id)) { const e = new Error('You can only delete your own Comp Off.'); e.status = 403; throw e; }
   const status = row.hr_status;
   const days = num(row.hr_days) || 1;
   const year = Number(row.hr_year) || Number(String(row.hr_workeddate || today()).slice(0, 4)) || new Date().getFullYear();

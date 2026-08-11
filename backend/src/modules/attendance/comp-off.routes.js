@@ -114,10 +114,11 @@ router.patch('/:id/expire', requireRole(...HR), async (req, res, next) => {
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
-// DELETE /:id  — HR deletes a comp-off. Pending/rejected → removed; Approved unused →
-// ledger reversed then removed; Approved USED → blocked (409). Backend is authoritative.
-router.delete('/:id', requireRole(...HR), async (req, res, next) => {
-  try { res.json(await withTable(() => compOff.remove(req.params.id))); }
+// DELETE /:id  — EMPLOYEE deletes THEIR OWN comp-off (HR/Admin get 403 — they use
+// Approve/Reject). Pending/rejected → removed; Approved unused → ledger reversed then
+// removed; Approved USED → blocked (409). Authorization is enforced in the service.
+router.delete('/:id', async (req, res, next) => {
+  try { res.json(await withTable(() => compOff.remove(req.params.id, req.user))); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
