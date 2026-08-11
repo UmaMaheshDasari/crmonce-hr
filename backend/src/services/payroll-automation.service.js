@@ -195,4 +195,38 @@ async function listJobs({ top = 50 } = {}) {
 }
 async function getJob(id) { return shapeJob(await d365.getById(ENTITY, id, { select: '*' })); }
 
-module.exports = { runJob, retryJob, listJobs, getJob, deriveStatus, stagesToRetry, blankStages, STAGE_DEFS, shapeJob };
+// Is the run's month/year payroll already FINALIZED — any row Released (paid) or Locked?
+// Salary-credited == released (paid). A lookup failure returns false (the job-history
+// delete never touches payroll data, so it is safe to allow when we can't confirm).
+async function isMonthFinalized(month, year) {
+  const m = Number(month), y = Number(year);
+  if (!m || !y) return false;
+  try {
+    const PAYROLL = d365.constructor.entities.payroll;
+    const paid = toValue('hr_payroll_status', 'paid');
+    const { data } = await d365.getListOptional(PAYROLL, {
+      select: 'hr_hrpayrollid,hr_status', optionalSelect: 'hr_locked',
+      filter: `hr_month eq ${m} and hr_year eq ${y}`, top: 5000,
+    });
+    return (data || []).some((r) => r.hr_locked === 'true' || r.hr_status === paid);
+  } catch { return false; }
+}
+
+/**
+ * DELETE an automation run's HISTORY record (hr_payrolljobs). ONLY the job row is removed
+ * — its stages / logs / summary live on that row as JSON, so there is nothing else to
+ * clean up and NO other data (payroll, employee, attendance, leave, comp-off, salary
+ * structure) is ever touched. Blocked once the run's payroll month is finalized
+ * (Released / salary-credited / Locked). HR/Super-Admin only (enforced on the route).
+ */
+async function deleteJob({ jobId }) {
+  const job = await getJob(jobId);   // 404 if the run does not exist
+  if (await isMonthFinalized(job.month, job.year)) {
+    const e = new Error('This payroll has already been finalized and cannot be deleted.'); e.status = 409; throw e;
+  }
+  await d365.delete(ENTITY, jobId);
+  try { activity.record({ category: 'Payroll', type: 'payroll_automation_deleted', title: 'Payroll Automation Run Deleted', name: 'HR', meta: `Deleted automation run ${job.name || jobId} (${job.month}/${job.year})` }); } catch {}
+  return { deleted: true, id: jobId };
+}
+
+module.exports = { runJob, retryJob, listJobs, getJob, deleteJob, isMonthFinalized, deriveStatus, stagesToRetry, blankStages, STAGE_DEFS, shapeJob };

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { automationApi } from '../../api/endpoints';
 import {
   BoltIcon, PlayIcon, ArrowPathIcon, CheckCircleIcon, XCircleIcon, ClockIcon,
-  ChevronRightIcon, XMarkIcon,
+  ChevronRightIcon, XMarkIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 
@@ -124,13 +124,21 @@ function JobDrawer({ jobId, onClose }) {
 }
 
 export default function AutomationPage() {
+  const qc = useQueryClient();
   const [showRun, setShowRun] = useState(false);
   const [openJob, setOpenJob] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);   // the run pending deletion
   const { data, isLoading } = useQuery({
     queryKey: ['automation-jobs'], queryFn: () => automationApi.jobs(),
     refetchInterval: (q) => ((q.state.data?.data?.data || []).some(j => j.status === 'running') ? 4000 : false),
   });
   const jobs = data?.data?.data || [];
+
+  const deleteMut = useMutation({
+    mutationFn: (id) => automationApi.deleteJob(id),
+    onSuccess: () => { toast.success('Payroll automation run deleted successfully.'); setConfirmDelete(null); qc.invalidateQueries({ queryKey: ['automation-jobs'] }); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to delete automation run'),
+  });
 
   return (
     <div className="space-y-5">
@@ -192,7 +200,12 @@ export default function AutomationPage() {
                       <td className="px-5 py-3 text-gray-500">{done}/{total}</td>
                       <td className="px-5 py-3 text-gray-500 capitalize">{j.trigger}</td>
                       <td className="px-5 py-3 text-gray-500">{fmt(j.startedOn)}</td>
-                      <td className="px-5 py-3 text-right"><ChevronRightIcon className="w-4 h-4 text-gray-300" /></td>
+                      <td className="px-5 py-3 text-right">
+                        <div className="flex items-center gap-1.5 justify-end">
+                          <button onClick={(e) => { e.stopPropagation(); setOpenJob(j.id); }} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100">View</button>
+                          <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(j); }} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -204,6 +217,22 @@ export default function AutomationPage() {
 
       {showRun && <RunModal onClose={() => setShowRun(false)} />}
       {openJob && <JobDrawer jobId={openJob} onClose={() => setOpenJob(null)} />}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !deleteMut.isPending && setConfirmDelete(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center"><TrashIcon className="w-5 h-5 text-red-600" /></div>
+              <h2 className="text-lg font-bold text-gray-900">Delete Payroll Automation Run?</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-5">This will delete the automation run/history for <span className="font-semibold text-gray-700">{confirmDelete.name}</span>. Please confirm before continuing.</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setConfirmDelete(null)} disabled={deleteMut.isPending} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 disabled:opacity-50">Cancel</button>
+              <button onClick={() => deleteMut.mutate(confirmDelete.id)} disabled={deleteMut.isPending} className="px-5 py-2 text-sm font-medium text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50">{deleteMut.isPending ? 'Deleting…' : 'Delete'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

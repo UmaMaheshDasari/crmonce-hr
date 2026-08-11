@@ -37,4 +37,15 @@ router.post('/jobs/:id/retry', requireRole('super_admin', 'hr_manager'), async (
   }
 });
 
+// DELETE /jobs/:id  — HR/Super-Admin removes an automation run's history record. Blocked
+// once the run's payroll is finalized (Released / salary-credited / Locked). Deletes ONLY
+// the job row; never payroll/employee/attendance/leave/comp-off/salary-structure data.
+router.delete('/jobs/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try { res.json(await automation.deleteJob({ jobId: req.params.id })); }
+  catch (err) {
+    console.error('[automation/delete] FAILED:', err.message);
+    res.status(err.status || 400).json({ error: err.message || 'Failed to delete automation run' });
+  }
+});
+
 module.exports = router;

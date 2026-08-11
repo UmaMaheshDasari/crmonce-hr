@@ -158,6 +158,7 @@ export const automationApi = {
   job: (id) => api.get(`/payroll/automation/jobs/${id}`),
   run: (data) => api.post('/payroll/automation/run', data),
   retry: (id) => api.post(`/payroll/automation/jobs/${id}/retry`),
+  deleteJob: (id) => api.delete(`/payroll/automation/jobs/${id}`),
 };
 
 // ── Professional Tax Master (configurable slabs) ─────────────────
