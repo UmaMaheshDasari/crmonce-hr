@@ -100,45 +100,48 @@ async function computeMonthFacts(empId, month, year, settings) {
   const earnedRemaining = earnedCfg.enabled ? Math.max(0, (Number(earnedCfg.allocated) || 0) - (bal?.earned?.used || 0)) : 0;
   const available = bal ? round2(bal.casual.remaining + bal.sick.remaining + earnedRemaining + bal.compOff.balance) : 0;
 
-  // Uncovered absence = working − present − ½·halfDay − paid approved leave.
-  const covered = presentDays + halfDays * 0.5 + paidLeaveDays;
-  const uncoveredAbsent = Math.max(0, round2(workingDays - covered));
+  // PENDING (undecided) leave — held OUT of BOTH Payable and LOP until the decision:
+  // approved → becomes paid (Payable), rejected → becomes LOP. Never paid while pending,
+  // never auto-LOP'd while pending.
+  const pendingRaw = await leaveEngine.pendingMonthDays(empId, { year, month }).catch(() => 0);
 
-  // LOP policy (Company Setting `unapprovedAbsenceAsLop`, default ON):
-  //  • ON  — EVERY non-paid working day is LOP: applied LOP (explicit LOP-type leave +
-  //          approved CL/SL beyond the cap) AND an uncovered absence with no leave at all.
-  //          So Payable Days = paid attendance (Present + ½·Half-day + Paid Leave + Comp Off).
-  //          `uncoveredAbsent` already includes the applied-LOP leave days, so this is a
-  //          superset of lopLeaveDays — never a double count.
-  //  • OFF — legacy: only applied LOP is deducted; an uncovered absence stays payable and
-  //          is merely flagged "Leave Not Applied" for HR (Opening Balance never deducts).
-  const autoDeductAbsence = settings.unapprovedAbsenceAsLop !== false;
-  const lopDays = round2(autoDeductAbsence ? uncoveredAbsent : lopLeaveDays);
-  const leaveNotAppliedDays = uncoveredAbsent;           // days with no approved leave (surfaced to HR)
-  const payDays = Math.max(0, round2(workingDays - lopDays));
+  // ── FINAL business rule (mandatory — no on/off setting) ──
+  // Payable Days = Present + ½·Half-day + Approved Paid Leave (CL/SL within cap, Comp Off,
+  //   Earned/Maternity/Paternity). A Late Login keeps its punch → it is already Present
+  //   (never a half-day, never LOP).
+  const payDays = Math.max(0, round2(presentDays + halfDays * 0.5 + paidLeaveDays));
+
+  // Non-payable working-day pool = Working − Payable. Pending leave is reserved from it
+  // (clamped to the pool); EVERYTHING else is LOP. An absence with no approved AND no
+  // pending leave is ALWAYS LOP — automatically, without waiting for an HR application.
+  const uncovered = Math.max(0, round2(workingDays - payDays));
+  const pendingLeaveDays = Math.min(round2(pendingRaw), uncovered);
+  const lopDays = Math.max(0, round2(uncovered - pendingLeaveDays));
 
   const warnings = [];
   if (attendanceRows === 0) warnings.push({ code: 'attendance_missing', message: 'No attendance records exist for this month.' });
   if (workingDays === 0) warnings.push({ code: 'working_days_missing', message: 'No working days are configured for this month.' });
-  if (leaveNotAppliedDays > 0) warnings.push({
-    code: 'leave_not_applied', days: leaveNotAppliedDays,
-    message: autoDeductAbsence
-      ? (available >= leaveNotAppliedDays
-        ? 'This employee has available leave balance but no approved leave request — these absent days were deducted as LOP (approve leave to reverse).'
-        : 'This employee has absent days with no approved leave request — deducted as LOP (approve leave or record an approved LOP to reverse).')
-      : (available >= leaveNotAppliedDays
-        ? 'This employee has available leave balance but no approved leave request exists.'
-        : 'This employee has absent days with no approved leave request — approve leave or record an approved LOP (payroll did NOT auto-deduct).'),
+  if (lopDays > 0) warnings.push({
+    // Code kept as `leave_not_applied` so the UI's Approve-Leave / Send-Reminder actions still fire.
+    code: 'leave_not_applied', days: lopDays,
+    message: available >= lopDays
+      ? 'This employee has available leave balance but no approved leave request — these absent days are LOP (approve leave to reverse).'
+      : 'This employee has absent days with no approved leave request — automatically LOP (approve leave or record an approved LOP to reverse).',
     balances: bal ? { casual: bal.casual.remaining, sick: bal.sick.remaining, earned: earnedRemaining, compOff: bal.compOff.balance } : null,
+  });
+  if (pendingLeaveDays > 0) warnings.push({
+    code: 'leave_pending', days: pendingLeaveDays,
+    message: 'This employee has a PENDING leave request for these days — held from LOP until decided (paid if approved, LOP if rejected).',
   });
 
   return {
     workingDays, presentDays, halfDays, holidays: rc.holidays, weeklyOff: rc.weeklyOff,
-    approvedLeaveDays: round2(paidLeaveDays), compOffBalance: bal?.compOff?.balance || 0,
-    absentDays: uncoveredAbsent, leaveNotAppliedDays, lopDays, payDays,
+    approvedLeaveDays: round2(paidLeaveDays), pendingLeaveDays, compOffBalance: bal?.compOff?.balance || 0,
+    absentDays: lopDays,                 // the "Absent" column == LOP (auto for unapproved absence)
+    lopDays, payDays,
     overtimeHours, calendarDays: lastDay,
     warnings,
-    snapshot: { workingDays, present: presentDays, halfDays, paidLeave: round2(paidLeaveDays), lopLeave: round2(lopLeaveDays), availableBalance: available, openingFoldedIntoBalance: true },
+    snapshot: { workingDays, present: presentDays, halfDays, paidLeave: round2(paidLeaveDays), pendingLeave: pendingLeaveDays, lopLeave: round2(lopLeaveDays), availableBalance: available, openingFoldedIntoBalance: true },
   };
 }
 

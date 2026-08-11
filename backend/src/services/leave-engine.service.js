@@ -159,6 +159,26 @@ async function fetchApprovedLeaves(employeeId, year) {
   return normalizeLeaves(data, year);
 }
 
+/**
+ * PENDING leave working-days for one employee/month. A pending (undecided) leave is
+ * NOT paid yet and must NOT be auto-converted to LOP while approval is pending — it is
+ * held out of BOTH Payable and LOP until the decision (approved → paid, rejected → LOP).
+ * Never throws (payroll must not be blocked by the leave engine).
+ */
+async function pendingMonthDays(employeeId, { year, month }) {
+  try {
+    const pending = toValue('hr_leave_status', 'pending');
+    const { data } = await d365.getList(LEAVE, {
+      select: 'hr_days,hr_fromdate,hr_todate,hr_status,hr_leavetype',
+      filter: `_hr_hremployee_value eq '${employeeId}' and hr_status eq ${pending}`,
+      top: 500,
+    });
+    let days = 0;
+    for (const l of normalizeLeaves(data, year)) if (l.month === month) days += l.days;
+    return r2(days);
+  } catch { return 0; }
+}
+
 async function fetchLedger(employeeId, year) {
   try {
     const { data } = await d365.getList(LEDGER, {
@@ -246,5 +266,5 @@ module.exports = {
   categoryOfType, normalizeLeaves, normalizeLedger, adjustmentsByCategory,
   computeBalance, computeMonthSplit,
   // async
-  getBalance, splitMonthLeave, addLedgerEntry, readLedger,
+  getBalance, splitMonthLeave, pendingMonthDays, addLedgerEntry, readLedger,
 };

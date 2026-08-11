@@ -41,7 +41,6 @@ const SECTIONS = [
         ['calendar_days', 'Gross ÷ Calendar Days'],
         ['fixed_30', 'Gross ÷ 30'],
       ] },
-      { name: 'hr_unapprovedabsenceaslop', label: 'Treat Unapproved Absence as LOP', toggle: true, hint: 'ON (default): an absent day with no approved leave is non-payable and deducted — Payable Days = Present + Paid Leave + Comp Off. OFF: an unapproved absence stays payable until HR records leave/LOP.' },
     ],
   },
   {

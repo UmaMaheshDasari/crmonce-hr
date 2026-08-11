@@ -30,12 +30,8 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   hr_itapplicable: 'false',
   // ── LOP formula ──
   hr_lopbasis: 'salary_working_days',   // salary_working_days | calendar_days | fixed_30
-  // Treat an absence with NO approved leave as LOP (non-payable, deducted). ON (default):
-  // Payable Days = paid attendance (Present + ½·Half-day + Paid Leave + Comp Off) and every
-  // other working day is LOP. OFF: only explicitly-applied LOP (LOP-type leave + approved
-  // leave beyond the paid cap) is deducted; an uncovered absence stays payable until HR
-  // records leave/LOP (the legacy "flag, don't auto-deduct" behaviour).
-  hr_unapprovedabsenceaslop: 'true',
+  // NOTE: absence with no approved/pending leave is ALWAYS auto-LOP (mandatory business
+  // rule — no on/off setting). See computeMonthFacts in payroll.routes.js.
   // ── Attendance / Overtime ──
   hr_workinghoursperday: '8',
   hr_otmultiplier: '2',            // overtime paid at N × per-hour rate
@@ -158,7 +154,6 @@ function resolve(settings = null) {
     defaultPtState: g.hr_defaultptstate || 'Andhra Pradesh',
     incomeTax: { percent: num(g.hr_itpercent, 0), applicable: bool(g.hr_itapplicable) },
     lopBasis: g.hr_lopbasis || 'salary_working_days',
-    unapprovedAbsenceAsLop: bool(g.hr_unapprovedabsenceaslop),   // absence with no approved leave → LOP (default ON)
     workingHoursPerDay: num(g.hr_workinghoursperday, 8),
     overtimeMultiplier: num(g.hr_otmultiplier, 2),
     weeklyOff: String(g.hr_weeklyoff || 'Sunday').split(',').map(s => s.trim()).filter(Boolean),

@@ -15,6 +15,7 @@ const WARN_META = {
   attendance_missing: { label: 'Attendance Missing', tone: 'bg-amber-50 border-amber-200 text-amber-700' },
   working_days_missing: { label: 'Working Days Missing', tone: 'bg-amber-50 border-amber-200 text-amber-700' },
   leave_not_applied: { label: 'Leave Not Applied', tone: 'bg-orange-50 border-orange-200 text-orange-700' },
+  leave_pending: { label: 'Pending Leave', tone: 'bg-sky-50 border-sky-200 text-sky-700' },
   pt_missing: { label: 'Professional Tax Missing', tone: 'bg-amber-50 border-amber-200 text-amber-700' },
 };
 
