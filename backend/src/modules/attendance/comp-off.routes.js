@@ -131,4 +131,16 @@ router.post('/scan', requireRole(...HR), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /scan-month  — MONTH-END comp-off scan for one completed month (HR manual run /
+// retry). Uses the EXACT same scanMonthCompOff() service as the month-end scheduler —
+// no business logic is duplicated here. Idempotent: re-running creates no duplicates.
+router.post('/scan-month', requireRole(...HR), async (req, res, next) => {
+  try {
+    const month = Number(req.body?.month), year = Number(req.body?.year);
+    if (!month || month < 1 || month > 12 || !year) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
+    const summary = await withTable(() => compOff.scanMonthCompOff({ month, year }));
+    res.json(summary);
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

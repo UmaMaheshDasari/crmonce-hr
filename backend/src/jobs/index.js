@@ -67,6 +67,26 @@ function initJobs() {
     global.logger?.info('Comp Off expiry sweep scheduled (01:00 IST daily)');
   }
 
+  // Month-end Comp Off — auto-earn for HOLIDAY / WEEKLY-OFF work in the JUST-COMPLETED
+  // month, from EFFECTIVE hours (≥8→1, >5&&<8→0.5, ≤5→0), as PENDING records HR approves.
+  // Runs on the 1st of each month at 02:00 IST for the PREVIOUS (fully-complete) month —
+  // so it never touches the current incomplete month. Idempotent (existsForDate) → a
+  // retry is safe. Respects the Comp-Off auto-earn setting. Disable with
+  // COMPOFF_MONTHEND=false. Runs ONLY on the primary instance (single scheduler).
+  if (process.env.COMPOFF_MONTHEND !== 'false') {
+    const compOff = require('../services/comp-off.service');
+    cron.schedule('0 2 1 * *', async () => {
+      const now = new Date();
+      const prev = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));   // previous month
+      const month = prev.getUTCMonth() + 1, year = prev.getUTCFullYear();
+      try {
+        const r = await compOff.scanMonthCompOff({ month, year });
+        global.logger?.info(`[comp-off] month-end run ${month}/${year}: full ${r.fullCompOff}, half ${r.halfCompOff}, duplicates ${r.duplicatesSkipped}, errors ${r.errors.length}`);
+      } catch (e) { global.logger?.error(`[comp-off] month-end run failed: ${e.message}`); }
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Month-end Comp Off scan scheduled (1st of month, 02:00 IST, previous month)');
+  }
+
   // Celebrations — Birthday / Marriage Anniversary / Work Anniversary wishes.
   // Ticks every 30 min; celebrations.runDaily() only actually sends once the
   // configured Send Time (default 09:00 IST) has passed, and the audit log guards

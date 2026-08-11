@@ -28,8 +28,21 @@ async function emailEmployee(employeeId, subject, html) {
   } catch (err) { global.logger?.warn?.(`[comp-off] email skipped: ${err.message}`); }
 }
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const pad2 = (n) => String(n).padStart(2, '0');
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (dateStr, days) => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + Number(days)); return d.toISOString().slice(0, 10); };
+
+/**
+ * Comp-off days earned for a day's EFFECTIVE worked hours (break already excluded).
+ * The single, shared rule for BOTH eTime-sync auto-earn and the month-end scan so
+ * they can never disagree:  ≥8h → 1 · >5h and <8h → 0.5 · ≤5h → 0. Never more than 1.
+ */
+function compOffDaysForHours(effectiveHours) {
+  const h = Number(effectiveHours) || 0;
+  if (h >= 8) return 1;
+  if (h > 5) return 0.5;
+  return 0;
+}
 
 const SELECT = 'hr_compoffid,hr_employeeid,hr_employeename,hr_year,hr_type,hr_workeddate,hr_workedhours,hr_reason,hr_holidayname,hr_days,hr_expirydate,hr_status,hr_remarks,hr_approvedby,hr_approveddate,hr_createdby,hr_ledgerlinked,createdon,modifiedon';
 
@@ -92,7 +105,10 @@ async function create({ employeeId, employeeName, type = 'manual', workedDate, w
   const p = await policy();
   const wd = String(workedDate || today()).slice(0, 10);
   const year = Number(wd.slice(0, 4)) || new Date().getFullYear();
-  const expiryDate = Number(p.expiryDays) > 0 ? addDays(wd, p.expiryDays) : '';
+  // Expiry starts ONLY at approval — a PENDING record has NO expiry yet. A record
+  // created already-approved (a manual HR grant) expires from its APPROVAL date (= now),
+  // never the worked date. Reuses the existing 45-day policy (p.expiryDays).
+  const expiryDate = (status === 'approved' && Number(p.expiryDays) > 0) ? addDays(today(), p.expiryDays) : '';
   const name = employeeName || (await resolveEmployeeName(employeeId));
   const body = {
     hr_name: `${name || employeeId} · Comp Off · ${wd}`.slice(0, 250),
@@ -126,16 +142,21 @@ async function approve(id, approver) {
   if (['approved', 'expired', 'cancelled'].includes(row.hr_status)) { const e = new Error(`Comp Off is already ${row.hr_status}`); e.status = 409; throw e; }
   const days = num(row.hr_days) || 1;
   if (row.hr_ledgerlinked !== 'true') await bridgeEarned(row, days);
-  await d365.update(COMP, id, { hr_status: 'approved', hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString(), hr_ledgerlinked: 'true' });
+  // Expiry clock STARTS at approval — approval date + the 45-day policy (never the
+  // worked date). The 409 guard above means a second approve can't reset this.
+  const p = await policy();
+  const expiryDate = Number(p.expiryDays) > 0 ? addDays(today(), p.expiryDays) : '';
+  await d365.update(COMP, id, { hr_status: 'approved', hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString(), hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
   notifyUser(row.hr_employeeid, 'compoff:approved', { days, workedDate: row.hr_workeddate });
   audit({ category: 'Attendance', type: 'compoff_approved', title: 'Comp Off approved', name: row.hr_employeename, meta: { days, by: approver?.name } });
-  return shape({ ...row, hr_status: 'approved', hr_ledgerlinked: 'true' });
+  return shape({ ...row, hr_status: 'approved', hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
 }
 
 async function reject(id, approver, remarks) {
   const row = await getRaw(id);
   if (row.hr_ledgerlinked === 'true') { const e = new Error('An approved comp-off cannot be rejected — cancel it instead.'); e.status = 400; throw e; }
-  await d365.update(COMP, id, { hr_status: 'rejected', hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString(), hr_remarks: remarks || '' });
+  // Rejected → no balance credited and NO expiry (it never started).
+  await d365.update(COMP, id, { hr_status: 'rejected', hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString(), hr_expirydate: '', hr_remarks: remarks || '' });
   notifyUser(row.hr_employeeid, 'compoff:rejected', { workedDate: row.hr_workeddate, remarks: remarks || '' });
   audit({ category: 'Attendance', type: 'compoff_rejected', title: 'Comp Off rejected', name: row.hr_employeename, meta: { by: approver?.name } });
   return shape({ ...row, hr_status: 'rejected' });
@@ -245,7 +266,7 @@ async function existsForDate(employeeId, workedDate) {
  * holiday or weekly-off. Creates a PENDING record (HR approval is the verification
  * gate). Never throws. Returns the created record or null.
  */
-async function maybeAutoCompOff({ employeeId, employeeName, date, statusLabel, workedHours }) {
+async function maybeAutoCompOff({ employeeId, employeeName, date, statusLabel, effectiveHours, workedHours }) {
   try {
     const p = await policy();
     if (!p.autoEarn) return null;
@@ -254,10 +275,14 @@ async function maybeAutoCompOff({ employeeId, employeeName, date, statusLabel, w
     if (!ds) return null;
     const hol = isHoliday(ds); const woff = isWeeklyOff(ds);
     if (!hol && !woff) return null;
+    // Days from EFFECTIVE hours (break excluded) — the SAME rule the month-end scan uses.
+    // Prefer effectiveHours; fall back to workedHours (eTime device rows have no break).
+    const hours = (effectiveHours != null && effectiveHours !== '') ? effectiveHours : workedHours;
+    const days = compOffDaysForHours(hours);
+    if (!days) return null;                       // ≤5h worked → no comp-off
     if (await existsForDate(employeeId, ds)) return null;
-    const days = statusLabel === 'half_day' ? 0.5 : 1;
     return await create({
-      employeeId, employeeName, type: 'auto', workedDate: ds, workedHours,
+      employeeId, employeeName, type: 'auto', workedDate: ds, workedHours: num(hours),
       reason: hol ? 'Worked on company holiday' : 'Worked on weekly-off', holidayName: hol ? holidayName(ds) : '',
       days, createdBy: 'System (auto)', status: 'pending',
     });
@@ -272,7 +297,7 @@ async function scanRange({ from, to }) {
     const { toValue } = require('./picklist');
     const present = toValue('hr_attendance_status', 'present');
     const { data } = await d365.getList(ATT, {
-      select: 'hr_hrattendanceid,hr_date,hr_status,_hr_hremployee_value',
+      select: 'hr_hrattendanceid,hr_date,hr_status,hr_intime,hr_effectivehours,hr_workedhours,_hr_hremployee_value',
       filter: `hr_date ge '${from}' and hr_date le '${to}'`,
       top: 5000,
     });
@@ -283,11 +308,95 @@ async function scanRange({ from, to }) {
       const empId = a._hr_hremployee_value;
       if (!empId) continue;
       const name = a['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '';
-      const rec = await maybeAutoCompOff({ employeeId: empId, employeeName: name, date: ds, statusLabel: 'present' });
+      const eff = (a.hr_effectivehours != null && a.hr_effectivehours !== '') ? a.hr_effectivehours : a.hr_workedhours;
+      const rec = await maybeAutoCompOff({ employeeId: empId, employeeName: name, date: ds, statusLabel: 'present', effectiveHours: eff });
       if (rec) created.push(rec);
     }
   } catch (e) { global.logger?.warn?.(`[comp-off] scanRange failed: ${e.message}`); }
   return created;
 }
 
-module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange };
+/**
+ * MONTH-END Comp-Off scan for ONE completed month. For every employee who actually
+ * WORKED on a Holiday or Weekly-Off in [month], credit comp-off from EFFECTIVE hours
+ * (≥8→1, >5&&<8→0.5, ≤5→0), as a PENDING `auto` record (HR approval → ledger → balance).
+ *
+ * Eligibility (existing rules): the day must be a Holiday or Weekly-Off (normal working
+ * days never earn), the employee ACTIVE and employed on that date, and the attendance
+ * valid (a real in-punch + present/half status — no absent / missing punch / leave-only).
+ * Idempotent via existsForDate (Employee + Attendance Date) — a re-run creates NO
+ * duplicates. Month-isolated by the [from,to] query. Per-row try/catch: one bad row
+ * never stops the month. Returns a structured summary (also logged).
+ */
+async function scanMonthCompOff({ month, year }) {
+  const m = Number(month), y = Number(year);
+  const summary = { month: m, year: y, employeesScanned: 0, daysScanned: 0, fullCompOff: 0, halfCompOff: 0, duplicatesSkipped: 0, ineligibleDays: 0, invalidSkipped: 0, errors: [] };
+  if (!m || m < 1 || m > 12 || !y) { summary.errors.push({ error: 'invalid month/year' }); return summary; }
+  try {
+    const p = await policy();
+    if (!p.autoEarn) { global.logger?.info(`[comp-off] month-end scan ${m}/${y} skipped — auto-earn disabled.`); summary.skipped = true; return summary; }
+
+    const { toValue, toLabel } = require('./picklist');
+    const ATT = d365.constructor.entities.attendance;
+    const from = `${y}-${pad2(m)}-01`;
+    const to = `${y}-${pad2(m)}-${pad2(new Date(y, m, 0).getDate())}`;
+
+    // Active employees (+ employment dates) — the eligibility gate for each row.
+    const { data: emps } = await d365.getListOptional(EMP, {
+      select: 'hr_hremployeeid,hr_hremployee1,hr_status,hr_joiningdate',
+      optionalSelect: 'hr_relievingdate',
+      filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`, top: 5000,
+    });
+    const empMap = new Map((emps || []).map((e) => [e.hr_hremployeeid, e]));
+    summary.employeesScanned = empMap.size;
+
+    // Attendance for the month ONLY (month isolation).
+    const { data: atts } = await d365.getListOptional(ATT, {
+      select: 'hr_hrattendanceid,hr_date,hr_status,hr_intime,_hr_hremployee_value',
+      optionalSelect: 'hr_effectivehours,hr_workedhours',
+      filter: `hr_date ge '${from}' and hr_date le '${to}'`, top: 10000,
+    });
+
+    for (const a of atts || []) {
+      try {
+        summary.daysScanned++;
+        const ds = String(a.hr_date || '').slice(0, 10);
+        const empId = a._hr_hremployee_value;
+        if (!ds || !empId) { summary.invalidSkipped++; continue; }
+        // Eligibility (A1): Holiday OR Weekly-Off only — a normal working day never earns.
+        if (!(isHoliday(ds) || isWeeklyOff(ds))) { summary.ineligibleDays++; continue; }
+        // Employee ACTIVE + employed on that date.
+        const emp = empMap.get(empId);
+        if (!emp) { summary.invalidSkipped++; continue; }                                   // inactive/unknown
+        if (emp.hr_joiningdate && ds < String(emp.hr_joiningdate).slice(0, 10)) { summary.invalidSkipped++; continue; }
+        if (emp.hr_relievingdate && ds > String(emp.hr_relievingdate).slice(0, 10)) { summary.invalidSkipped++; continue; }
+        // ACTUALLY worked: a real in-punch + a present/half status (excludes absent /
+        // missing-punch / leave-only rows — leave without work has no in-punch).
+        const statusLabel = toLabel('hr_attendance_status', a.hr_status);
+        if (!a.hr_intime || !['present', 'half_day'].includes(String(statusLabel))) { summary.invalidSkipped++; continue; }
+        // Authoritative EFFECTIVE hours (break excluded); fall back to workedHours (legacy/device).
+        const eff = (a.hr_effectivehours != null && a.hr_effectivehours !== '') ? Number(a.hr_effectivehours) : Number(a.hr_workedhours) || 0;
+        const days = compOffDaysForHours(eff);
+        if (!days) { summary.ineligibleDays++; continue; }                                   // ≤5h worked
+        // Idempotency: Employee + Attendance Date — a re-run skips the existing record.
+        if (await existsForDate(empId, ds)) { summary.duplicatesSkipped++; continue; }
+        await create({
+          employeeId: empId, employeeName: emp.hr_hremployee1, type: 'auto', workedDate: ds, workedHours: eff,
+          reason: isHoliday(ds) ? 'Worked on company holiday' : 'Worked on weekly-off', holidayName: isHoliday(ds) ? holidayName(ds) : '',
+          days, createdBy: 'System (auto)', status: 'pending',
+        });
+        if (days === 1) summary.fullCompOff++; else summary.halfCompOff++;
+      } catch (e) {
+        summary.errors.push({ date: a?.hr_date, employeeId: a?._hr_hremployee_value, error: e.message });
+        global.logger?.warn?.(`[comp-off] month-end row failed (${a?._hr_hremployee_value} ${a?.hr_date}): ${e.message}`);
+      }
+    }
+  } catch (e) {
+    summary.errors.push({ error: e.message });
+    global.logger?.error?.(`[comp-off] month-end scan ${m}/${y} failed: ${e.message}`);
+  }
+  global.logger?.info?.(`[comp-off] Month-end Comp Off — ${m}/${y}: employees ${summary.employeesScanned}, days scanned ${summary.daysScanned}, full ${summary.fullCompOff}, half ${summary.halfCompOff}, duplicates ${summary.duplicatesSkipped}, invalid ${summary.invalidSkipped}, ineligible ${summary.ineligibleDays}, errors ${summary.errors.length}`);
+  return summary;
+}
+
+module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours };
