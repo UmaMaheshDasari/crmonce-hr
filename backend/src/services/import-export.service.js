@@ -40,7 +40,7 @@ const TYPES = {
       { key: 'department', header: 'Department' },
       { key: 'designation', header: 'Designation' },
       { key: 'joiningDate', header: 'Joining Date', kind: 'date' },
-      { key: 'basic', header: 'Basic Salary', kind: 'number' },
+      // No Basic Salary — pay lives in the Salary Structure (import that type instead).
     ],
     dedupe: (r) => S(r.employeeId).toLowerCase(),
     dupePolicy: 'update',

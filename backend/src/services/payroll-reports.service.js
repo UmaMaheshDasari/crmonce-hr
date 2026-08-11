@@ -12,6 +12,7 @@
 const ExcelJS = require('exceljs');
 const d365 = require('./d365.service');
 const companySvc = require('./company.service');
+const salaryStructureSvc = require('./salary-structure.service');
 
 const E = d365.constructor.entities;
 const PAYROLL = E.payroll;
@@ -43,7 +44,9 @@ const empCode = (e) => e?.hr_etimecode || '';   // device Empcode (40)
 
 async function fetchEmployees() {
   const res = await d365.getListOptional(E.employee, {
-    select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_salary,hr_allowances,hr_deductions,hr_etimecode',
+    // Salary is NEVER read from the Employee record — the Salary Structure is the
+    // single source of truth (see activeStructureMap + the salary-register builder).
+    select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_etimecode',
     optionalSelect: 'hr_employeeid,hr_employeecode,hr_pan,hr_aadhaar,hr_uan,hr_pfnumber,hr_bloodgroup,hr_emergencycontact,hr_emergencyphone,hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch',
     top: 5000, orderby: 'hr_hremployee1 asc',
   });
@@ -62,6 +65,31 @@ async function fetchPayroll(year) {
     orderby: 'hr_year desc,hr_month desc', top: 5000,
   });
   return res.data || [];
+}
+
+// employeeGuid → shaped active Salary Structure, effective as of `asOf`. ONE query
+// for the whole company (not one per employee). Mirrors getActiveStructure's rule:
+// the latest active revision effective on/before asOf, else the latest active revision.
+async function activeStructureMap(asOf) {
+  const res = await d365.getListOptional(E.salaryStructure, {
+    select: salaryStructureSvc.SELECT,
+    filter: `hr_status eq 'active'`,
+    orderby: 'hr_effectivefrom desc,createdon desc', top: 5000,
+  });
+  const cut = String(asOf || '').slice(0, 10);
+  const byEmp = new Map();   // employeeGuid → rows[] (already newest-first)
+  for (const row of res.data || []) {
+    const eid = row.hr_employeeid;
+    if (!eid) continue;
+    if (!byEmp.has(eid)) byEmp.set(eid, []);
+    byEmp.get(eid).push(row);
+  }
+  const out = new Map();
+  for (const [eid, list] of byEmp) {
+    const effective = cut ? list.find((r) => (r.hr_effectivefrom || '').slice(0, 10) <= cut) : null;
+    out.set(eid, salaryStructureSvc.shape(effective || list[0]));
+  }
+  return out;
 }
 
 async function buildReport(type, { year, month } = {}) {
@@ -89,17 +117,31 @@ async function buildReport(type, { year, month } = {}) {
   }
 
   else if (type === 'salary-register') {
-    const emps = await fetchEmployees();
+    // Basic / Allowances / Deductions / Gross / Net come from the employee's active
+    // Salary Structure (the single source of truth) — NEVER the Employee record.
+    // asOf = end of the requested month, else today, so the register reflects the
+    // revision in force for that period.
+    const asOf = (year && month)
+      ? `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`
+      : new Date().toISOString().slice(0, 10);
+    const [emps, structures] = await Promise.all([fetchEmployees(), activeStructureMap(asOf)]);
     const ws = await titledSheet(wb, 'Salary Register', company);
     ws.columns = [
       { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'name', width: 24 }, { header: 'Department', key: 'dept', width: 16 },
       { header: 'Designation', key: 'desig', width: 18 }, { header: 'Basic', key: 'basic', width: 12 },
       { header: 'Allowances', key: 'allow', width: 12 }, { header: 'Deductions', key: 'ded', width: 12 },
-      { header: 'Gross (Basic+Allow)', key: 'gross', width: 16 }, { header: 'Net (approx)', key: 'net', width: 14 },
+      { header: 'Gross', key: 'gross', width: 12 }, { header: 'Net Pay', key: 'net', width: 14 },
     ];
     for (const e of emps) {
-      const basic = e.hr_salary || 0, allow = e.hr_allowances || 0, ded = e.hr_deductions || 0;
-      ws.addRow({ eid: empId(e) || '—', name: e.hr_hremployee1, dept: e.hr_department || '—', desig: e.hr_designation || '—', basic, allow, ded, gross: basic + allow, net: basic + allow - ded });
+      const base = { eid: empId(e) || '—', name: e.hr_hremployee1, dept: e.hr_department || '—', desig: e.hr_designation || '—' };
+      const s = structures.get(e.hr_hremployeeid);
+      if (s) {
+        const allow = s.hra + s.special + s.medical + s.conveyance + s.otherAllowance;
+        ws.addRow({ ...base, basic: s.basic, allow, ded: s.totalDeductions, gross: s.gross, net: s.netSalary });
+      } else {
+        // Flag clearly — no misleading ₹0 when no structure is assigned.
+        ws.addRow({ ...base, basic: '—', allow: '—', ded: '—', gross: '—', net: 'No Salary Structure' });
+      }
     }
     styleHeader(ws); autoWidth(ws);
   }

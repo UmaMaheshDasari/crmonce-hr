@@ -156,7 +156,7 @@ router.get('/:id', requirePermission('employee:read'), async (req, res, next) =>
     // added field) is stripped and retried, so it NEVER drops all the ESS fields
     // (Identity/Address/Bank/Emergency/Personal/Master) from My Profile.
     const emp = await d365.getByIdResilient(ENTITY, req.params.id, {
-      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_salary,hr_allowances,hr_deductions,hr_etimecode,_hr_manager_value',
+      select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_address,hr_emergencycontact,hr_role,hr_etimecode,_hr_manager_value',
       optionalSelect: `hr_shiftname,hr_shiftstarttime,hr_shiftendtime,modifiedon,${ESS_OPTIONAL_SELECT}`,
     });
     const out = labelsForEntity(ENTITY, withShiftDefaults(emp));
@@ -191,9 +191,9 @@ function sanitizeEmployee(input) {
   }
   if (data.hr_role !== undefined) data.hr_role = toValue('hr_role', data.hr_role);
   if (data.hr_status !== undefined) data.hr_status = toValue('hr_employee_status', data.hr_status);
-  for (const f of ['hr_salary', 'hr_allowances', 'hr_deductions']) {
-    if (data[f] !== undefined) data[f] = Number(data[f]) || 0;
-  }
+  // Salary is NEVER stored on the Employee record — pay lives in the Salary Structure.
+  // Defensively drop any legacy salary fields a stale client might still send.
+  for (const f of ['hr_salary', 'hr_allowances', 'hr_deductions']) delete data[f];
   return data;
 }
 

@@ -97,7 +97,7 @@ export default function EmployeeForm() {
       const e = empData.data;
       reset({ hr_hremployee1: e.hr_hremployee1, hr_email: e.hr_email, hr_phone: e.hr_phone,
         hr_department: e.hr_department, hr_designation: e.hr_designation,
-        hr_role: e.hr_role, hr_salary: e.hr_salary, hr_joiningdate: e.hr_joiningdate?.split('T')[0],
+        hr_role: e.hr_role, hr_joiningdate: e.hr_joiningdate?.split('T')[0],
         hr_status: e.hr_status, hr_address: e.hr_address, hr_etimecode: e.hr_etimecode,
         hr_shiftname: e.hr_shiftname || 'General Shift', hr_shiftstarttime: e.hr_shiftstarttime || '09:00',
         hr_shiftendtime: e.hr_shiftendtime || '18:00',
@@ -231,19 +231,8 @@ export default function EmployeeForm() {
         </div>
         )}
 
-        {/* Compensation (HR only) */}
-        {!selfMode && (
-        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-50">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-gray-400">Compensation & System</h2>
-          </div>
-          <div className="p-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="Basic Salary" name="hr_salary" type="number" placeholder="50000" register={register} errors={errors} />
-            </div>
-          </div>
-        </div>
-        )}
+        {/* Compensation lives in Salary Structure (the single source of truth for pay),
+            not on the Employee Profile — so no Basic Salary field here. */}
 
         {/* Identity */}
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">

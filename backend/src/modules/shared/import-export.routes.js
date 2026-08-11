@@ -119,7 +119,8 @@ const WRITERS = {
   },
   employees: async (d, r) => {
     const body = { hr_hremployee1: d.name, hr_email: d.email || '', hr_phone: d.phone || '', hr_department: d.department || '', hr_designation: d.designation || '', hr_joiningdate: d.joiningDate || '', hr_employeeid: d.employeeId };
-    if (d.basic !== '' && d.basic != null) body.hr_salary = Number(d.basic) || 0;
+    // Salary is NOT stored on the Employee record — it lives in the Salary Structure.
+    // An employee import never writes pay (import a Salary Structure separately).
     if (r._existingGuid) { await d365.update(E.employee, r._existingGuid, body); return 'updated'; }
     await d365.create(E.employee, { ...body, hr_status: toValue('hr_employee_status', 'active') }); return 'created';
   },

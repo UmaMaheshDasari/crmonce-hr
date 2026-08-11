@@ -72,7 +72,7 @@ router.get('/summary', async (req, res, next) => {
     const [emp, monthRecsRes, allLeavesRes, firstDate, openPrior, activityItems, holidays, alerts] = await Promise.all([
       d365.getByIdOptional(EMP, empId, {
         select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
-        optionalSelect: `${SHIFT_COLS},hr_joiningdate,hr_salary`,
+        optionalSelect: `${SHIFT_COLS},hr_joiningdate`,
       }).catch(() => ({})),
       d365.getList(ATT, {
         select: PUNCH_SELECT,
