@@ -98,6 +98,7 @@ export const compOffApi = {
   cancel: (id, remarks) => api.patch(`/attendance/comp-off/${id}/cancel`, { remarks }),
   expire: (id) => api.patch(`/attendance/comp-off/${id}/expire`),
   edit: (id, data) => api.patch(`/attendance/comp-off/${id}`, data),
+  remove: (id) => api.delete(`/attendance/comp-off/${id}`),
   scan: (data) => api.post('/attendance/comp-off/scan', data),
 };
 

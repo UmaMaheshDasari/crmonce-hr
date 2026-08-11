@@ -114,6 +114,13 @@ router.patch('/:id/expire', requireRole(...HR), async (req, res, next) => {
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
+// DELETE /:id  — HR deletes a comp-off. Pending/rejected → removed; Approved unused →
+// ledger reversed then removed; Approved USED → blocked (409). Backend is authoritative.
+router.delete('/:id', requireRole(...HR), async (req, res, next) => {
+  try { res.json(await withTable(() => compOff.remove(req.params.id))); }
+  catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
+
 // PATCH /:id  — edit (days / reason / remarks / expiry / holiday)
 router.patch('/:id', requireRole(...HR), async (req, res, next) => {
   try { res.json(await compOff.edit(req.params.id, req.body || {})); }

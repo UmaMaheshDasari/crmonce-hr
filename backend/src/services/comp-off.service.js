@@ -82,7 +82,25 @@ async function list({ employeeId, year, status } = {}) {
   const { data } = await d365.getList(COMP, {
     select: SELECT, filter: filters.join(' and ') || undefined, orderby: 'createdon desc', top: 2000,
   });
-  return (data || []).map(shape);
+  const rows = (data || []).map(shape);
+  // Deletability for the UI: pending / rejected / cancelled / expired → deletable. An
+  // APPROVED (ledger-credited) record is deletable ONLY while still UNUSED (the balance
+  // still covers its days); a used credit cannot be pulled back. Balance looked up once
+  // per employee. The backend delete re-checks — this is only to show/disable the button.
+  const balCache = new Map();
+  const balanceOf = async (empId, yr) => {
+    const key = `${empId}|${yr}`;
+    if (!balCache.has(key)) balCache.set(key, await leaveEngine.getBalance(empId, yr).then(b => (b?.compOff?.balance ?? null)).catch(() => null));
+    return balCache.get(key);
+  };
+  for (const r of rows) {
+    if (r.status === 'approved' && r.ledgerLinked) {
+      const bal = await balanceOf(r.employeeId, r.year || new Date().getFullYear());
+      r.used = bal != null ? bal < r.days : false;
+    } else { r.used = false; }
+    r.deletable = !(r.status === 'approved' && r.used);
+  }
+  return rows;
 }
 
 // ── ledger bridge ────────────────────────────────────────────────────────────
@@ -136,20 +154,55 @@ async function create({ employeeId, employeeName, type = 'manual', workedDate, w
   return shape(rec);
 }
 
+/**
+ * LIVE attendance re-verification for an AUTO comp-off (attendance may have changed
+ * since it was generated). Confirms: the day is a Holiday/Weekly-Off, a real attendance
+ * record exists with a punch + present/half status, and the EFFECTIVE hours still
+ * qualify. Returns { ok, computedDays, effectiveHours, reason }. Manual HR grants are
+ * not attendance-derived, so they skip verification (HR discretion).
+ */
+async function verifyEligibility(row) {
+  const ds = String(row?.hr_workeddate || '').slice(0, 10);
+  const empId = row?.hr_employeeid;
+  if (String(row?.hr_type) !== 'auto') return { ok: true, computedDays: num(row?.hr_days) || 1, reason: 'manual grant (not attendance-verified)' };
+  if (!ds || !empId) return { ok: false, reason: 'Missing employee or worked date.' };
+  if (!(isHoliday(ds) || isWeeklyOff(ds))) return { ok: false, reason: 'The worked date is not a Holiday or Weekly-Off.' };
+  const { toLabel } = require('./picklist');
+  const ATT = d365.constructor.entities.attendance;
+  let att = null;
+  try {
+    const { data } = await d365.getList(ATT, {
+      select: 'hr_hrattendanceid,hr_date,hr_status,hr_intime,hr_effectivehours,hr_workedhours,_hr_hremployee_value',
+      filter: `_hr_hremployee_value eq '${empId}' and hr_date ge '${ds}' and hr_date le '${ds}'`, top: 5,
+    });
+    att = (data || [])[0] || null;
+  } catch (e) { return { ok: false, reason: `Attendance lookup failed: ${e.message}` }; }
+  if (!att) return { ok: false, reason: 'No attendance record exists for this date.' };
+  if (!att.hr_intime || !['present', 'half_day'].includes(String(toLabel('hr_attendance_status', att.hr_status)))) return { ok: false, reason: 'The employee did not actually work on this date.' };
+  const eff = (att.hr_effectivehours != null && att.hr_effectivehours !== '') ? Number(att.hr_effectivehours) : Number(att.hr_workedhours) || 0;
+  const computedDays = compOffDaysForHours(eff);
+  if (!computedDays) return { ok: false, reason: `Effective worked hours (${eff}h) do not qualify for Comp Off.` };
+  return { ok: true, computedDays, effectiveHours: eff };
+}
+
 // ── approve / reject / cancel / expire ───────────────────────────────────────
 async function approve(id, approver) {
   const row = await getRaw(id);
   if (['approved', 'expired', 'cancelled'].includes(row.hr_status)) { const e = new Error(`Comp Off is already ${row.hr_status}`); e.status = 409; throw e; }
-  const days = num(row.hr_days) || 1;
-  if (row.hr_ledgerlinked !== 'true') await bridgeEarned(row, days);
+  // LIVE attendance re-verification (auto records) — never trust the stored values alone;
+  // attendance may have changed. Credit the RECOMPUTED days so the balance matches reality.
+  const v = await verifyEligibility(row);
+  if (!v.ok) { const e = new Error('Comp Off cannot be approved because the attendance does not qualify.'); e.status = 400; e.reason = v.reason; throw e; }
+  const days = num(v.computedDays) || num(row.hr_days) || 1;
+  if (row.hr_ledgerlinked !== 'true') await bridgeEarned({ ...row, hr_days: String(days) }, days);
   // Expiry clock STARTS at approval — approval date + the 45-day policy (never the
   // worked date). The 409 guard above means a second approve can't reset this.
   const p = await policy();
   const expiryDate = Number(p.expiryDays) > 0 ? addDays(today(), p.expiryDays) : '';
-  await d365.update(COMP, id, { hr_status: 'approved', hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString(), hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
+  await d365.update(COMP, id, { hr_status: 'approved', hr_days: String(days), hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString(), hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
   notifyUser(row.hr_employeeid, 'compoff:approved', { days, workedDate: row.hr_workeddate });
   audit({ category: 'Attendance', type: 'compoff_approved', title: 'Comp Off approved', name: row.hr_employeename, meta: { days, by: approver?.name } });
-  return shape({ ...row, hr_status: 'approved', hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
+  return shape({ ...row, hr_days: String(days), hr_status: 'approved', hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
 }
 
 async function reject(id, approver, remarks) {
@@ -399,4 +452,35 @@ async function scanMonthCompOff({ month, year }) {
   return summary;
 }
 
-module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours };
+/** Is this approved comp-off's credit already consumed (balance can't cover reversing it)? */
+async function isCompOffUsed(employeeId, days, year) {
+  try {
+    const bal = await leaveEngine.getBalance(employeeId, year);
+    return (bal?.compOff?.balance || 0) < num(days);
+  } catch { return false; }   // can't confirm → allow (delete still only reverses a linked credit)
+}
+
+/**
+ * DELETE a comp-off (HR). Pending / rejected / cancelled / expired → just remove (no
+ * balance to touch — they never hold a live credit). Approved + ledger-credited → allowed
+ * ONLY while still UNUSED: reverse the ledger credit first, then delete. A USED approved
+ * comp-off can NEVER be deleted. The backend is authoritative (does not trust the UI).
+ */
+async function remove(id) {
+  const row = await getRaw(id);
+  const status = row.hr_status;
+  const days = num(row.hr_days) || 1;
+  const year = Number(row.hr_year) || Number(String(row.hr_workeddate || today()).slice(0, 4)) || new Date().getFullYear();
+  if (status === 'approved' && row.hr_ledgerlinked === 'true') {
+    if (await isCompOffUsed(row.hr_employeeid, days, year)) {
+      const e = new Error('This Comp Off has already been used and cannot be deleted.'); e.status = 409; throw e;
+    }
+    await reverseEarned(row);   // negative comp_off_earned ledger entry → balance corrected
+  }
+  await d365.delete(COMP, id);
+  notifyUser(row.hr_employeeid, 'compoff:deleted', { workedDate: row.hr_workeddate });
+  audit({ category: 'Attendance', type: 'compoff_deleted', title: 'Comp Off deleted', name: row.hr_employeename, meta: { id, status, workedDate: row.hr_workeddate } });
+  return { deleted: true, id };
+}
+
+module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, remove, verifyEligibility, isCompOffUsed, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours };

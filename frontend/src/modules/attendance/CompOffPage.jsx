@@ -117,6 +117,7 @@ export default function CompOffPage() {
   const [selectedEmp, setSelectedEmp] = useState('');
   const [showRaise, setShowRaise] = useState(false);
   const [showScan, setShowScan] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);   // the comp-off row pending deletion
 
   const { data: policyRes } = useQuery({ queryKey: ['comp-off-policy'], queryFn: () => compOffApi.policy().then(r => r.data) });
   const policy = policyRes || {};
@@ -137,6 +138,14 @@ export default function CompOffPage() {
   const rejectMut = useMutation({ mutationFn: (id) => compOffApi.reject(id), onSuccess: () => { toast.success('Rejected'); qc.invalidateQueries({ queryKey: ['comp-off'] }); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed') });
   const cancelMut = useMutation({ mutationFn: (id) => compOffApi.cancel(id), onSuccess: () => { toast.success('Cancelled'); qc.invalidateQueries({ queryKey: ['comp-off'] }); qc.invalidateQueries({ queryKey: ['leave-balance'] }); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed') });
   const expireMut = useMutation({ mutationFn: (id) => compOffApi.expire(id), onSuccess: () => { toast.success('Expired'); qc.invalidateQueries({ queryKey: ['comp-off'] }); qc.invalidateQueries({ queryKey: ['leave-balance'] }); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed') });
+  const deleteMut = useMutation({
+    mutationFn: (id) => compOffApi.remove(id),
+    onSuccess: () => { toast.success('Comp Off deleted successfully.'); setConfirmDelete(null); qc.invalidateQueries({ queryKey: ['comp-off'] }); qc.invalidateQueries({ queryKey: ['leave-balance'] }); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to delete'),
+  });
+
+  // Worked hours (decimal → "8h 20m") for the Reason cell of auto records.
+  const hoursLabel = (h) => { const n = Number(h) || 0; if (!n) return ''; const hh = Math.floor(n); const mm = Math.round((n - hh) * 60); return `${hh}h${mm ? ` ${mm}m` : ''}`; };
 
   return (
     <div className="space-y-6">
@@ -198,7 +207,10 @@ export default function CompOffPage() {
                   <td className="px-4 py-3 capitalize text-gray-600">{r.type}</td>
                   <td className="px-4 py-3 text-gray-600">{fmt(r.workedDate)}</td>
                   <td className="px-4 py-3 font-semibold text-gray-800">{r.days}</td>
-                  <td className="px-4 py-3 text-gray-500 max-w-[16rem] truncate">{r.holidayName || r.reason || '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 max-w-[16rem]">
+                    <div className="truncate">{r.holidayName || r.reason || '—'}</div>
+                    {r.type === 'auto' && Number(r.workedHours) > 0 && <div className="text-[11px] text-gray-400">Worked Hours: {hoursLabel(r.workedHours)}</div>}
+                  </td>
                   <td className="px-4 py-3 text-gray-500">{fmt(r.expiryDate)}</td>
                   <td className="px-4 py-3"><span className={`inline-flex items-center text-[11px] font-semibold border px-2 py-0.5 rounded-full capitalize ${STATUS[r.status] || STATUS.pending}`}>{r.status}</span></td>
                   <td className="px-4 py-3">
@@ -215,6 +227,13 @@ export default function CompOffPage() {
                           <button onClick={() => expireMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100"><ClockIcon className="w-3.5 h-3.5" /> Expire</button>
                         </>
                       )}
+                      {/* Delete: pending / rejected always; approved only when UNUSED (else disabled). */}
+                      {hr && ['pending', 'rejected'].includes(r.status) && (
+                        <button onClick={() => setConfirmDelete(r)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
+                      )}
+                      {hr && r.status === 'approved' && (r.deletable
+                        ? <button onClick={() => setConfirmDelete(r)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
+                        : <span title="Used Comp Off cannot be deleted." className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-gray-300 bg-gray-50 rounded-lg cursor-not-allowed"><TrashIcon className="w-3.5 h-3.5" /> Delete</span>)}
                       {!hr && r.status === 'pending' && <span className="text-xs text-gray-400">Awaiting HR</span>}
                     </div>
                   </td>
@@ -227,6 +246,23 @@ export default function CompOffPage() {
 
       {showRaise && <RaiseModal isHR={hr} employees={employees} onClose={() => setShowRaise(false)} />}
       {showScan && <ScanModal onClose={() => setShowScan(false)} />}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !deleteMut.isPending && setConfirmDelete(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center"><TrashIcon className="w-5 h-5 text-red-600" /></div>
+              <h2 className="text-lg font-bold text-gray-900">Delete this Comp Off?</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-1">Are you sure you want to permanently delete this Comp Off record?</p>
+            <p className="text-xs text-gray-400 mb-5">{confirmDelete.employeeName ? `${confirmDelete.employeeName} · ` : ''}{fmt(confirmDelete.workedDate)} · {confirmDelete.days} day(s){confirmDelete.status === 'approved' ? ' · approved credit will be reversed' : ''}</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setConfirmDelete(null)} disabled={deleteMut.isPending} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 disabled:opacity-50">Cancel</button>
+              <button onClick={() => deleteMut.mutate(confirmDelete.id)} disabled={deleteMut.isPending} className="px-5 py-2 text-sm font-medium text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50">{deleteMut.isPending ? 'Deleting…' : 'Delete'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
