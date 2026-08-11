@@ -176,4 +176,45 @@ function absentDatesFor(from, capTo, firstDate, hasRecord, onLeave, opts = {}) {
 const holidaysOf = (opts) => (opts && opts.holidays) || attnCfg.holidays;
 const weekOffsOf = (opts) => (opts && opts.weekOffDays) || attnCfg.weekOffDays;
 
-module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday };
+/**
+ * Expand APPROVED + PENDING leaves into per-(employee, working-date) classification —
+ * the single mapping the Attendance page uses to overlay leave onto dates and to keep
+ * pending days OUT of Absent (mirroring the payroll rule: approved = paid, pending =
+ * held, rejected/cancelled = not-a-leave → Absent/LOP). Multi-day leaves are expanded
+ * to every applicable WORKING date (weekly-offs / holidays excluded). Approved wins
+ * over pending on the same date.
+ *
+ * @param normLeaves array of { employeeId, fromDate, toDate, type, status } — status
+ *        already normalised to 'approved' | 'pending' (others are ignored by the caller).
+ * @returns Map(employeeId → Map(dateStr → { type, status }))
+ */
+function expandLeaveDays(normLeaves = [], from, capTo, opts = {}) {
+  const weekOffDays = opts.weekOffDays || attnCfg.weekOffDays;
+  const holidays = opts.holidays || attnCfg.holidays;
+  const start = String(from || '').slice(0, 10), end = String(capTo || '').slice(0, 10);
+  const byEmp = new Map();
+  if (!start || !end || end < start) return byEmp;
+  for (const l of normLeaves || []) {
+    if (l.status !== 'approved' && l.status !== 'pending') continue;
+    const lf = String(l.fromDate || '').slice(0, 10);
+    const lt = String(l.toDate || '').slice(0, 10) || lf;
+    if (!lf || !l.employeeId) continue;
+    const s = lf < start ? start : lf;
+    const e = lt > end ? end : lt;
+    if (e < s) continue;
+    let m = byEmp.get(l.employeeId); if (!m) byEmp.set(l.employeeId, m = new Map());
+    let d = new Date(`${s}T00:00:00Z`); const stop = new Date(`${e}T00:00:00Z`);
+    let guard = 0;
+    while (d <= stop && guard++ < 500) {
+      const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+      if (!holidays.includes(ds) && !weekOffDays.includes(d.getUTCDay())) {
+        const prev = m.get(ds);
+        if (!prev || (prev.status === 'pending' && l.status === 'approved')) m.set(ds, { type: l.type || '', status: l.status });
+      }
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+  }
+  return byEmp;
+}
+
+module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday, expandLeaveDays };

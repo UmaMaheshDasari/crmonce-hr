@@ -50,11 +50,13 @@ export default function AttendancePage() {
   // Aggregate stats for the cards — computed on the backend the SAME way as the
   // Excel export (Absent = Working − Attended − Leave), so all views agree.
   const { data: statsData } = useQuery({
-    queryKey: ['attendance-stats', empId, from, to],
-    queryFn: () => attendanceApi.stats({ employeeId: empId, from, to }),
+    queryKey: ['attendance-stats', empId, from, to, department],
+    queryFn: () => attendanceApi.stats({ employeeId: empId, from, to, department: department || undefined }),
     placeholderData: (prev) => prev,
   });
   const stats = statsData?.data;
+  // Per-(employee,date) leave rows for the table overlay (approved/pending, no punch).
+  const leaveDays = stats?.leaveDays || [];
 
   // Absent days have no attendance record, so we synthesize absentee rows and show
   // them both in the "All" view (appended) and when the Absent filter is active.
@@ -168,9 +170,13 @@ export default function AttendancePage() {
   // server-paginated (records only).
   let combined = null;
   if (allView) {
+    // Leave rows for dates the employee has NO punch on (present always wins).
+    const recKeys = new Set(records.map(r => `${r._hr_hremployee_value}|${String(r.hr_date || '').slice(0, 10)}`));
+    const leaveRows = leaveDays.filter(l => !recKeys.has(`${l.employeeId}|${l.date}`));
     combined = [
       ...records.map(r => ({ type: 'record', date: String(r.hr_date || '').slice(0, 10), r })),
       ...absentees.map(a => ({ type: 'absent', date: a.date, a })),
+      ...leaveRows.map(l => ({ type: 'leave', date: l.date, l })),
     ].sort((x, y) => (x.date !== y.date ? (x.date < y.date ? 1 : -1) : (x.type === y.type ? 0 : x.type === 'record' ? -1 : 1)));
   } else if (isAbsentView) {
     combined = absentees.map(a => ({ type: 'absent', date: a.date, a }));
@@ -187,10 +193,14 @@ export default function AttendancePage() {
   // employees) — NOT from filtering the current page, and Absent is computed
   // (Working − Attended − Leave), never by looking for absent records.
   const statCards = [
-    { label: 'Present', value: 'present', count: stats?.present ?? 0, icon: UserGroupIcon, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', border: 'border-l-emerald-500' },
-    { label: 'Absent', value: 'absent', count: stats?.absent ?? 0, icon: XCircleIcon, iconBg: 'bg-red-100', iconColor: 'text-red-600', border: 'border-l-red-500' },
-    { label: 'Half Day', value: 'half_day', count: stats?.halfDay ?? 0, icon: ClockIcon, iconBg: 'bg-amber-100', iconColor: 'text-amber-600', border: 'border-l-amber-500' },
-    { label: 'Incomplete', value: 'incomplete', count: stats?.incomplete ?? 0, icon: ExclamationTriangleIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-l-slate-400' },
+    { label: 'Present', value: 'present', filterable: true, count: stats?.present ?? 0, icon: UserGroupIcon, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', border: 'border-l-emerald-500' },
+    { label: 'Absent', value: 'absent', filterable: true, count: stats?.absent ?? 0, icon: XCircleIcon, iconBg: 'bg-red-100', iconColor: 'text-red-600', border: 'border-l-red-500' },
+    { label: 'Half Day', value: 'half_day', filterable: true, count: stats?.halfDay ?? 0, icon: ClockIcon, iconBg: 'bg-amber-100', iconColor: 'text-amber-600', border: 'border-l-amber-500' },
+    { label: 'Incomplete', value: 'incomplete', filterable: true, count: stats?.incomplete ?? 0, icon: ExclamationTriangleIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-l-slate-400' },
+    // Leave summary — informational (respects the same Employee / Date / Department filters).
+    { label: 'Leave Applied', value: null, filterable: false, count: stats?.leaveApplied ?? 0, icon: CalendarDaysIcon, iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', border: 'border-l-indigo-500' },
+    { label: 'Leave Pending', value: null, filterable: false, count: stats?.leavePending ?? 0, icon: ClockIcon, iconBg: 'bg-sky-100', iconColor: 'text-sky-600', border: 'border-l-sky-500' },
+    { label: 'Leave Approved', value: null, filterable: false, count: stats?.leaveApproved ?? 0, icon: CalendarDaysIcon, iconBg: 'bg-teal-100', iconColor: 'text-teal-600', border: 'border-l-teal-500' },
   ];
 
   const toggleCard = (val) => { setStatus(status === val ? '' : val); setPage(1); };
@@ -213,6 +223,33 @@ export default function AttendancePage() {
       </td>
     </tr>
   );
+
+  // A leave date with no punch — shown as Approved/Pending Leave + the leave type,
+  // NEVER as Absent/LOP (pending) or hidden (approved). Same rule as payroll.
+  const renderLeaveRow = (l, key) => {
+    const approved = l.leaveStatus === 'approved';
+    return (
+      <tr key={key} className={`transition-colors duration-150 ${approved ? 'hover:bg-emerald-50/30' : 'hover:bg-sky-50/30'}`}>
+        {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{l.employee}</span></td>}
+        <td className="px-5 py-4 text-sm text-gray-700 font-medium">{l.date ? format(new Date(l.date), 'dd MMM yyyy') : '—'}</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4">
+          <div className="flex flex-col gap-0.5">
+            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${approved ? 'text-emerald-700' : 'text-sky-700'}`}>
+              <span className={`w-2 h-2 rounded-full ${approved ? 'bg-emerald-500' : 'bg-sky-500'}`} />
+              {approved ? 'Approved Leave' : 'Pending Leave'}
+            </span>
+            {l.leaveType && <span className="text-[11px] font-semibold text-gray-500 pl-3.5">{l.leaveType}</span>}
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   const renderRecordRow = (r) => {
     const cfg = STATUS_CONFIG[r.hr_status] || STATUS_CONFIG.incomplete;
@@ -327,8 +364,8 @@ export default function AttendancePage() {
           <button
             key={s.label}
             type="button"
-            onClick={() => toggleCard(s.value)}
-            className={`text-left bg-white rounded-xl border border-l-4 ${s.border} p-5 shadow-sm hover:shadow-md transition-all duration-200 ${status === s.value ? 'ring-2 ring-indigo-400 border-gray-200' : 'border-gray-100'}`}
+            onClick={() => s.filterable && toggleCard(s.value)}
+            className={`text-left bg-white rounded-xl border border-l-4 ${s.border} p-5 shadow-sm transition-all duration-200 ${s.filterable ? 'hover:shadow-md cursor-pointer' : 'cursor-default'} ${s.filterable && status === s.value ? 'ring-2 ring-indigo-400 border-gray-200' : 'border-gray-100'}`}
           >
             <div className="flex items-start justify-between">
               <div>
@@ -488,7 +525,9 @@ export default function AttendancePage() {
               ) : (
                 pageRows.map((item, i) => item.type === 'absent'
                   ? renderAbsentRow(item.a, `abs-${item.a.employee}-${item.date}-${i}`)
-                  : renderRecordRow(item.r))
+                  : item.type === 'leave'
+                    ? renderLeaveRow(item.l, `lv-${item.l.employeeId}-${item.date}-${i}`)
+                    : renderRecordRow(item.r))
               )}
             </tbody>
           </table>

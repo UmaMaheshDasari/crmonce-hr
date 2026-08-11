@@ -686,7 +686,7 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
 });
 
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
-const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday } = require('../../services/attendance-summary.util');
+const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday, expandLeaveDays } = require('../../services/attendance-summary.util');
 const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
@@ -724,32 +724,22 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const today = time.istDateStr();
   const capTo = to < today ? to : today;                                  // min(to, today)
 
-  const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-    select: 'hr_days,hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
-    filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+  // APPROVED + PENDING leave, expanded to per-(employee, working-date) with type+status —
+  // the SAME classification the payroll rule uses (approved = paid/Payable, pending = held,
+  // never Absent/LOP). Rejected/cancelled are never fetched, so they stay Absent. Expanded
+  // over the FULL selected range so a future approved/pending leave still shows on the page;
+  // Absent enumeration itself only ever reaches capTo (today), so future dates never count.
+  const { data: leaves } = await d365.getListOptional(d365.constructor.entities.leave, {
+    select: 'hr_days,hr_fromdate,hr_todate,_hr_hremployee_value,hr_status,hr_leavetype',
+    optionalSelect: 'hr_usecompoff',
+    filter: `(hr_status eq ${toValue('hr_leave_status', 'approved')} or hr_status eq ${toValue('hr_leave_status', 'pending')})`,
   });
-  // Leave offsets Absent by WORKING days only (weekends/holidays inside a leave
-  // are never "would-be-absent" days). Count per-date over [from, capTo] so the
-  // Absent CARD matches the /absentees ROWS exactly (both exclude working leave
-  // days). Calendar-day counting (resolveDays) over-subtracts and made them differ.
-  // Per-employee SETS: approved-leave WORKING dates + dates with ANY attendance
-  // record (matching /absentees). Absent is then enumerated from these, not a formula.
-  const leaveDatesByEmp = {};
-  (leaves || []).forEach(l => {
-    const lf = String(l.hr_fromdate || '').slice(0, 10);
-    const lt = String(l.hr_todate || '').slice(0, 10) || lf;
-    if (!lf) return;
-    const start = lf < from ? from : lf;
-    const stop = lt > capTo ? capTo : lt;                                 // elapsed window only
-    if (stop < start) return;
-    const set = leaveDatesByEmp[l._hr_hremployee_value] = leaveDatesByEmp[l._hr_hremployee_value] || new Set();
-    const end = new Date(`${stop}T00:00:00Z`);
-    for (let dt = new Date(`${start}T00:00:00Z`); dt <= end; dt.setUTCDate(dt.getUTCDate() + 1)) {
-      const ds = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
-      if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(dt.getUTCDay())) continue;   // working days only
-      set.add(ds);
-    }
-  });
+  const normLeaves = (leaves || []).map(l => ({
+    employeeId: l._hr_hremployee_value, fromDate: l.hr_fromdate, toDate: l.hr_todate,
+    type: l.hr_usecompoff === 'true' ? 'Comp Off' : toLabel('hr_leave_type', l.hr_leavetype),
+    status: toLabel('hr_leave_status', l.hr_status),
+  }));
+  const leaveInfoByEmp = expandLeaveDays(normLeaves, from, to);           // Map(empId → Map(date → {type,status}))
   const recordDatesByEmp = {};
   (recs || []).forEach(r => {
     const ds = String(r.hr_date || '').slice(0, 10);
@@ -791,29 +781,45 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const todayInRange = capTo >= today;
   const perEmployee = scope.map(e => {
     const recordSet = recordDatesByEmp[e.hr_hremployeeid] || new Set();
-    const leaveSet = leaveDatesByEmp[e.hr_hremployeeid] || new Set();
-    const leaveDays = leaveSet.size;
+    const leaveMap = leaveInfoByEmp.get(e.hr_hremployeeid) || new Map();   // date → {type,status}
+    const leaveSet = new Set(leaveMap.keys());                             // approved+pending → NEVER Absent
+    let approvedDays = 0, pendingDays = 0;
+    for (const info of leaveMap.values()) { if (info.status === 'approved') approvedDays++; else if (info.status === 'pending') pendingDays++; }
     // Prefer the true first-ever date; fall back to the earliest in-range punch so
     // an unavailable aggregate never forces working days (and thus Absent) to 0.
     const firstDate = firstMap.get(e.hr_hremployeeid) || firstInRange[e.hr_hremployeeid] || null;
     const working = effectiveWorking(from, capTo, firstDate);
-    const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays });
-    // Absent = ENUMERATED working dates with no record and no leave (identical to
-    // /absentees) — never the Working−Attended−Leave formula. Today counts only once
-    // this employee's own shift-start + grace has passed (spec §7/§8).
+    const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays: approvedDays });
+    // Absent = ENUMERATED working dates with no record and no leave (approved OR pending)
+    // — pending is held out of Absent, exactly like payroll. Today counts only once this
+    // employee's own shift-start + grace has passed (spec §7/§8).
     const todayPending = todayInRange && !gracePassedToday(shiftOf(e), graceMin, nowMin);
     summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds), { today, todayPending }).length;
-    return { emp: e, leaveDays, working, firstDate, summary };
+    return { emp: e, approvedDays, pendingDays, working, firstDate, summary, leaveMap, recordSet };
   });
 
   const totals = perEmployee.reduce((t, p) => {
     t.present += p.summary.present; t.half += p.summary.half; t.incomplete += p.summary.incomplete;
-    t.attended += p.summary.attended; t.absent += p.summary.absent; t.leave += p.leaveDays;
+    t.attended += p.summary.attended; t.absent += p.summary.absent;
+    t.leaveApproved += p.approvedDays; t.leavePending += p.pendingDays;
     t.effectiveHours += p.summary.effectiveHours; t.overtimeHours += p.summary.overtimeHours;
     return t;
-  }, { present: 0, half: 0, incomplete: 0, attended: 0, absent: 0, leave: 0, effectiveHours: 0, overtimeHours: 0, employees: perEmployee.length });
+  }, { present: 0, half: 0, incomplete: 0, attended: 0, absent: 0, leaveApproved: 0, leavePending: 0, effectiveHours: 0, overtimeHours: 0, employees: perEmployee.length });
+  totals.leave = totals.leaveApproved;                       // back-compat: "Leave" column = approved working days
+  totals.leaveApplied = totals.leaveApproved + totals.leavePending;
 
-  return { rc, empMap, byEmp, computed, perEmployee, totals };
+  // Per-(employee, date) leave rows for the table overlay — a leave date with an
+  // attendance record is NOT emitted (the punch wins: Present, not a leave row).
+  const leaveDays = [];
+  for (const p of perEmployee) {
+    if (!p.leaveMap.size) continue;
+    for (const [date, info] of p.leaveMap) {
+      if (p.recordSet.has(date)) continue;                   // present/punched → the record row shows it
+      leaveDays.push({ employeeId: p.emp.hr_hremployeeid, employee: p.emp.hr_hremployee1 || 'Employee', department: p.emp.hr_department || '', date, leaveType: info.type, leaveStatus: info.status });
+    }
+  }
+
+  return { rc, empMap, byEmp, computed, perEmployee, totals, leaveDays };
 }
 
 // GET /api/attendance/stats — aggregate Present/Half/Incomplete/Absent/Leave for
@@ -826,12 +832,15 @@ router.get('/stats', requirePermission('attendance:read'), async (req, res, next
     const now = new Date();
     const from = req.query.from || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
-    const { rc, totals } = await buildRangeSummary(from, to, { targetId, department, designation });
+    const { rc, totals, leaveDays } = await buildRangeSummary(from, to, { targetId, department, designation });
     res.json({
       from, to,
       calendar: rc.calendar, working: rc.working, holidays: rc.holidays, weeklyOff: rc.weeklyOff,
       present: totals.present, halfDay: totals.half, incomplete: totals.incomplete,
       absent: totals.absent, leave: totals.leave, attended: totals.attended,
+      // Leave summary (respects the same employee/department/date filters).
+      leaveApplied: totals.leaveApplied, leavePending: totals.leavePending, leaveApproved: totals.leaveApproved,
+      leaveDays,                                    // [{ employeeId, employee, date, leaveType, leaveStatus }]
       employees: totals.employees,
     });
   } catch (err) { next(err); }
@@ -936,10 +945,11 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
     if (department) scope = scope.filter(e => e.hr_department === department);
     if (designation) scope = scope.filter(e => e.hr_designation === designation);
 
-    // Approved-leave (employee|date) set.
+    // Approved + Pending leave (employee|date) set — a pending leave is HELD (never Absent),
+    // exactly like payroll; rejected/cancelled stay Absent. Matches /stats' Absent exclusion.
     const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
       select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
-      filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`,
+      filter: `(hr_status eq ${toValue('hr_leave_status', 'approved')} or hr_status eq ${toValue('hr_leave_status', 'pending')})`,
     });
     const onLeave = new Set();
     (leaves || []).forEach(l => {
@@ -1020,11 +1030,11 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
     ];
     sum.getRow(1).font = { bold: true };
     sum.getColumn('missing').alignment = { wrapText: true, vertical: 'top' };
-    for (const { emp: e, leaveDays, working, summary: s } of perEmployee) {
+    for (const { emp: e, approvedDays, working, summary: s } of perEmployee) {
       sum.addRow({
         emp: e.hr_hremployee1 || 'Employee', dept: e.hr_department || '', desig: e.hr_designation || '',
         cal: rc.calendar, wd: working, present: s.present, half: s.half, absent: s.absent,
-        leave: leaveDays, hol: rc.holidays, woff: rc.weeklyOff, incomplete: s.incomplete,
+        leave: approvedDays, hol: rc.holidays, woff: rc.weeklyOff, incomplete: s.incomplete,
         missing: s.missingPunchDetails.length ? s.missingPunchDetails.join('\n') : 'None',
         eff: fmtDur(s.effectiveHours), brk: fmtDur(s.breakHours), ot: fmtDur(s.overtimeHours),
       });
