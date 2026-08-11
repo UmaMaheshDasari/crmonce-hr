@@ -5,7 +5,8 @@ import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import {
   PlusIcon, XMarkIcon, CheckIcon, ArrowPathIcon, MagnifyingGlassIcon,
-  GiftIcon, ClockIcon, NoSymbolIcon, TrashIcon, PencilSquareIcon,
+  GiftIcon, ClockIcon, NoSymbolIcon, TrashIcon, PencilSquareIcon, EyeIcon,
+  CalendarDaysIcon, CheckCircleIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -110,6 +111,95 @@ function ScanModal({ onClose }) {
   );
 }
 
+// HR "Check Attendance" modal — shows the verified attendance for the comp-off's worked
+// date + the backend-calculated eligibility. Approve/Reject use the verified eligible days.
+function VerifyAttendanceModal({ id, onClose }) {
+  const qc = useQueryClient();
+  const { data: v, isLoading } = useQuery({ queryKey: ['comp-off-verify', id], queryFn: () => compOffApi.verify(id).then(r => r.data) });
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['comp-off'] }); qc.invalidateQueries({ queryKey: ['leave-balance'] }); };
+  const approveMut = useMutation({ mutationFn: () => compOffApi.approve(id), onSuccess: () => { toast.success('Comp Off approved'); refresh(); onClose(); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed to approve') });
+  const rejectMut = useMutation({ mutationFn: () => compOffApi.reject(id), onSuccess: () => { toast.success('Comp Off rejected'); refresh(); onClose(); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed to reject') });
+  const a = v?.attendance;
+  const YesNo = ({ on }) => <span className={`font-semibold ${on ? 'text-emerald-600' : 'text-gray-400'}`}>{on ? 'Yes' : 'No'}</span>;
+  const Row = ({ label, children }) => <div className="flex justify-between text-sm py-1"><span className="text-gray-500">{label}</span><span className="font-medium text-gray-800 text-right">{children}</span></div>;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2"><CalendarDaysIcon className="w-5 h-5 text-indigo-600" /><h3 className="text-base font-bold text-gray-900">Attendance Verification</h3></div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100"><XMarkIcon className="w-5 h-5 text-gray-500" /></button>
+        </div>
+
+        {isLoading || !v ? (
+          <div className="p-10 text-center text-sm text-gray-400">Loading attendance…</div>
+        ) : (
+          <div className="p-5 space-y-4">
+            <div>
+              <p className="text-sm font-bold text-gray-900">{v.employeeName || 'Employee'}</p>
+              <p className="text-xs text-gray-500">{v.day ? `${v.day}, ` : ''}{v.workedDate} · <span className="capitalize">{v.type}</span>{v.reason ? ` · ${v.reason}` : ''}</p>
+            </div>
+
+            {/* Attendance details */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Attendance Details</p>
+              {v.attendanceFound ? (
+                <>
+                  <Row label="Status"><span className="capitalize">{a.status || '—'}</span></Row>
+                  <Row label="In Time">{a.inTime || '—'}</Row>
+                  <Row label="Out Time">{a.outTime || '—'}</Row>
+                  <Row label="All Punches">{a.punches?.length ? a.punches.join(', ') : '—'}</Row>
+                  <Row label="Source">{a.source || '—'}</Row>
+                </>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-red-700"><ExclamationTriangleIcon className="w-4 h-4" /> No attendance record exists for this date.</div>
+              )}
+            </div>
+
+            {/* Working hours */}
+            {v.attendanceFound && (
+              <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Working Hours</p>
+                <Row label="Effective Working Hours"><span className="text-indigo-700 font-bold">{a.effectiveHoursLabel}</span></Row>
+                <Row label="Break Duration">{a.breakLabel}</Row>
+              </div>
+            )}
+
+            {/* Eligibility */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Comp Off Eligibility</p>
+              <Row label="Company Holiday"><YesNo on={v.holiday} /></Row>
+              <Row label="Weekly Off"><YesNo on={v.weeklyOff} /></Row>
+              <Row label="Effective Hours">{v.attendanceFound ? a.effectiveHoursLabel : '—'}</Row>
+              <div className="mt-2 flex items-center gap-2">
+                {v.eligible
+                  ? <span className="inline-flex items-center gap-1.5 text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg"><CheckCircleIcon className="w-4 h-4" /> {v.eligibilityLabel}</span>
+                  : <span className="inline-flex items-center gap-1.5 text-sm font-bold text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg"><ExclamationTriangleIcon className="w-4 h-4" /> {v.eligibilityLabel}</span>}
+              </div>
+              {!v.eligible && v.eligibilityReason && <p className="text-xs text-gray-500 mt-1.5">{v.eligibilityReason}</p>}
+            </div>
+
+            {/* Approval actions — only for a still-pending comp-off */}
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200">Close</button>
+              {v.compOffStatus === 'pending' && (
+                <>
+                  <button onClick={() => rejectMut.mutate()} disabled={rejectMut.isPending} className="px-4 py-2 text-sm font-semibold text-red-700 bg-red-50 rounded-xl hover:bg-red-100 disabled:opacity-50">Reject</button>
+                  <button onClick={() => approveMut.mutate()} disabled={!v.eligible || approveMut.isPending}
+                    title={v.eligible ? '' : 'Not eligible — attendance does not qualify'}
+                    className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                    {approveMut.isPending ? 'Approving…' : v.eligible ? `Approve ${v.eligibleDays} Day` : 'Not Eligible'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function CompOffPage() {
   const { user, isHR } = useAuth();
   const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
@@ -118,6 +208,7 @@ export default function CompOffPage() {
   const [showRaise, setShowRaise] = useState(false);
   const [showScan, setShowScan] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);   // the comp-off row pending deletion
+  const [verifyId, setVerifyId] = useState(null);             // comp-off id whose attendance HR is verifying
 
   const { data: policyRes } = useQuery({ queryKey: ['comp-off-policy'], queryFn: () => compOffApi.policy().then(r => r.data) });
   const policy = policyRes || {};
@@ -214,7 +305,11 @@ export default function CompOffPage() {
                   <td className="px-4 py-3 text-gray-500">{fmt(r.expiryDate)}</td>
                   <td className="px-4 py-3"><span className={`inline-flex items-center text-[11px] font-semibold border px-2 py-0.5 rounded-full capitalize ${STATUS[r.status] || STATUS.pending}`}>{r.status}</span></td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 justify-end">
+                    <div className="flex items-center gap-1.5 justify-end flex-wrap">
+                      {/* HR verifies the employee's actual attendance for the worked date. */}
+                      {hr && (
+                        <button onClick={() => setVerifyId(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100"><EyeIcon className="w-3.5 h-3.5" /> Attendance</button>
+                      )}
                       {hr && r.status === 'pending' && (
                         <>
                           <button onClick={() => approveMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckIcon className="w-3.5 h-3.5" /> Approve</button>
@@ -247,6 +342,7 @@ export default function CompOffPage() {
 
       {showRaise && <RaiseModal isHR={hr} employees={employees} onClose={() => setShowRaise(false)} />}
       {showScan && <ScanModal onClose={() => setShowScan(false)} />}
+      {verifyId && <VerifyAttendanceModal id={verifyId} onClose={() => setVerifyId(null)} />}
 
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !deleteMut.isPending && setConfirmDelete(null)}>

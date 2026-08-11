@@ -185,6 +185,77 @@ async function verifyEligibility(row) {
   return { ok: true, computedDays, effectiveHours: eff };
 }
 
+// Decimal hours → "9h 17m" (display only — eligibility ALWAYS uses the exact decimal).
+function fmtHours(h) {
+  const n = Math.max(0, Number(h) || 0);
+  const hh = Math.floor(n), mm = Math.round((n - hh) * 60);
+  return mm ? `${hh}h ${mm}m` : `${hh}h`;
+}
+const SOURCE_LABEL = { etime_device: 'Device', web_checkin: 'Web', manual_correction: 'Manual' };
+
+/**
+ * Full attendance verification for the HR "Check Attendance" modal AND the authoritative
+ * eligibility. Reads the employee's attendance for the comp-off's EXACT worked date and
+ * returns every display field plus the calculated eligibility (same rule as approve() and
+ * the month-end scan — never a second calculation). HR-facing; read-only.
+ */
+async function attendanceVerification(id) {
+  const row = await getRaw(id);
+  const ds = String(row.hr_workeddate || '').slice(0, 10);
+  const empId = row.hr_employeeid;
+  const isAuto = String(row.hr_type) === 'auto';
+  const holiday = isHoliday(ds), weeklyOff = isWeeklyOff(ds);
+  const day = ds ? new Date(`${ds}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }) : '';
+  const base = {
+    id, employeeId: empId, employeeName: row.hr_employeename || '', workedDate: ds, day,
+    type: row.hr_type || 'manual', reason: row.hr_reason || '', holidayName: holiday ? holidayName(ds) : '',
+    compOffStatus: row.hr_status || 'pending', storedDays: num(row.hr_days), holiday, weeklyOff,
+  };
+
+  const { toLabel } = require('./picklist');
+  let att = null;
+  try {
+    const { data } = await d365.getList(d365.constructor.entities.attendance, {
+      select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_status,hr_source,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours,hr_workedhours,_hr_hremployee_value',
+      filter: `_hr_hremployee_value eq '${empId}' and hr_date ge '${ds}' and hr_date le '${ds}'`, top: 5,
+    });
+    att = (data || [])[0] || null;
+  } catch (_) { att = null; }
+
+  if (!att) {
+    return { ...base, attendanceFound: false, attendance: null, effectiveHours: 0,
+      eligible: false, eligibleDays: 0, eligibilityLabel: 'NOT ELIGIBLE',
+      eligibilityReason: 'No attendance record exists for this date.' };
+  }
+
+  const statusLabel = toLabel('hr_attendance_status', att.hr_status) || String(att.hr_status || '');
+  const worked = !!att.hr_intime && ['present', 'half_day'].includes(statusLabel);
+  const eff = (att.hr_effectivehours != null && att.hr_effectivehours !== '') ? Number(att.hr_effectivehours) : Number(att.hr_workedhours) || 0;
+  let punches = [];
+  try { const p = JSON.parse(att.hr_allpunches || '[]'); if (Array.isArray(p)) punches = p; } catch { /* malformed → none */ }
+  const brk = Number(att.hr_breakduration) || 0;
+
+  const hoursDays = compOffDaysForHours(eff);   // exact decimal → 0 | 0.5 | 1
+  let eligible, eligibleDays, reason;
+  if (!(holiday || weeklyOff) && isAuto) { eligible = false; eligibleDays = 0; reason = 'The worked date is not a Holiday or Weekly-Off.'; }
+  else if (!worked) { eligible = false; eligibleDays = 0; reason = 'The employee did not actually work on this date (no valid punch / not Present).'; }
+  else if (!hoursDays) { eligible = false; eligibleDays = 0; reason = `Effective hours (${fmtHours(eff)}) are 5h or less — not eligible.`; }
+  else { eligible = true; eligibleDays = hoursDays; reason = ''; }
+  const eligibilityLabel = !eligible ? 'NOT ELIGIBLE' : eligibleDays === 1 ? 'FULL DAY – 1' : 'HALF DAY – 0.5';
+
+  return {
+    ...base, attendanceFound: true, effectiveHours: eff,
+    attendance: {
+      status: statusLabel, inTime: att.hr_intime || '', outTime: att.hr_outtime || '',
+      punches, punchCount: Number(att.hr_punchcount) || punches.length,
+      effectiveHours: eff, effectiveHoursLabel: fmtHours(eff),
+      breakHours: brk, breakLabel: fmtHours(brk),
+      source: SOURCE_LABEL[toLabel('hr_attendance_source', att.hr_source)] || toLabel('hr_attendance_source', att.hr_source) || att.hr_source || '—',
+    },
+    eligible, eligibleDays, eligibilityLabel, eligibilityReason: reason,
+  };
+}
+
 // ── approve / reject / cancel / expire ───────────────────────────────────────
 async function approve(id, approver) {
   const row = await getRaw(id);
@@ -489,4 +560,4 @@ async function remove(id, user) {
   return { deleted: true, id };
 }
 
-module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, remove, verifyEligibility, isCompOffUsed, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours };
+module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, remove, verifyEligibility, attendanceVerification, isCompOffUsed, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours, fmtHours };

@@ -94,6 +94,7 @@ export const compOffApi = {
   balance: (params) => api.get('/attendance/comp-off/balance', { params }),
   policy: () => api.get('/attendance/comp-off/policy'),
   create: (data) => api.post('/attendance/comp-off', data),
+  verify: (id) => api.get(`/attendance/comp-off/${id}/verify`),
   approve: (id) => api.patch(`/attendance/comp-off/${id}/approve`),
   reject: (id, remarks) => api.patch(`/attendance/comp-off/${id}/reject`, { remarks }),
   cancel: (id, remarks) => api.patch(`/attendance/comp-off/${id}/cancel`, { remarks }),

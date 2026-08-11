@@ -90,6 +90,13 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// GET /:id/verify — HR attendance-verification details + calculated eligibility for the
+// comp-off's worked date (authoritative; the frontend only displays this).
+router.get('/:id/verify', requireRole(...HR), async (req, res, next) => {
+  try { res.json(await withTable(() => compOff.attendanceVerification(req.params.id))); }
+  catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
+
 // PATCH /:id/approve
 router.patch('/:id/approve', requireRole(...HR), async (req, res, next) => {
   try { res.json(await compOff.approve(req.params.id, req.user)); }
