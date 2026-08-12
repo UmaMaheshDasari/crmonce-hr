@@ -219,3 +219,34 @@ test('grace is configurable per call (graceMinutes=0 → full lateness)', () => 
   const c = computeSession(['09:08', '18:00'], S('09:00', '18:00', 9), { graceMinutes: 0 });
   assert.strictEqual(c.lateArrivalMin, 8);
 });
+
+// ── Late Entry (lateEntryMinutes) — the EMAILED "Late By", measured from the ACTUAL
+//    shift start, with a FIXED 5-min grace. 09:00 shift: 09:00–09:05 Normal, 09:06+ Late.
+//    Distinct from lateArrivalMin (which is measured AFTER the grace window).
+const GEN = S('09:00', '18:00', 9);
+test('Late Entry: 09:00 exactly on time → 0 (no email)', () => {
+  assert.strictEqual(computeSession(['09:00', '18:00'], GEN).lateEntryMinutes, 0);
+});
+test('Late Entry: 09:05 grace boundary → 0 (still Normal, no email)', () => {
+  assert.strictEqual(computeSession(['09:05', '18:00'], GEN).lateEntryMinutes, 0);
+});
+test('Late Entry: 09:06 first minute past grace → Late By 6 (from shift start, not grace end)', () => {
+  assert.strictEqual(computeSession(['09:06', '18:00'], GEN).lateEntryMinutes, 6);
+});
+test('Late Entry: 09:10 → Late By 10', () => {
+  assert.strictEqual(computeSession(['09:10', '18:00'], GEN).lateEntryMinutes, 10);
+});
+test('Late Entry: 09:30 → Late By 30', () => {
+  assert.strictEqual(computeSession(['09:30', '18:00'], GEN).lateEntryMinutes, 30);
+});
+test('Late Entry never affects status/salary facts (09:30 late but full hours → present)', () => {
+  const c = computeSession(['09:30', '18:30'], GEN);     // 9h effective, late 30
+  assert.strictEqual(c.lateEntryMinutes, 30);
+  assert.strictEqual(c.status, 'present');               // never half/absent/LOP
+  assert.strictEqual(c.metRequiredHours, true);
+});
+test('Late Entry uses a FIXED 5-min grace (opts.graceMinutes does not widen the email trigger for these examples)', () => {
+  // The 5-min rule is fixed; lateEntryMinutes keys off the same graceMin used for lateArrival.
+  assert.strictEqual(computeSession(['09:06', '18:00'], GEN).lateEntryMinutes, 6);
+  assert.strictEqual(computeSession(['09:05', '18:00'], GEN).lateEntryMinutes, 0);
+});

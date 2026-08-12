@@ -12,6 +12,8 @@ const compOffRoutes = require('./comp-off.routes');
 const lateLoginRoutes = require('./late-login.routes');
 const lateLoginService = require('../../services/late-login.service');
 const activity = require('../../services/activity.service');
+const exceptionSvc = require('../../services/attendance-exception.service');
+const ecfg = require('../../services/email/config');
 const time = require('../../services/time.util');
 const { ensureAttendanceAuditTable, ENTITY_SET: ATT_AUDIT_SET } = require('../../services/provision-attendance-audit');
 
@@ -260,6 +262,24 @@ async function getEmployeeShift(employeeId) {
     return shiftOf(e);
   } catch (_) { return resolveShift(); }
 }
+// Real-time Late Entry email (employee only). Runs detached so it can NEVER delay or
+// fail a check-in; the ledger guarantees ONE email per employee+date even with the
+// nightly scan also running. No-op when disabled or the check-in is within grace.
+function maybeSendLateEntry(employeeId, date, shift, c) {
+  if (!ecfg.notify.lateLoginNotice || (c?.lateEntryMinutes || 0) <= 0) return;
+  Promise.resolve()
+    .then(async () => {
+      const emp = await d365.getByIdOptional(EMP_ENTITY, employeeId, { select: 'hr_hremployeeid,hr_hremployee1,hr_email' });
+      if (!emp?.hr_email) return;
+      const shiftLabel = emp.hr_shiftname || `${shift.start}–${shift.end}`;
+      await exceptionSvc.sendLateLoginNotice(emp, {
+        date, shift: shiftLabel, expectedTime: shift.start,
+        actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '', lateBy: c.lateEntryMinutes,
+      });
+    })
+    .catch((err) => global.logger?.warn?.(`[checkin] late-entry notice failed: ${err.message}`));
+}
+
 /** employeeId → resolved shift, for multi-employee reports (overview/export). */
 async function buildShiftMap() {
   const map = new Map();
@@ -334,6 +354,10 @@ router.post('/checkin', requirePermission('attendance:read'), async (req, res, n
         hr_source: toValue('hr_attendance_source', 'web_checkin'),
         ...punchPayload(c),
       });
+      // Real-time Late Entry notice to the EMPLOYEE when this first check-in is past
+      // the 5-min grace. Fire-and-forget (never blocks/fails the check-in) and the
+      // ledger de-dupes vs. the nightly scan (one email per employee+date).
+      maybeSendLateEntry(employeeId, today, shift, c);
       return res.json(labelsForEntity('hr_hrattendances', created));
     }
 

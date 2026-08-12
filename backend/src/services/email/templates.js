@@ -298,19 +298,21 @@ function missingPunch(d) {
  * d: { employeeName, date, shift, expectedTime, actualTime }
  */
 function lateLoginNotice(d) {
-  const subject = `Late Login - ${d.date}`;
+  const subject = `Late Entry - ${d.date}`;
+  const lateByTxt = (d.lateBy != null && Number(d.lateBy) > 0) ? `${Number(d.lateBy)} minute${Number(d.lateBy) === 1 ? '' : 's'}` : '—';
   const content =
     greet(d.employeeName) +
-    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Our attendance system recorded a late login for <strong>${esc(d.date)}</strong>. This is for your information only — no action is required.</p>` +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Our attendance system recorded a <strong>Late Entry</strong> for <strong>${esc(d.date)}</strong>. This is for your information only — it does not affect your salary, attendance, or leave, and no action is required.</p>` +
     summaryCard('Attendance', [
       ['Date', esc(d.date)],
       ['Shift', esc(d.shift || '—')],
-      ['Expected Login', esc(d.expectedTime || '—')],
-      ['Actual Login', esc(d.actualTime || '—')],
-      ['Attendance Status', statusBadge('Late Login')],
+      ['Shift Start', esc(d.expectedTime || '—')],
+      ['Check-In Time', esc(d.actualTime || '—')],
+      ['Late By', esc(lateByTxt)],
+      ['Attendance Status', statusBadge('Late Entry')],
     ]) +
     banner('If this looks incorrect, please raise an Attendance Correction or a Late Login request in the HR Portal.');
-  return { subject, html: layout({ title: subject, preheader: `Late login on ${d.date}`, content }) };
+  return { subject, html: layout({ title: subject, preheader: `Late entry on ${d.date}`, content }) };
 }
 
 /**

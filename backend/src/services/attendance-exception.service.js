@@ -93,12 +93,14 @@ async function notifyException(emp, alert, { cc = [], shift, inTime, outTime } =
 
 /** Late-login informational notice — ONE per employee+date (LATE_LOGIN), employee
  *  only. Opt-in via config.notify.lateLoginNotice. Deduped by the ledger. */
-async function sendLateLoginNotice(emp, { date, shift, expectedTime, actualTime }) {
+async function sendLateLoginNotice(emp, { date, shift, expectedTime, actualTime, lateBy }) {
   const to = emp.hr_email;
   if (!to || requestNotify.isPlaceholderEmail(to)) return { skipped: true };
   const { subject, html } = templates.lateLoginNotice({
-    employeeName: emp.hr_hremployee1, date: time.fmtDate(date), shift, expectedTime, actualTime,
+    employeeName: emp.hr_hremployee1, date: time.fmtDate(date), shift, expectedTime, actualTime, lateBy,
   });
+  // ONE email per employee + attendance date (LATE_LOGIN) — the ledger de-dupes so a
+  // re-scan / real-time check-in / recalc never re-sends the same day's late entry.
   return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance' });
 }
 
@@ -150,8 +152,8 @@ async function runScan({ days = 3, reminder = false } = {}) {
 
     // Late-login informational notice (opt-in) — ONE per employee/day via the
     // ledger, so recalc / dashboard / payroll never re-send it (§9).
-    if (ecfg.notify.lateLoginNotice && (c.lateArrivalMin || 0) > 0) {
-      await sendLateLoginNotice(emp, { date, shift: shiftLabel, expectedTime: shift.start, actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '' });
+    if (ecfg.notify.lateLoginNotice && (c.lateEntryMinutes || 0) > 0) {
+      await sendLateLoginNotice(emp, { date, shift: shiftLabel, expectedTime: shift.start, actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '', lateBy: c.lateEntryMinutes });
     }
 
     const [ex] = detectExceptions(c);

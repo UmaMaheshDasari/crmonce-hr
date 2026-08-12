@@ -33,9 +33,10 @@ module.exports = {
     // Missing-punch email: add age-based manager (≥48h) / HR (≥72h) CC only if a
     // company explicitly opts in. Default OFF → employee only (§7, §14).
     exceptionEscalationCc: process.env.NOTIFY_EXCEPTION_ESCALATION_CC === 'true',
-    // Auto "you logged in late" informational email (ONE per employee/day via the
-    // ledger). Off by default so no unexpected mail; dedupe always applies (§9).
-    lateLoginNotice: process.env.NOTIFY_LATE_LOGIN === 'true',
+    // Auto "Late Entry" informational email to the EMPLOYEE (ONE per employee/day via
+    // the ledger) when a check-in is past the 5-minute grace. ON by default; set
+    // NOTIFY_LATE_LOGIN=false to disable. Dedupe always applies (§9).
+    lateLoginNotice: process.env.NOTIFY_LATE_LOGIN !== 'false',
   },
   teams: {
     enabled:    !!process.env.TEAMS_WEBHOOK_URL,

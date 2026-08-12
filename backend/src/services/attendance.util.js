@@ -19,6 +19,9 @@ const policy = require('./company.policy');
 const toMin = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const round2 = (n) => Math.round(n * 100) / 100;
 
+// Late Entry grace: EXACTLY 5 minutes past shift start (fixed, not configurable).
+const LATE_ENTRY_GRACE_MIN = 5;
+
 /** Normalize raw punches (strings or {t,d}) → sorted [{t,d}] with a direction on each. */
 function normalizePunches(raw) {
   let arr = Array.isArray(raw) ? raw : [];
@@ -91,16 +94,20 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   const requiredHours = Number.isFinite(opts.requiredHours) ? opts.requiredHours : policy.attendance.requiredShiftHours(shift.durationHours);
 
   // Late baseline = max(shift start, approved-leave end) — leave offsets late (#4).
-  // Grace period (company policy, default 5 min) is subtracted: a punch within
-  // the grace window is On Time (lateArrivalMin = 0); late is counted only AFTER
-  // grace. Grace affects Late Minutes ONLY — never the Present/Half/Absent status.
-  const graceMin = Number.isFinite(opts.graceMinutes) ? opts.graceMinutes : policy.attendance.graceMinutes();
-  let lateArrivalMin = 0, earlyDepartureMin = 0;
+  // LATE ENTRY grace is EXACTLY 5 minutes (fixed, not configurable): a punch within
+  // Shift Start + 5 min is On Time; only a check-in AFTER that is a Late Entry. Grace
+  // affects Late Minutes ONLY — never the Present/Half/Absent status (no salary impact).
+  const graceMin = Number.isFinite(opts.graceMinutes) ? opts.graceMinutes : LATE_ENTRY_GRACE_MIN;
+  let lateArrivalMin = 0, earlyDepartureMin = 0, lateEntryMinutes = 0;
   if (firstPunch) {
     const baseline = opts.leaveUntil ? Math.max(toMin(shift.start), toMin(opts.leaveUntil)) : toMin(shift.start);
     let d = toMin(firstPunch) - baseline;
     if (shift.isNight && d < -720) d += 1440;
     lateArrivalMin = Math.max(0, d - graceMin);
+    // "Late By" is measured from the ACTUAL shift start (NOT the grace end): a 09:06
+    // check-in on a 09:00 shift with a 5-min grace = Late By 6 (not 1). It is set only
+    // once the check-in is past the grace window (09:05 → 0, 09:06 → 6, 09:30 → 30).
+    lateEntryMinutes = d > graceMin ? Math.max(0, d) : 0;
   }
   if (lastPunch && state === 'out') {
     const endMin = toMin(shift.end) + (shift.isNight ? 1440 : 0);
@@ -137,7 +144,7 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   return {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
-    halfDayThreshold, requiredHours, graceMinutes: graceMin, lateArrivalMin, earlyDepartureMin,
+    halfDayThreshold, requiredHours, graceMinutes: graceMin, lateArrivalMin, lateEntryMinutes, earlyDepartureMin,
     status, metRequiredHours, compensationStatus, attendanceIssue,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };
