@@ -77,6 +77,17 @@ test('lateLoginLeaveRequired template: guidance to apply Leave — no buttons', 
   assert.strictEqual(hasButtons(html), false);
 });
 
+test('policy(): FUTURE dates are always allowed for Late Login (info record), even if the setting is off', async () => {
+  const ps = require('../src/services/payroll-settings.service');
+  const origResolved = ps.getResolved;
+  try {
+    ps.getResolved = async () => ({ lateLogin: { graceMinutes: 5, maxPerMonth: 3, backdatedDays: 30, allowFuture: false, attendanceMode: 'late_present' } });
+    const p = await lateLogin.policy();
+    assert.strictEqual(p.allowFuture, true, 'allowFuture is forced true regardless of the stored setting');
+    assert.strictEqual(p.maxPerMonth, 3, 'other settings pass through unchanged');
+  } finally { ps.getResolved = origResolved; }
+});
+
 test('lateByMinutes: actual − expected, no grace subtracted', () => {
   assert.strictEqual(lateLogin.lateByMinutes('09:00', '10:15'), 75);
   assert.strictEqual(lateLogin.lateByMinutes('09:30', '09:42'), 12);

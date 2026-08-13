@@ -12,7 +12,6 @@ const router = express.Router();
 const ExcelJS = require('exceljs');
 const d365 = require('../../services/d365.service');
 const lateLogin = require('../../services/late-login.service');
-const payrollSettings = require('../../services/payroll-settings.service');
 const { ensureLateLoginTable } = require('../../services/provision-late-login');
 
 const EMP = d365.constructor.entities.employee;
@@ -46,7 +45,7 @@ async function withDepartments(rows) {
 // the employee's own shift, never a fixed 09:00 — spec §4).
 router.get('/policy', async (req, res, next) => {
   try {
-    const { lateLogin: p } = await payrollSettings.getResolved();
+    const p = await lateLogin.policy();   // allowFuture forced true (Late Login is an info record)
     let shiftStart = '';
     try {
       const emp = await d365.getByIdOptional(EMP, req.user.id, { select: 'hr_hremployeeid', optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime' });

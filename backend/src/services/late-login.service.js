@@ -76,8 +76,11 @@ async function list({ employeeId, month, status, requestType, from, to } = {}) {
 }
 
 async function policy() {
-  try { return (await payrollSettings.getResolved()).lateLogin; }
-  catch { return { graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present', penaltyEnabled: false }; }
+  // Late Login is an INFORMATION record — FUTURE requests are ALWAYS allowed (an
+  // employee can flag they will be late), regardless of the generic allow-future
+  // setting. Everything else (limit, backdated window, timezone) comes from settings.
+  try { return { ...(await payrollSettings.getResolved()).lateLogin, allowFuture: true }; }
+  catch { return { graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: false, attendanceMode: 'late_present', penaltyEnabled: false }; }
 }
 
 /** How many requests (pending or approved) the employee already has this month. */

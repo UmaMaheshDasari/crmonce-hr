@@ -75,8 +75,8 @@ function SubmitModal({ isHR, employees, policy, onClose }) {
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
-          {policy?.graceMinutes != null && (
-            <p className="text-xs text-gray-500">Grace {policy.graceMinutes} min · Limit {policy.maxPerMonth}/month · {policy.allowFuture ? 'Future requests allowed' : 'Today & past only'} · Backdated up to {backdatedDays} days.</p>
+          {policy?.maxPerMonth != null && (
+            <p className="text-xs text-gray-500">Informational record · Limit {policy.maxPerMonth}/month · {policy.allowFuture ? 'Future dates allowed' : 'Today & past only'} · Backdated up to {backdatedDays} days.</p>
           )}
           {isHR && (
             <div><label className="block text-xs font-semibold text-gray-600 mb-1">Employee</label>
