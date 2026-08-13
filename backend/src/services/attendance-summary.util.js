@@ -30,11 +30,11 @@ function rangeCounts(from, to, opts = {}) {
  * @param sessions array of computeSession() results (or {count,status,effectiveHours,breakHours,overtimeHours})
  * Absent = Working Days - (days with a punch) - Approved Leave  (never counts a punch day or holiday/week-off as absent).
  */
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// User-facing date = DD-MM-YYYY (global format), stored value untouched.
 function fmtDate(dateStr) {
   const d = String(dateStr || '').slice(0, 10).split('-');
   if (d.length !== 3) return String(dateStr || '');
-  return `${d[2]} ${MONTHS[Number(d[1]) - 1] || d[1]} ${d[0]}`;
+  return `${d[2]}-${d[1]}-${d[0]}`;
 }
 
 /**

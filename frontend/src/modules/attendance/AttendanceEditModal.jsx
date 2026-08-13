@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
 const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
-const fmtDT = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy, HH:mm') : '—'; } catch { return d || '—'; } };
+const fmtDT = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy, HH:mm') : '—'; } catch { return d || '—'; } };
 
 /**
  * HR attendance editor — edit in/out/break/status/overtime with recompute + audit.
@@ -50,7 +50,7 @@ export default function AttendanceEditModal({ record, onClose }) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>
             <h2 className="text-lg font-bold text-gray-900">Edit Attendance</h2>
-            <p className="text-xs text-gray-400">{record['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee'} · {record.hr_date ? format(new Date(record.hr_date), 'dd MMM yyyy') : ''}</p>
+            <p className="text-xs text-gray-400">{record['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee'} · {record.hr_date ? format(new Date(record.hr_date), 'dd-MM-yyyy') : ''}</p>
           </div>
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
         </div>

@@ -19,7 +19,7 @@ const STATUS_PILL = {
   sent: 'bg-emerald-50 text-emerald-700', failed: 'bg-red-50 text-red-700',
   skipped: 'bg-slate-100 text-slate-600', disabled: 'bg-gray-100 text-gray-400',
 };
-const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy, HH:mm') : '—'; } catch { return '—'; } };
+const fmt = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy, HH:mm') : '—'; } catch { return '—'; } };
 
 function Toggle({ checked, onChange, label }) {
   return (

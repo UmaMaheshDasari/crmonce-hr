@@ -24,7 +24,7 @@ function localeOf(c = {}) {
     currency: c.hr_currency || 'INR',
     currencySymbol: c.hr_currencysymbol || '₹',
     timezone: c.hr_timezone || 'Asia/Kolkata',
-    dateFormat: c.hr_dateformat || 'DD MMM YYYY',
+    dateFormat: c.hr_dateformat || 'DD-MM-YYYY',
     timeFormat: c.hr_timeformat || '12h',
     financialYearStart: c.hr_financialyearstart || '04-01',
     leaveYearStart: c.hr_leaveyearstart || '01-01',

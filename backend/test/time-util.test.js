@@ -28,9 +28,15 @@ test('UTC evening crosses into next IST day', () => {
   assert.strictEqual(t.istDateStr(d), '2026-07-14');
 });
 
-test('fmtDate: YYYY-MM-DD → DD Mon YYYY', () => {
-  assert.strictEqual(t.fmtDate('2026-07-10'), '10 Jul 2026');
-  assert.strictEqual(t.fmtDate('2026-01-01'), '01 Jan 2026');
+test('fmtDate: YYYY-MM-DD → DD-MM-YYYY (global format)', () => {
+  assert.strictEqual(t.fmtDate('2026-07-10'), '10-07-2026');
+  assert.strictEqual(t.fmtDate('2026-01-01'), '01-01-2026');
+  // The requirement's example: an ISO timestamp → DD-MM-YYYY (date portion).
+  assert.strictEqual(t.fmtDate('2026-08-13T03:45:09.800Z'), '13-08-2026');
+});
+
+test('fmtDateTime: DD-MM-YYYY hh:mm AM/PM (date portion DD-MM-YYYY)', () => {
+  assert.match(t.fmtDateTime('2026-08-13T03:45:09.800Z'), /^13-08-2026 /);
 });
 
 // ── Relative time (right-hand column) ───────────────────────────────────────

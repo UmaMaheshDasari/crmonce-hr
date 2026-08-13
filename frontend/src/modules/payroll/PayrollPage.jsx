@@ -434,7 +434,7 @@ export default function PayrollPage() {
                       })()}
                     </td>
                     <td className="px-5 py-4 text-sm text-gray-500">
-                      {r.hr_processeddate ? format(new Date(r.hr_processeddate), 'dd MMM yyyy') : '\u2014'}
+                      {r.hr_processeddate ? format(new Date(r.hr_processeddate), 'dd-MM-yyyy') : '\u2014'}
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-center gap-1.5 flex-wrap">

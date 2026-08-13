@@ -47,18 +47,27 @@ function to12h(hhmm) {
 }
 
 /** "2026-07-10" (or an ISO instant) → "10 Jul 2026" in the app timezone. */
+// GLOBAL user-facing date format = DD-MM-YYYY (e.g. 13-08-2026). This is THE central
+// backend date formatter — every email/report/notification date flows through it. The
+// stored Dataverse value is never changed; only the presentation.
 function fmtDate(v) {
   const s = String(v || '');
   const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (ymd) return `${ymd[3]} ${MONTHS[(+ymd[2]) - 1] || ''} ${ymd[1]}`;
+  if (ymd) return `${ymd[3]}-${ymd[2]}-${ymd[1]}`;
   const c = civil(v); if (!c) return s;
-  return `${pad(c.d)} ${MONTHS[c.mo - 1] || ''} ${c.y}`;
+  return `${pad(c.d)}-${pad(c.mo)}-${c.y}`;
 }
 
 /** Full instant → "3:44 PM" in the app timezone. */
 function fmtTime(v) {
   const c = civil(v); if (!c) return '';
   return to12h(`${pad(c.h)}:${pad(c.mi)}`);
+}
+// Date + time display, DD-MM-YYYY hh:mm AM/PM (e.g. 13-08-2026 03:45 AM). Preserves the
+// timezone rules of civil(); date portion always DD-MM-YYYY.
+function fmtDateTime(v) {
+  const d = fmtDate(v), t = fmtTime(v);
+  return t ? `${d} ${t}` : d;
 }
 
 /** Whole-day number in the app timezone (for calendar-day differences). */
@@ -97,4 +106,4 @@ function dayTime(iso, now = new Date()) {
   return `${fmtDate(then.toISOString())} ${t}`;
 }
 
-module.exports = { TZ, civil, istDateStr, istHHMM, to12h, fmtDate, fmtTime, dayNumber, relative, dayTime };
+module.exports = { TZ, civil, istDateStr, istHHMM, to12h, fmtDate, fmtTime, fmtDateTime, dayNumber, relative, dayTime };

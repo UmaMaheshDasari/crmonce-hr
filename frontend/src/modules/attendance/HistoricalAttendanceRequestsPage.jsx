@@ -20,8 +20,8 @@ const STATUS = {
   more_info: 'bg-blue-50 text-blue-700 border-blue-200',
 };
 const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected', more_info: 'More Info' };
-const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—'; } catch { return d || '—'; } };
-const fmtT = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy, HH:mm') : '—'; } catch { return '—'; } };
+const fmt = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy') : '—'; } catch { return d || '—'; } };
+const fmtT = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy, HH:mm') : '—'; } catch { return '—'; } };
 const todayStr = new Date().toISOString().slice(0, 10);
 
 function RaiseModal({ isHR, employees, monthsBack, editRecord, onClose }) {

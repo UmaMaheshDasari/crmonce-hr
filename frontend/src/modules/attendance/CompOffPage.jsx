@@ -19,7 +19,7 @@ const STATUS = {
   cancelled: 'bg-gray-100 text-gray-500 border-gray-200',
   used: 'bg-indigo-50 text-indigo-700 border-indigo-200',
 };
-const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—'; } catch { return d || '—'; } };
+const fmt = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy') : '—'; } catch { return d || '—'; } };
 const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
 
 // Grant (HR) / Raise (employee) comp-off.

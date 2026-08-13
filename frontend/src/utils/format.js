@@ -26,12 +26,27 @@ export function fmtTime(t, placeholder = '—') {
   return `${String(h).padStart(2, '0')}:${min} ${ap}`;
 }
 
-/** Date-ish → 'DD MMM YYYY', or placeholder when empty/invalid. */
+/**
+ * GLOBAL user-facing date format = DD-MM-YYYY (e.g. 13-08-2026). THE central frontend
+ * date formatter. A plain YYYY-MM-DD is formatted directly (no Date() → no timezone
+ * shift); a full timestamp uses the local (app) timezone. Never renders a raw ISO.
+ */
 export function fmtDate(d, placeholder = '—') {
   if (!d) return placeholder;
+  const ymd = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) return `${ymd[3]}-${ymd[2]}-${ymd[1]}`;
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return placeholder;
-  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(dt.getDate())}-${p(dt.getMonth() + 1)}-${dt.getFullYear()}`;
+}
+
+/** Date + time → 'DD-MM-YYYY hh:mm AM/PM' (date portion always DD-MM-YYYY). */
+export function fmtDateTime(d, placeholder = '—') {
+  if (!d) return placeholder;
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return fmtDate(d, placeholder);
+  return `${fmtDate(d)} ${fmtTime(`${dt.getHours()}:${String(dt.getMinutes()).padStart(2, '0')}`)}`;
 }
 
 /** snake/enum → Title Case label (e.g. on_leave → On Leave). */

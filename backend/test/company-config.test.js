@@ -43,6 +43,6 @@ test('localeOf: sensible defaults when unset', () => {
   const l = cc.localeOf({});
   assert.strictEqual(l.currency, 'INR');
   assert.strictEqual(l.timezone, 'Asia/Kolkata');
-  assert.strictEqual(l.dateFormat, 'DD MMM YYYY');
+  assert.strictEqual(l.dateFormat, 'DD-MM-YYYY');
   assert.strictEqual(l.financialYearStart, '04-01');
 });

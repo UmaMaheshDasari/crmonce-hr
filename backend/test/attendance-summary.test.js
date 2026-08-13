@@ -66,7 +66,7 @@ test('missingPunchDetails lists incomplete dates + issue; None when clean', () =
   ];
   const s = summarizeEmployee(sessions, { working: 23, leaveDays: 0 });
   assert.strictEqual(s.incomplete, 2);
-  assert.deepStrictEqual(s.missingPunchDetails, ['05 Jul 2026 – Missing Check Out', '11 Jul 2026 – Missing Check In']);
+  assert.deepStrictEqual(s.missingPunchDetails, ['05-07-2026 – Missing Check Out', '11-07-2026 – Missing Check In']);
   assert.strictEqual(s.absent, 20);        // 23 - 3 attended - 0
   const clean = summarizeEmployee([{ count: 2, status: 'present', date: '2026-07-01' }], { working: 5 });
   assert.deepStrictEqual(clean.missingPunchDetails, []);

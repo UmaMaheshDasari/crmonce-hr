@@ -152,4 +152,4 @@ function AuditModal({ type, id, onClose }) {
     </div>
   );
 }
-const safeDate = (d) => { try { return format(new Date(d), 'dd MMM yyyy, HH:mm'); } catch { return ''; } };
+const safeDate = (d) => { try { return format(new Date(d), 'dd-MM-yyyy, HH:mm'); } catch { return ''; } };

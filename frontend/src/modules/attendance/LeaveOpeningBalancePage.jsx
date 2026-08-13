@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 
 const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
 const nowYear = new Date().getFullYear();
-const fmtDT = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy, HH:mm') : '—'; } catch { return d || '—'; } };
+const fmtDT = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy, HH:mm') : '—'; } catch { return d || '—'; } };
 
 // Edit-history drawer for one employee/year.
 function AuditModal({ employeeId, year, employeeName, onClose }) {

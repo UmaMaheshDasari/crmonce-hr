@@ -664,7 +664,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
                 </div>
                 <div>
                   <p className="text-sm font-bold text-indigo-900">day{days === 1 ? '' : 's'} of leave</p>
-                  <p className="text-xs text-indigo-500">{form.from && format(new Date(form.from), 'dd MMM')} - {form.to && format(new Date(form.to), 'dd MMM yyyy')}</p>
+                  <p className="text-xs text-indigo-500">{form.from && format(new Date(form.from), 'dd MMM')} - {form.to && format(new Date(form.to), 'dd-MM-yyyy')}</p>
                 </div>
               </div>
               {days === 0 && !wdLoading && (
@@ -916,11 +916,11 @@ export default function LeavePage() {
                         <div className="inline-flex items-center gap-2 text-sm text-gray-600">
                           <CalendarDaysIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
                           <span className="font-medium">
-                            {leave.hr_fromdate ? format(new Date(leave.hr_fromdate), 'dd MMM yyyy') : '\u2014'}
+                            {leave.hr_fromdate ? format(new Date(leave.hr_fromdate), 'dd-MM-yyyy') : '\u2014'}
                           </span>
                           <span className="text-gray-300">\u2192</span>
                           <span className="font-medium">
-                            {leave.hr_todate ? format(new Date(leave.hr_todate), 'dd MMM yyyy') : '\u2014'}
+                            {leave.hr_todate ? format(new Date(leave.hr_todate), 'dd-MM-yyyy') : '\u2014'}
                           </span>
                         </div>
                         {/* Days circle badge */}

@@ -167,7 +167,7 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
         const approver = approvers[0];
         if (approver) requestNotify.notifyNewRequest({
           type: 'missing_punch', recordId: created.hr_attendancerequestid, actor: req.user,
-          details: [['Date', attendanceDate], ['Punch Type', PUNCH_TYPES[punchType]], ['Requested Time', requestedTime], ['Reason', reason || '—']],
+          details: [['Date', time.fmtDate(attendanceDate)], ['Punch Type', PUNCH_TYPES[punchType]], ['Requested Time', requestedTime], ['Reason', reason || '—']],
           applyTime: new Date().toISOString(),
           approver: { id: approver.hr_hremployeeid, name: approver.hr_hremployee1, email: approver.hr_email },
         });

@@ -209,7 +209,7 @@ export default function AttendancePage() {
   const renderAbsentRow = (a, key) => (
     <tr key={key} className="hover:bg-red-50/30 transition-colors duration-150">
       {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{a.employee}</span></td>}
-      <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd MMM yyyy') : '—'}</td>
+      <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd-MM-yyyy') : '—'}</td>
       <td className="px-5 py-4 text-sm text-gray-300">—</td>
       <td className="px-5 py-4 text-sm text-gray-300">—</td>
       <td className="px-5 py-4 text-sm text-gray-300">—</td>
@@ -231,7 +231,7 @@ export default function AttendancePage() {
     return (
       <tr key={key} className={`transition-colors duration-150 ${approved ? 'hover:bg-emerald-50/30' : 'hover:bg-sky-50/30'}`}>
         {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{l.employee}</span></td>}
-        <td className="px-5 py-4 text-sm text-gray-700 font-medium">{l.date ? format(new Date(l.date), 'dd MMM yyyy') : '—'}</td>
+        <td className="px-5 py-4 text-sm text-gray-700 font-medium">{l.date ? format(new Date(l.date), 'dd-MM-yyyy') : '—'}</td>
         <td className="px-5 py-4 text-sm text-gray-300">—</td>
         <td className="px-5 py-4 text-sm text-gray-300">—</td>
         <td className="px-5 py-4 text-sm text-gray-300">—</td>
@@ -262,7 +262,7 @@ export default function AttendancePage() {
             </span>
           </td>
         )}
-        <td className="px-5 py-4 text-sm text-gray-700 font-medium">{r.hr_date ? format(new Date(r.hr_date), 'dd MMM yyyy') : '—'}</td>
+        <td className="px-5 py-4 text-sm text-gray-700 font-medium">{r.hr_date ? format(new Date(r.hr_date), 'dd-MM-yyyy') : '—'}</td>
         <td className="px-5 py-4"><span className="font-mono text-sm text-gray-600 bg-gray-50 px-2 py-0.5 rounded">{r.hr_intime || '—'}</span></td>
         <td className="px-5 py-4"><span className="font-mono text-sm text-gray-600 bg-gray-50 px-2 py-0.5 rounded">{r.hr_outtime || '—'}</span></td>
         <td className="px-5 py-4">

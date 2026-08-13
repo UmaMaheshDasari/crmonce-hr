@@ -372,7 +372,7 @@ export default function DocumentsPage() {
                     <div className="flex items-center gap-2 mt-2 text-xs text-gray-400 flex-wrap">
                       {doc.department && <span>{doc.department}</span>}
                       {doc.fileSize ? <span>{formatSize(doc.fileSize)}</span> : null}
-                      {doc.uploadedOn && <span>{format(new Date(doc.uploadedOn), 'dd MMM yyyy')}</span>}
+                      {doc.uploadedOn && <span>{format(new Date(doc.uploadedOn), 'dd-MM-yyyy')}</span>}
                     </div>
                     {doc.uploadedBy && <p className="text-[11px] text-gray-400 mt-1">Uploaded by {doc.uploadedBy}</p>}
                   </div>

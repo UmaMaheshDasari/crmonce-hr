@@ -595,8 +595,8 @@ router.post('/', async (req, res, next) => {
       actor: req.user,
       details: [
         ['Leave Type', toLabel('hr_leave_type', req.body.hr_leavetype)],
-        ['From Date', req.body.hr_fromdate],
-        ['To Date', req.body.hr_todate],
+        ['From Date', time.fmtDate(req.body.hr_fromdate)],   // DD-MM-YYYY (global format)
+        ['To Date', time.fmtDate(req.body.hr_todate)],
         ['Number of Days', req.body.hr_days],
         ['Reason', req.body.hr_reason],
       ],

@@ -46,7 +46,7 @@ test('Web Check-out only (OUT first) → Incomplete (Missing Check In), NOT Abse
 test('Single Punch → Incomplete with a missing-punch detail line', () => {
   const s = summarizeEmployee([day('2026-07-06', ['09:00'])], { working: 1 });
   assert.strictEqual(s.incomplete, 1);
-  assert.deepStrictEqual(s.missingPunchDetails, ['06 Jul 2026 – Missing Check Out']);
+  assert.deepStrictEqual(s.missingPunchDetails, ['06-07-2026 – Missing Check Out']);
 });
 
 test('No Punch on a working day → Absent', () => {

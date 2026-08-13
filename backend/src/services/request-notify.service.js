@@ -12,6 +12,7 @@
  * Every function is best-effort: never throws, never blocks the caller.
  */
 const d365 = require('./d365.service');
+const time = require('./time.util');
 const { toValue } = require('./picklist');
 const { sendEmail, notifyUser, verifyMailbox } = require('./notification.service');
 const { signApprovalToken } = require('./approval-token');
@@ -140,13 +141,15 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     // Employee card shows the HUMAN Employee ID (EMP1039), never the GUID actor.id.
     const cardInfo = await employeeCardInfo(actor.id);
     const employee = { name: actor?.name, id: cardInfo.employeeId || '—', department: cardInfo.department, email: actor?.email };
+    // Apply Time shown as DD-MM-YYYY hh:mm AM/PM (global format), never a raw ISO string.
+    const applyTimeFmt = time.fmtDateTime(applyTime);
     const { approveUrl, rejectUrl } = approvalUrls(type, recordId);
 
     // 1) Approver email — TO the approver ONLY (with Approve/Reject buttons).
     //    The applicant is the SENDER, never a recipient, and saveToSentItems is
     //    false so NO copy of this buttoned email reaches the applicant's mailbox.
     const a = T.newRequestApprover({
-      moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: approver.name, approveUrl, rejectUrl, status,
+      moduleTitle: cfg.title, employee, rows: details, applyTime: applyTimeFmt, approverName: approver.name, approveUrl, rejectUrl, status,
     });
     const ra = await sendEmail(approver.email, a.subject, a.html, {
       from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_approver` },
@@ -168,7 +171,7 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
         // Same signed Approve/Reject links as the approver — the backend still validates
         // the logged-in user's role/approver identity before any write (defence in depth).
         const am = T.newRequestApprover({
-          moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: c.name, approveUrl, rejectUrl, status,
+          moduleTitle: cfg.title, employee, rows: details, applyTime: applyTimeFmt, approverName: c.name, approveUrl, rejectUrl, status,
         });
         const rc = await sendEmail(c.email, am.subject, am.html, {
           from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc_approver` },
@@ -177,7 +180,7 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
           `${cfg.title} CC (actionable, ${c.role}) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
       } else {
         const cm = T.newRequestCc({
-          moduleTitle: cfg.title, employee, rows: details, applyTime, recipientName: c.name, approverName: approver.name, status,
+          moduleTitle: cfg.title, employee, rows: details, applyTime: applyTimeFmt, recipientName: c.name, approverName: approver.name, status,
         });
         const rc = await sendEmail(c.email, cm.subject, cm.html, {
           from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc` },

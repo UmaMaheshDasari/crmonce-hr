@@ -27,7 +27,7 @@ const STATUS_LABEL = {
   submitted: 'Submitted', completed: 'Completed', absent_leave_required: 'Leave Required',
   cancelled: 'Cancelled', pending: 'Submitted', approved: 'Completed', rejected: 'Cancelled',
 };
-const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—'; } catch { return d || '—'; } };
+const fmt = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy') : '—'; } catch { return d || '—'; } };
 // Times in HH:MM (24h). Late By = Late Login Time − Shift Start Time (no grace subtracted).
 const toMin = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 const to12h = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); if (!m) return ''; let h = +m[1]; const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${ap}`; };

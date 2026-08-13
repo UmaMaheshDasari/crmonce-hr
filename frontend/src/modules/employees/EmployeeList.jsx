@@ -253,7 +253,7 @@ export default function EmployeeList() {
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-500 tabular-nums">
-                        {emp.hr_joiningdate ? format(new Date(emp.hr_joiningdate), 'dd MMM yyyy') : <span className="text-gray-300">&mdash;</span>}
+                        {emp.hr_joiningdate ? format(new Date(emp.hr_joiningdate), 'dd-MM-yyyy') : <span className="text-gray-300">&mdash;</span>}
                       </span>
                     </td>
                     <td className="px-6 py-4">

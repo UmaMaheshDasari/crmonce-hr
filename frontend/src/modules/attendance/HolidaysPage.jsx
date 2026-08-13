@@ -40,7 +40,7 @@ export default function HolidaysPage() {
     onError: (e) => toast.error(e.response?.data?.error || 'Could not remove holiday'),
   });
 
-  const fmt = (d) => { try { return format(new Date(`${d}T00:00:00`), 'EEE, dd MMM yyyy'); } catch { return d; } };
+  const fmt = (d) => { try { return format(new Date(`${d}T00:00:00`), 'EEE, dd-MM-yyyy'); } catch { return d; } };
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = holidays.filter(h => h.date >= today).sort((a, b) => a.date.localeCompare(b.date));
   const past = holidays.filter(h => h.date < today).sort((a, b) => b.date.localeCompare(a.date));
