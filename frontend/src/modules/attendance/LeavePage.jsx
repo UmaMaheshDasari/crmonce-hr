@@ -725,7 +725,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
           {/* CC recipients (optional) */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-              CC <span className="text-gray-400 font-normal">(optional — informational only)</span>
+              CC <span className="text-gray-400 font-normal">(optional — HR/Admin recipients can also approve; others are notified for information)</span>
             </label>
             {cc.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">

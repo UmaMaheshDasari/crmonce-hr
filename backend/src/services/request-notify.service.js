@@ -34,6 +34,24 @@ const PLACEHOLDER_DOMAINS = ['yourcompany.com', 'yourdomain.com', 'example.com']
 const isPlaceholderEmail = (email) =>
   !email || PLACEHOLDER_DOMAINS.some(d => String(email).toLowerCase().endsWith('@' + d));
 
+// Roles with authorized approval access (reuses the existing role system — NOT a new
+// one). These are the same roles getApprovers() returns and that guard the approval
+// routes. A CC recipient with one of these roles gets an ACTIONABLE email; anyone else
+// gets information-only. Being CC'd alone NEVER grants approval rights.
+const AUTHORIZED_APPROVAL_ROLES = ['super_admin', 'hr_manager'];
+const isAuthorizedApprovalRole = (role) => AUTHORIZED_APPROVAL_ROLES.includes(String(role || '').toLowerCase());
+
+/**
+ * The ONE approval-authorization rule, shared by the email button-rendering and the
+ * approval API guard: a user may act on a request iff they are an authorized HR/Admin
+ * approver OR they are the explicitly selected approver. CC membership grants nothing.
+ */
+function canActOnApproval({ role, userId, approverId }) {
+  if (isAuthorizedApprovalRole(role)) return true;                       // authorized HR/Admin/Super Admin
+  if (approverId && userId && String(approverId) === String(userId)) return true;  // explicitly selected approver
+  return false;
+}
+
 /** Log + audit that an email was intentionally NOT sent — the workflow NEVER
  *  falls back to another mailbox. Returns undefined so callers can `return` it. */
 function auditSkip(type, metaType, from, to, reason) {
@@ -125,21 +143,37 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     global.logger?.[ra?.success ? 'info' : 'error'](
       `${cfg.title} approver email FROM ${s.sender} → ${approver.email}: ${ra?.success ? 'sent' : (ra?.error || 'failed')}`);
 
-    // 2) CC recipients — a SEPARATE informational email with NO action buttons.
-    //    Each selected user (never the applicant/approver) gets an FYI copy.
+    // 2) CC recipients — RECIPIENT-SPECIFIC content (never one identical email):
+    //      • CC WITH an authorized HR/Admin approval role → actionable email WITH
+    //        Approve/Reject buttons (they can genuinely approve — the API allows it).
+    //      • CC WITHOUT approval access → information-only, NO buttons, NO token/URL.
+    //    The applicant and the selected approver are never re-CC'd.
     const ccList = (cc || []).filter(c =>
       c?.email && !isPlaceholderEmail(c.email) &&
       c.email.toLowerCase() !== actor?.email?.toLowerCase() &&
       c.email.toLowerCase() !== approver.email.toLowerCase());
     for (const c of ccList) {
-      const cm = T.newRequestCc({
-        moduleTitle: cfg.title, employee, rows: details, applyTime, recipientName: c.name, approverName: approver.name,
-      });
-      const rc = await sendEmail(c.email, cm.subject, cm.html, {
-        from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc` },
-      });
-      global.logger?.[rc?.success ? 'info' : 'error'](
-        `${cfg.title} CC (info) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
+      if (isAuthorizedApprovalRole(c.role)) {
+        // Same signed Approve/Reject links as the approver — the backend still validates
+        // the logged-in user's role/approver identity before any write (defence in depth).
+        const am = T.newRequestApprover({
+          moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: c.name, approveUrl, rejectUrl,
+        });
+        const rc = await sendEmail(c.email, am.subject, am.html, {
+          from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc_approver` },
+        });
+        global.logger?.[rc?.success ? 'info' : 'error'](
+          `${cfg.title} CC (actionable, ${c.role}) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
+      } else {
+        const cm = T.newRequestCc({
+          moduleTitle: cfg.title, employee, rows: details, applyTime, recipientName: c.name, approverName: approver.name,
+        });
+        const rc = await sendEmail(c.email, cm.subject, cm.html, {
+          from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc` },
+        });
+        global.logger?.[rc?.success ? 'info' : 'error'](
+          `${cfg.title} CC (info) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
+      }
     }
   } catch (err) {
     global.logger?.error(`notifyNewRequest(${type}) failed: ${err.message}`);
@@ -222,4 +256,5 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
 module.exports = {
   notifyNewRequest, emailApplyAcknowledgement, emailDecisionToEmployee,
   getApprovers, isPlaceholderEmail, getLeaveBalance, approvalUrls,
+  isAuthorizedApprovalRole, canActOnApproval, AUTHORIZED_APPROVAL_ROLES,
 };

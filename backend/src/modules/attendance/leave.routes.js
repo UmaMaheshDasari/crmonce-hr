@@ -525,9 +525,11 @@ router.post('/', async (req, res, next) => {
     const ACTIVE_STATUS = toValue('hr_employee_status', 'active');
     for (const cid of ccIds) {
       try {
-        const c = await d365.getById(EMP_ENTITY, cid, { select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_status' });
+        const c = await d365.getById(EMP_ENTITY, cid, { select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_status,hr_role' });
         if (c?.hr_email && c.hr_status === ACTIVE_STATUS && !requestNotify.isPlaceholderEmail(c.hr_email)) {
-          ccRecipients.push({ id: c.hr_hremployeeid, name: c.hr_hremployee1, email: c.hr_email });
+          // Capture the CC's role so the notifier can decide actionable-vs-FYI. A CC with
+          // an authorized HR/Admin role gets Approve/Reject; everyone else gets FYI only.
+          ccRecipients.push({ id: c.hr_hremployeeid, name: c.hr_hremployee1, email: c.hr_email, role: toLabel('hr_role', c.hr_role) });
         }
       } catch (_) { /* skip invalid id */ }
     }
@@ -804,11 +806,14 @@ router.post('/:id/email-action', requireRole('super_admin', 'hr_manager'), async
       return res.status(400).json({ error: 'Invalid action' });
     }
 
-    // (#7) Only the ASSIGNED approver may act via the email link — anyone else
-    // (including CC recipients) is forbidden. Super Admin keeps override. Legacy
-    // leaves with no assigned approver fall back to the requireRole gate above.
+    // Authorization (single shared rule): the ASSIGNED approver may act, and so may any
+    // user with an authorized HR/Admin approval role (super_admin/hr_manager) — e.g. a
+    // CC'd Super Admin or HR Manager, whose email carried real Approve/Reject buttons.
+    // CC membership alone grants nothing: a normal CC user is already blocked by the
+    // requireRole gate above (→ 403) and fails this rule too. Status is enforced by
+    // applyHrOverride(enforcePending) below.
     const rec = await d365.getById(ENTITY, req.params.id, { select: 'hr_approverid' });
-    if (rec.hr_approverid && req.user.role !== 'super_admin' && rec.hr_approverid !== req.user.id) {
+    if (!requestNotify.canActOnApproval({ role: req.user.role, userId: req.user.id, approverId: rec.hr_approverid })) {
       return res.status(403).json({ error: 'You are not authorized to approve this request.' });
     }
 

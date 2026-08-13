@@ -264,3 +264,60 @@ test('CC that is the applicant or approver is dropped (never self/loop CC)', asy
   );
   assert.strictEqual(sent.filter(s => s.ctx.meta.type === 'leave_new_cc').length, 0);
 });
+
+// ── Role-aware CC: authorized HR/Admin CC gets ACTIONABLE buttons; others FYI-only ──
+// Scenario: Approver = HR Manager; CC = Super Admin + Team Lead (normal employee).
+test('CC Super Admin → actionable email WITH Approve/Reject; CC Team Lead → FYI only', async () => {
+  const sent = await runApply(
+    { id: 'A1', name: 'HR Team', email: 'hr@crmonce.com' },
+    [{ id: 'SA', name: 'Uma Mahesh', email: 'umamahesh@crmonce.com', role: 'super_admin' },
+     { id: 'TL', name: 'Team Lead', email: 'lead@crmonce.com', role: 'employee' }],
+  );
+  const admin = sent.filter(s => s.ctx.meta.type === 'leave_new_cc_approver');
+  const info = sent.filter(s => s.ctx.meta.type === 'leave_new_cc');
+  // Super Admin CC → one actionable email, addressed to them, WITH buttons.
+  assert.strictEqual(admin.length, 1);
+  assert.deepStrictEqual(recipientsOf(admin[0].req), ['umamahesh@crmonce.com']);
+  assert.strictEqual(hasButtons(admin[0].ctx.html), true);
+  // Team Lead CC → one FYI email, NO buttons, "For Your Information" subject.
+  assert.strictEqual(info.length, 1);
+  assert.deepStrictEqual(recipientsOf(info[0].req), ['lead@crmonce.com']);
+  assert.strictEqual(hasButtons(info[0].ctx.html), false);
+  assert.match(info[0].ctx.subject, /^For Your Information:/);
+});
+
+test('CC HR Manager (not the selected approver) → actionable email WITH buttons', async () => {
+  const sent = await runApply(
+    { id: 'A2', name: 'Uma Mahesh', email: 'umamahesh@crmonce.com' },       // approver = super admin
+    [{ id: 'HR', name: 'HR Team', email: 'hr@crmonce.com', role: 'hr_manager' }],
+  );
+  const admin = sent.filter(s => s.ctx.meta.type === 'leave_new_cc_approver');
+  assert.strictEqual(admin.length, 1);
+  assert.strictEqual(hasButtons(admin[0].ctx.html), true);
+  assert.deepStrictEqual(recipientsOf(admin[0].req), ['hr@crmonce.com']);
+});
+
+test('recipient-specific content: 3 CCs → HR+SA actionable, normal user FYI (individual emails)', async () => {
+  const sent = await runApply(
+    { id: 'A1', name: 'HR Team', email: 'hr@crmonce.com' },
+    [{ id: 'SA', name: 'Uma', email: 'umamahesh@crmonce.com', role: 'super_admin' },
+     { id: 'HR2', name: 'HR Two', email: 'hr2@crmonce.com', role: 'hr_manager' },
+     { id: 'MGR', name: 'Manager', email: 'mgr@crmonce.com', role: 'employee' }],
+  );
+  assert.strictEqual(sent.filter(s => s.ctx.meta.type === 'leave_new_cc_approver').length, 2);   // SA + HR2
+  assert.strictEqual(sent.filter(s => s.ctx.meta.type === 'leave_new_cc').length, 1);            // Manager (FYI)
+  // No information-only email ever carries buttons; no actionable email goes to the employee.
+  for (const s of sent) {
+    if (s.ctx.meta.type === 'leave_new_cc') assert.strictEqual(hasButtons(s.ctx.html), false);
+    if (hasButtons(s.ctx.html)) assert.ok(!recipientsOf(s.req).includes(EMP.email));
+  }
+});
+
+test('CC with no role field defaults to FYI-only (safe default, no buttons)', async () => {
+  const sent = await runApply(
+    { id: 'A1', name: 'HR Team', email: 'hr@crmonce.com' },
+    [{ id: 'C1', name: 'Peer', email: 'peer@crmonce.com' }],   // role omitted
+  );
+  assert.strictEqual(sent.filter(s => s.ctx.meta.type === 'leave_new_cc_approver').length, 0);
+  assert.strictEqual(sent.filter(s => s.ctx.meta.type === 'leave_new_cc').length, 1);
+});
