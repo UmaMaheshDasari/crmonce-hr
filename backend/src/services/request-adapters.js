@@ -13,6 +13,7 @@ const d365 = require('./d365.service');
 const { toValue, toLabel } = require('./picklist');
 const { registerAdapter } = require('./request-lifecycle.service');
 const { rangeCounts } = require('./attendance-summary.util');   // working-days calc (weekends + holidays excluded)
+const { validateLeaveReason } = require('./leave-reason.util');  // SAME 4000-char guard the create route uses
 
 const E = d365.constructor.entities;
 const EMP = E.employee;
@@ -63,6 +64,13 @@ registerAdapter({
   // (option-set) and status fields are never employee-editable. hr_days is ALWAYS
   // recomputed from the dates (working days only) — never trust a client day count.
   applyEdits: (e) => {
+    // Editing/resubmitting a leave must honour the SAME 4000-char reason limit as
+    // apply — the create route validates, so the edit path must too (no artificial
+    // 100 cap, never truncated). Clean 400 message; the shared route maps err.status.
+    if (e.reason !== undefined) {
+      const chk = validateLeaveReason(e.reason);
+      if (!chk.ok) { const err = new Error(chk.error); err.status = 400; throw err; }
+    }
     const out = mapEdits(e, { reason: 'hr_reason', fromDate: 'hr_fromdate', toDate: 'hr_todate' });
     if (e.fromDate && e.toDate) {
       const f = String(e.fromDate).slice(0, 10), t = String(e.toDate).slice(0, 10);

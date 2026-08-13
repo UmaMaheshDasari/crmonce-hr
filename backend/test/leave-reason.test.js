@@ -12,8 +12,8 @@ test('the limit is 4000, not 100', () => {
   assert.strictEqual(LEAVE_REASON_MAX, 4000);
 });
 
-test('every length from 0 up to the max is accepted (100, 101, 250, 500, 1000, 2000, 4000)', () => {
-  for (const n of [0, 100, 101, 250, 500, 1000, 2000, 4000]) {
+test('every length from 0 up to the max is accepted (100, 101, 250, 500, 1000, 2000, 3999, 4000)', () => {
+  for (const n of [0, 100, 101, 250, 500, 1000, 2000, 3999, 4000]) {
     const r = validateLeaveReason(str(n));
     assert.strictEqual(r.ok, true, `${n} chars should be accepted`);
   }

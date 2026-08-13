@@ -95,3 +95,43 @@ test('owner edits own PENDING leave → dates/days/reason patched, type/status u
   assert.strictEqual(patch.hr_reason, 'updated');
   assert.ok(!('hr_leavetype' in patch) && !('hr_status' in patch), 'type + status never edited');
 });
+
+// ── Leave Reason 4000-char limit on the EDIT path (matches the create route) ──
+const pendingLeaveRow = () => ({ hr_hrleaveid: 'l1', _hr_hremployee_value: OWNER.id, hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_leavetype: toValue('hr_leave_type', 'Casual Leave'), hr_startdate: '2026-05-10', hr_enddate: '2026-05-12' });
+
+test('edit leave with a 4000-char reason → accepted and saved WITHOUT truncation', async () => {
+  const reason = 'x'.repeat(4000);
+  let patch; d365.getByIdOptional = async () => pendingLeaveRow(); d365.update = async (_e, _id, p) => { patch = p; return {}; };
+  await lifecycle.edit({ type: 'leave', id: 'l1', edits: { reason }, user: OWNER });
+  assert.strictEqual(patch.hr_reason.length, 4000, 'full 4000 chars persisted');
+  assert.strictEqual(patch.hr_reason, reason, 'reason is never truncated on edit');
+});
+
+test('edit leave with a 4001-char reason → rejected (400), nothing written', async () => {
+  let updated = false; d365.getByIdOptional = async () => pendingLeaveRow(); d365.update = async () => { updated = true; return {}; };
+  await assert.rejects(
+    () => lifecycle.edit({ type: 'leave', id: 'l1', edits: { reason: 'x'.repeat(4001) }, user: OWNER }),
+    (e) => e.status === 400 && /within 4000/.test(e.message),
+  );
+  assert.strictEqual(updated, false, 'over-limit reason never reaches Dataverse');
+});
+
+test('resubmit (rejected → new cycle) also enforces the 4000-char reason limit', async () => {
+  let updated = false;
+  d365.getByIdOptional = async () => ({ ...pendingLeaveRow(), hr_status: toValue('hr_leave_status', 'rejected') });
+  d365.update = async () => { updated = true; return {}; };
+  await assert.rejects(
+    () => lifecycle.resubmit({ type: 'leave', id: 'l1', edits: { reason: 'x'.repeat(4001) }, user: OWNER }),
+    (e) => e.status === 400,
+  );
+  assert.strictEqual(updated, false);
+});
+
+// HR/Manager retrieve the COMPLETE reason: the adapter's read select includes
+// hr_reason (full column), so a 4000-char reason round-trips to the approval view.
+test('HR/Manager can retrieve the complete 4000-char reason (adapter get returns it in full)', async () => {
+  const reason = 'y'.repeat(4000);
+  d365.getByIdOptional = async () => ({ ...pendingLeaveRow(), hr_reason: reason });
+  const v = await lifecycle.view({ type: 'leave', id: 'l1' });
+  assert.strictEqual(v.raw.hr_reason.length, 4000, 'approver sees the full reason, untruncated');
+});
