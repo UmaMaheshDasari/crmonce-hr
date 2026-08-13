@@ -23,6 +23,7 @@ const leaveEngine = require('../../services/leave-engine.service');
 const { ensureLeaveLedgerTable } = require('../../services/provision-leave-ledger');
 const payrollSettings = require('../../services/payroll-settings.service');
 const { validateLeaveReason } = require('../../services/leave-reason.util');
+const { ensureReasonLength } = require('../../services/provision-leave-columns');
 const sickRun = require('../../services/sick-run.service');
 const compOffSvc = require('../../services/comp-off.service');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
@@ -541,16 +542,31 @@ router.post('/', async (req, res, next) => {
     body.hr_ccrecipients = JSON.stringify(ccRecipients);
 
     // Resilient create — strip hr_medcertdocid and retry if the column is not yet
-    // provisioned, so leave apply never breaks on a missing certificate column.
-    let leave;
+    // provisioned, so leave apply never breaks on a missing certificate column. Also
+    // self-heals a stale 100-char hr_reason column: widen it to 4000 and retry ONCE,
+    // never truncating the user's text (requirement).
+    let leave, widenTried = false;
     {
       let payload = { ...body };
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         try { leave = await d365.create(ENTITY, payload); break; }
         catch (err) {
           if (d365._isMissingProperty?.(err)) {
             const prop = d365._missingPropertyName?.(err);
             if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) { delete payload[prop]; continue; }
+          }
+          // Dataverse column still capped below the reason length → widen hr_reason to
+          // 4000 and retry once. If the widen can't be applied (e.g. the Dataverse app
+          // user lacks customization privilege), surface a clear, actionable error —
+          // the user's reason is NEVER shortened or dropped.
+          if (!widenTried && d365._isColumnLengthError?.(err) && d365._columnLengthName?.(err) === 'hr_reason') {
+            widenTried = true;
+            const w = await ensureReasonLength(global.logger || console).catch((e) => ({ status: 'failed', reason: e.message }));
+            if (w.status === 'updated' || w.status === 'ok') continue;   // column now supports 4000 → retry the create
+            return res.status(400).json({
+              error: 'Your reason is longer than the leave system currently accepts. An administrator must widen the Leave "Reason" field (Dataverse hr_reason) to 4000 characters. Your text was not saved or shortened — please retry once this is done.',
+              detail: w.reason || 'the hr_reason column widen could not be applied',
+            });
           }
           throw err;
         }

@@ -217,6 +217,24 @@ class D365Service {
       (code === '0x80060888' || /Resource not found for the segment/i.test(msg));
   }
 
+  // True when a write was rejected because a string value exceeds the column's max
+  // length — e.g. 0x80044331 "The length of the 'hr_reason' attribute ... exceeded
+  // the maximum allowed length of '100'." Lets a writer widen the column and retry
+  // instead of truncating the user's text.
+  _isColumnLengthError(err) {
+    const e = err?.response?.data?.error;
+    const m = e?.message || '';
+    return err?.response?.status === 400 &&
+      (e?.code === '0x80044331' || /exceeded the maximum allowed length/i.test(m));
+  }
+
+  // The column name from a length-error message ("length of the 'hr_reason' attribute").
+  _columnLengthName(err) {
+    const m = err?.response?.data?.error?.message || '';
+    const mm = m.match(/length of the '([a-z0-9_]+)' attribute/i);
+    return mm ? mm[1] : null;
+  }
+
   // Ask Dataverse metadata for the authoritative EntitySetName. We only have a
   // (wrong) plural guess like 'hr_hrgoals', so derive candidate LOGICAL names and
   // look them up. Returns the real set name, or null if nothing matches.

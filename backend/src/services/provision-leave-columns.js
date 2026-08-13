@@ -39,27 +39,43 @@ async function post(path, body) { const headers = await d365.getHeaders({ 'Conte
  * (no regression — the column simply stays as it was).
  */
 async function ensureReasonLength(log = console, targetMax = LEAVE_REASON_MAX) {
-  const attrPath = `EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes(LogicalName='hr_reason')`;
+  const base = `EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes(LogicalName='hr_reason')`;
+  // Read/write through the TYPE-CAST path so we always get the full String metadata
+  // (incl. MaxLength). Reading the un-cast base attribute can return a generic
+  // @odata.type / no MaxLength, which previously made the widen silently no-op.
+  const strPath = `${base}/Microsoft.Dynamics.CRM.StringAttributeMetadata`;
   let headers, attr;
   try { headers = await d365.getHeaders({ 'Content-Type': 'application/json' }); }
   catch (e) { return { status: 'skipped', reason: e.message }; }
-  try { attr = (await axios.get(`${d365.baseUrl}/${attrPath}`, { headers })).data; }
-  catch (e) { log?.warn?.(`[provision] hr_reason metadata read skipped: ${e.response?.data?.error?.message || e.message}`); return { status: 'skipped' }; }
+  try {
+    attr = (await axios.get(`${d365.baseUrl}/${strPath}`, { headers })).data;
+  } catch (e) {
+    // A 404 on the String cast means hr_reason is NOT single-line (e.g. a Memo/
+    // Multiline column, which already supports far more than 4000) — nothing to widen.
+    if (e.response?.status === 404) return { status: 'ok', note: 'not single-line (memo/multiline) — already supports long text' };
+    log?.warn?.(`[provision] hr_reason metadata read skipped: ${e.response?.data?.error?.message || e.message}`);
+    return { status: 'skipped', reason: e.response?.data?.error?.message || e.message };
+  }
 
-  const otype = String(attr['@odata.type'] || '');
-  if (!/StringAttributeMetadata/i.test(otype)) return { status: 'ok', note: 'not single-line', maxLength: attr.MaxLength };
-  if (Number(attr.MaxLength || 0) >= targetMax) return { status: 'ok', already: true, maxLength: attr.MaxLength };
+  const current = Number(attr.MaxLength || 0);
+  if (current >= targetMax) return { status: 'ok', already: true, maxLength: current };
 
+  // Full-attribute replace with the new MaxLength (MergeLabels keeps existing labels).
   const body = { ...attr, MaxLength: targetMax };
   delete body['@odata.context'];
   try {
-    await axios.put(`${d365.baseUrl}/${attrPath}`, body, { headers: { ...headers, 'MSCRM.MergeLabels': 'true' } });
+    await axios.put(`${d365.baseUrl}/${strPath}`, body, { headers: { ...headers, 'MSCRM.MergeLabels': 'true' } });
     try { await axios.post(`${d365.baseUrl}/PublishXml`, { ParameterXml: `<importexportxml><entities><entity>${ENTITY_LOGICAL}</entity></entities></importexportxml>` }, { headers }); } catch (_) { /* publish best-effort */ }
-    log?.info?.(`[provision] hr_reason MaxLength ${attr.MaxLength} → ${targetMax}`);
-    return { status: 'updated', from: attr.MaxLength, to: targetMax };
+    log?.info?.(`[provision] hr_reason MaxLength ${current} → ${targetMax} (published)`);
+    return { status: 'updated', from: current, to: targetMax };
   } catch (e) {
-    log?.warn?.(`[provision] hr_reason widen skipped: ${e.response?.data?.error?.message || e.message}`);
-    return { status: 'skipped', reason: e.response?.data?.error?.message || e.message };
+    const m = e.response?.data?.error?.message || e.message;
+    // LOUD (error, not warn): the widen is the ONLY way long reasons can save, so a
+    // failure must be visible in the logs with the real reason (usually a missing
+    // Dataverse customization privilege on the application user).
+    const privilege = /privilege|permission|not have access|unauthor|SecLib|CrmSecurity/i.test(m);
+    log?.error?.(`[provision] hr_reason widen FAILED — ${privilege ? 'the application user lacks Dataverse customization privilege (needs System Customizer/Administrator)' : 'Dataverse rejected the metadata update'}: ${m}`);
+    return { status: 'failed', reason: m, privilege, currentMaxLength: current };
   }
 }
 
@@ -68,7 +84,8 @@ async function ensureLeaveColumns(log = console, opts = {}) {
   const started = Date.now();
   let added = 0, existing = 0; const failed = [];
   // Widen the Leave Reason column first (see above) so long reasons save.
-  await ensureReasonLength(log).catch((e) => log?.warn?.(`[provision] hr_reason widen error: ${e.message}`));
+  const rl = await ensureReasonLength(log).catch((e) => ({ status: 'failed', reason: e.message }));
+  log?.info?.(`[provision] hr_reason length → ${rl?.status}${rl?.maxLength ? ` (max ${rl.maxLength})` : ''}${rl?.reason ? ` — ${rl.reason}` : ''}`);
   for (const col of COLUMNS) {
     for (;;) {
       try { await post(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes`, col); added++; log?.info?.(`[provision] added leave column ${col.SchemaName}`); break; }

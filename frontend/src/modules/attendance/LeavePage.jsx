@@ -699,7 +699,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
               value={form.reason}
               onChange={e => setForm(p => ({ ...p, reason: e.target.value.slice(0, REASON_MAX) }))}
             />
-            <p className="text-xs text-gray-400 mt-1 text-right tabular-nums">{form.reason.length}/{REASON_MAX}</p>
+            <p className={`text-xs mt-1 text-right tabular-nums ${form.reason.length >= REASON_MAX ? 'text-amber-600' : 'text-gray-400'}`}>{form.reason.length} / {REASON_MAX}</p>
           </div>
 
           {/* Approver (required) */}
