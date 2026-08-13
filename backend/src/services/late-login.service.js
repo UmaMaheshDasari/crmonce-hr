@@ -95,7 +95,7 @@ async function monthlyCount(employeeId, month) {
 }
 
 // ── email helpers (best-effort; never throw / block) ──────────────────────────
-async function getEmployee(id) { try { return await d365.getByIdOptional(EMP, id, { select: 'hr_email,hr_hremployee1,hr_department', optionalSelect: '_hr_manager_value' }); } catch { return null; } }
+async function getEmployee(id) { try { return await d365.getByIdOptional(EMP, id, { select: 'hr_email,hr_hremployee1,hr_department', optionalSelect: '_hr_manager_value,hr_employeeid,hr_employeecode,hr_etimecode' }); } catch { return null; } }
 
 /** The employee's SHIFT START ("HH:MM") — the SAME source of truth Attendance uses
  *  (attendance.config.resolveEmployeeShift). Never a hardcoded 09:00; when no shift is
@@ -148,7 +148,8 @@ async function emailLateLoginInfoToHR({ employeeId, employeeName, date, expected
   if (!v.ok) { global.logger?.warn?.(`[late-login] HR info email skipped: ${v.reason}`); return; }
 
   const { subject, html } = T.lateLoginInfo({
-    employeeName: employeeName || emp?.hr_hremployee1 || '', employeeId,
+    // Show the HUMAN Employee ID (EMP1039), never the Dataverse GUID passed in as employeeId.
+    employeeName: employeeName || emp?.hr_hremployee1 || '', employeeId: requestNotify.employeeIdOf(emp) || '—',
     department: emp?.hr_department || '', date: time.fmtDate(date),
     expectedTime, actualTime, lateBy: lateByMinutes(expectedTime, actualTime), reason, remarks,
   });

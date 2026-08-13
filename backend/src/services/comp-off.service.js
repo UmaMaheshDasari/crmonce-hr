@@ -555,7 +555,8 @@ async function remove(id, user) {
     await reverseEarned(row);   // negative comp_off_earned ledger entry → balance corrected
   }
   await d365.delete(COMP, id);
-  notifyUser(row.hr_employeeid, 'compoff:deleted', { workedDate: row.hr_workeddate });
+  // DELETE IS SILENT — no email and no in-app notification. Keep only the internal audit
+  // record (a stored history row, not a notification) for "who deleted what".
   audit({ category: 'Attendance', type: 'compoff_deleted', title: 'Comp Off deleted', name: row.hr_employeename, meta: { id, status, workedDate: row.hr_workeddate } });
   return { deleted: true, id };
 }

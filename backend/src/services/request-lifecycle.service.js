@@ -129,12 +129,11 @@ async function remove({ type, id, user }) {
   // `delete()` method — calling v.adapter.delete() was the "adapter.delete is not a
   // function" bug. The shared audit row below preserves history after the row is gone.
   await d365.delete(v.adapter.entity, id);
+  // DELETE IS SILENT: no email and no in-app notification to anyone (HR / manager / CC /
+  // employee). An employee deleting their OWN pending/rejected request must not trigger
+  // any notification. We still write the internal audit row (a stored history record,
+  // NOT a notification) so "who deleted what" is preserved for compliance.
   await writeAudit({ employeeId: v.ownerId, employeeName: v.ownerName, requestId: id, requestType: type, action: 'deleted', performedBy: user.name || user.email, detail: v.summary });
-  const rec = await v.adapter.managerRecipients(v.raw).catch(() => ({}));
-  const hr = await v.adapter.hrRecipients().catch(() => ({}));
-  const subj = `${v.adapter.label} request deleted`;
-  const html = `<p>${v.ownerName || 'An employee'} deleted a ${v.adapter.label} request${v.summary ? ` (${v.summary})` : ''}.</p>`;
-  await notifyMany({ emails: [...(rec.emails || []), ...(hr.emails || [])], ids: [...(rec.ids || []), ...(hr.ids || [])] }, 'request:deleted', subj, html, { type, id });
   return { deleted: true };
 }
 

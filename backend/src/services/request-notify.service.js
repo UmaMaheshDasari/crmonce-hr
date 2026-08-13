@@ -86,9 +86,17 @@ function approvalUrls(type, id) {
   return { approveUrl: mk('approved'), rejectUrl: mk('rejected') };
 }
 
-async function departmentOf(employeeId) {
-  try { const e = await d365.getById(EMP, employeeId, { select: 'hr_department' }); return e?.hr_department || '—'; }
-  catch (_) { return '—'; }
+// The HUMAN Employee ID shown in emails (e.g. EMP1039) — NEVER the Dataverse record
+// GUID (hr_hremployeeid). Uses the same source-of-truth + fallbacks the app uses
+// everywhere: hr_employeeid → hr_employeecode → hr_etimecode.
+const employeeIdOf = (e) => String(e?.hr_employeeid || e?.hr_employeecode || e?.hr_etimecode || '');
+
+/** Employee-card fields for request emails: department + the human Employee ID. */
+async function employeeCardInfo(employeeGuid) {
+  try {
+    const e = await d365.getByIdOptional(EMP, employeeGuid, { select: 'hr_department', optionalSelect: 'hr_employeeid,hr_employeecode,hr_etimecode' });
+    return { department: e?.hr_department || '—', employeeId: employeeIdOf(e) };
+  } catch (_) { return { department: '—', employeeId: '' }; }
 }
 
 /** Configurable leave balance = annual entitlement − approved days taken this year. */
@@ -129,7 +137,9 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     const v = await verifyMailbox(s.sender);
     if (!v.ok) return auditSkip(type, `${type}_new_approver`, s.sender, approver.email, v.reason);
 
-    const employee = { name: actor?.name, id: actor?.id, department: await departmentOf(actor.id), email: actor?.email };
+    // Employee card shows the HUMAN Employee ID (EMP1039), never the GUID actor.id.
+    const cardInfo = await employeeCardInfo(actor.id);
+    const employee = { name: actor?.name, id: cardInfo.employeeId || '—', department: cardInfo.department, email: actor?.email };
     const { approveUrl, rejectUrl } = approvalUrls(type, recordId);
 
     // 1) Approver email — TO the approver ONLY (with Approve/Reject buttons).
@@ -258,4 +268,5 @@ module.exports = {
   notifyNewRequest, emailApplyAcknowledgement, emailDecisionToEmployee,
   getApprovers, isPlaceholderEmail, getLeaveBalance, approvalUrls,
   isAuthorizedApprovalRole, canActOnApproval, AUTHORIZED_APPROVAL_ROLES,
+  employeeIdOf, employeeCardInfo,
 };

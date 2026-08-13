@@ -87,3 +87,33 @@ test('HR may delete another employee\'s pending request (owner check bypassed fo
   await lifecycle.remove({ type: TYPE, id: 'REQ6', user: { id: 'HRUSER', role: 'hr_manager' } });
   assert.deepStrictEqual(deleteCalls[0], { entity: 'hr_testrequests', id: 'REQ6' });
 });
+
+// DELETE MUST NEVER notify anyone — no email, no in-app push (only the silent delete
+// + internal audit). Uses an adapter whose recipients are NON-empty to prove remove()
+// does not even attempt to notify them.
+test('DELETE is SILENT — no email and no in-app notification are sent', async () => {
+  const NOISY = 'test_delete_noisy';
+  lifecycle.registerAdapter({
+    type: NOISY, label: 'Noisy Request', entity: 'hr_noisyrequests',
+    get: async () => ({ __status: 'pending', __owner: 'EMP1' }),
+    status: (r) => r.__status, ownerId: (r) => r.__owner, ownerName: () => 'Owner', summary: () => 's',
+    managerRecipients: async () => ({ emails: ['mgr@crmonce.com'], ids: ['MGR'] }),
+    hrRecipients: async () => ({ emails: ['hr@crmonce.com'], ids: ['HR'] }),
+  });
+  const notif = require('../src/services/notification.service');
+  const sent = [];
+  notif.setTransport((req) => sent.push(req));
+  const origNotifyUser = notif.notifyUser, origBroadcast = notif.broadcast;
+  let pings = 0;
+  notif.notifyUser = () => { pings++; };
+  notif.broadcast = () => { pings++; };
+  try {
+    const res = await lifecycle.remove({ type: NOISY, id: 'REQ7', user: { id: 'EMP1', role: 'employee', name: 'Emp One' } });
+    assert.deepStrictEqual(res, { deleted: true });
+    assert.strictEqual(sent.length, 0, 'NO email is sent on delete');
+    assert.strictEqual(pings, 0, 'NO in-app notification/broadcast is sent on delete');
+  } finally {
+    notif.resetTransport?.(); notif.clearOutbox?.();
+    notif.notifyUser = origNotifyUser; notif.broadcast = origBroadcast;
+  }
+});

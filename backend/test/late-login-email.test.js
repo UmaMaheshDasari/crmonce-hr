@@ -111,14 +111,14 @@ test('lateByMinutes: actual − expected, no grace subtracted', () => {
 // ── HR information email: FROM employee mailbox, TO HR, no buttons ──────────
 test('emailLateLoginInfoToHR: FROM the employee mailbox, TO HR, information-only', async () => {
   d365.getByIdOptional = async (entity) => (entity === EMP
-    ? { hr_email: 'vishwesh@crmonce.com', hr_hremployee1: 'Boina Vishwesh', hr_department: 'Engineering' } : {});
+    ? { hr_email: 'vishwesh@crmonce.com', hr_hremployee1: 'Boina Vishwesh', hr_department: 'ADM', hr_employeeid: 'EMP1039' } : {});
   d365.getList = async (entity) => (entity === EMP
     ? { data: [{ hr_email: 'hr@crmonce.com' }, { hr_email: 'admin@crmonce.com' }] } : { data: [] });
 
   const sent = [];
   notif.setTransport((req, ctx) => sent.push({ req, ctx }));
   await lateLogin.emailLateLoginInfoToHR({
-    employeeId: 'E1', employeeName: 'Boina Vishwesh', date: '2026-08-14',
+    employeeId: 'd79c1f3c-4c32-f111-88b5-7ced8daf0197', employeeName: 'Boina Vishwesh', date: '2026-08-14',
     expectedTime: '09:00', actualTime: '10:15', reason: 'Bank work', remarks: '',
   });
   assert.strictEqual(sent.length, 1, 'one HR information email');
@@ -127,6 +127,8 @@ test('emailLateLoginInfoToHR: FROM the employee mailbox, TO HR, information-only
   assert.strictEqual(sent[0].ctx.meta.type, 'late_login_info');
   assert.strictEqual(hasButtons(sent[0].ctx.html), false);
   assert.match(sent[0].ctx.subject, /^Late Login Information - Boina Vishwesh/);
+  assert.match(sent[0].ctx.html, /EMP1039/);                                // HUMAN employee id
+  assert.ok(!/d79c1f3c/.test(sent[0].ctx.html), 'the GUID is never shown');
 });
 
 test('emailLateLoginInfoToHR: employee without a company mailbox → skipped, no throw', async () => {

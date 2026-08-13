@@ -24,9 +24,11 @@ const T = require('../src/services/email/templates');
 const requestNotify = require('../src/services/request-notify.service');
 const d365 = require('../src/services/d365.service');
 
-// Stub the only D365 read the apply-notify path makes (department lookup) so no
-// network is touched. Mailbox verification is skipped under the mock transport.
+// Stub the D365 reads the apply-notify path makes (employee card = department + the
+// HUMAN Employee ID EMP1039, never the GUID) so no network is touched. Mailbox
+// verification is skipped under the mock transport.
 d365.getById = async () => ({ hr_department: 'Engineering' });
+d365.getByIdOptional = async () => ({ hr_department: 'Engineering', hr_employeeid: 'EMP1039' });
 
 // Helpers to read a captured Graph request.
 const recipientsOf = (r) => [...r.body.message.toRecipients, ...r.body.message.ccRecipients].map(x => x.emailAddress.address);
@@ -203,6 +205,13 @@ test('employee acknowledgement: exactly ONE email, no buttons, not saved to Sent
   assert.deepStrictEqual(recipientsOf(sent[0].req), [EMP.email]);       // only the applicant
   assert.strictEqual(hasButtons(sent[0].ctx.html), false);             // NO action buttons
   assert.strictEqual(sent[0].req.body.saveToSentItems, false);
+});
+
+test('employee card shows the HUMAN Employee ID (EMP1039), NEVER the Dataverse GUID', async () => {
+  const sent = await runApply({ id: 'A1', name: 'HR Team', email: 'hr@crmonce.com' });
+  const approver = sent.find(s => s.ctx.meta.type === 'leave_new_approver');
+  assert.match(approver.ctx.html, /ID: EMP1039/);                 // real employee id
+  assert.ok(!/ID: E1\b/.test(approver.ctx.html), 'the GUID/record id is not shown as Employee ID');
 });
 
 test('HR approver: ONE buttoned email, TO=HR only, employee never a recipient/sender copy', async () => {
