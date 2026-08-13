@@ -11,7 +11,7 @@
 const d365 = require('./d365.service');
 const attnCfg = require('./attendance.config');
 const time = require('./time.util');
-const { computeSession, punchesFromRecord } = require('./attendance.util');
+const { computeSession, punchesFromRecord, LATE_ENTRY_GRACE_MIN } = require('./attendance.util');
 const { detectExceptions } = require('./attendance-exception.util');
 const templates = require('./email/templates');
 const notification = require('./notification.service');
@@ -93,11 +93,12 @@ async function notifyException(emp, alert, { cc = [], shift, inTime, outTime } =
 
 /** Late-login informational notice — ONE per employee+date (LATE_LOGIN), employee
  *  only. Opt-in via config.notify.lateLoginNotice. Deduped by the ledger. */
-async function sendLateLoginNotice(emp, { date, shift, expectedTime, actualTime, lateBy }) {
+async function sendLateLoginNotice(emp, { date, shift, expectedTime, actualTime, lateBy, grace }) {
   const to = emp.hr_email;
   if (!to || requestNotify.isPlaceholderEmail(to)) return { skipped: true };
   const { subject, html } = templates.lateLoginNotice({
     employeeName: emp.hr_hremployee1, date: time.fmtDate(date), shift, expectedTime, actualTime, lateBy,
+    grace: grace != null ? grace : LATE_ENTRY_GRACE_MIN,
   });
   // ONE email per employee + attendance date (LATE_LOGIN) — the ledger de-dupes so a
   // re-scan / real-time check-in / recalc never re-sends the same day's late entry.
@@ -153,7 +154,7 @@ async function runScan({ days = 3, reminder = false } = {}) {
     // Late-login informational notice (opt-in) — ONE per employee/day via the
     // ledger, so recalc / dashboard / payroll never re-send it (§9).
     if (ecfg.notify.lateLoginNotice && (c.lateEntryMinutes || 0) > 0) {
-      await sendLateLoginNotice(emp, { date, shift: shiftLabel, expectedTime: shift.start, actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '', lateBy: c.lateEntryMinutes });
+      await sendLateLoginNotice(emp, { date, shift: shiftLabel, expectedTime: shift.start, actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '', lateBy: c.lateEntryMinutes, grace: LATE_ENTRY_GRACE_MIN });
     }
 
     const [ex] = detectExceptions(c);

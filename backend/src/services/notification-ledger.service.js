@@ -36,6 +36,11 @@ async function ensureTable() {
   }
 }
 
+// A pending claim older than this is treated as abandoned (a crashed/lost sender), so
+// it never permanently blocks a later legitimate retry of the same (employee,date,type).
+const CLAIM_TTL_MS = 2 * 60 * 1000;
+const ageMs = (isoStr) => { const t = Date.parse(isoStr || ''); return Number.isFinite(t) ? (Date.parse(iso()) - t) : Infinity; };
+
 const d365Store = {
   async hasSent(employeeId, date, type) {
     try {
@@ -46,6 +51,59 @@ const d365Store = {
       return !!(data && data[0]);
     } catch { return false; }   // can't confirm → allow the send (never permanently suppress)
   },
+
+  /**
+   * Atomically-as-possible RESERVE the (employee,date,type) slot BEFORE the email is
+   * sent, so two backend processes (PM2 instances) racing the SAME event cannot both
+   * send. Dataverse has no unique constraint here, so we insert a 'pending' marker and
+   * arbitrate DETERMINISTICALLY by row GUID: every racer sees the same rows and picks
+   * the same lowest-GUID winner. FAIL-OPEN — any ledger error returns won:true so a
+   * genuine notice is never suppressed (a rare duplicate is safer than a lost email).
+   * @returns {Promise<{won:boolean, id:string|null}>}
+   */
+  async claim(rec) {
+    const key = keyOf(rec.employeeId, rec.date, rec.type);
+    let mineId = null;
+    try {
+      const created = await d365.create(SET, {
+        hr_name: `${rec.type} · ${rec.employeeId} · ${dstr(rec.date)}`.slice(0, 250),
+        hr_key: key, hr_employeeid: String(rec.employeeId || ''), hr_date: dstr(rec.date), hr_type: rec.type,
+        hr_status: 'pending', hr_to: String(rec.to || '').slice(0, 300), hr_cc: ccStr(rec.cc).slice(0, 400),
+        hr_subject: String(rec.subject || '').slice(0, 300), hr_entity: rec.entity || '', hr_requestid: rec.requestId || '',
+        hr_attemptedat: iso(),
+      });
+      mineId = created?.hr_notificationlogid || null;
+    } catch (e) { global.logger?.warn?.(`[notif-ledger] claim insert failed (fail-open): ${e.message}`); return { won: true, id: null }; }
+    if (!mineId) return { won: true, id: null };   // couldn't read our own id → fail open
+    try {
+      const { data } = await d365.getList(SET, {
+        select: 'hr_notificationlogid,hr_status,hr_attemptedat',
+        filter: `hr_key eq '${esc(key)}' and (hr_status eq 'pending' or hr_status eq 'sent')`, top: 50,
+      });
+      const rows = data || [];
+      if (rows.some(r => r.hr_status === 'sent')) { await this._drop(mineId); return { won: false, id: mineId }; }
+      // Live competitors = my row + any OTHER fresh pending claim; stale pendings ignored.
+      const live = rows.filter(r => r.hr_notificationlogid === mineId || ageMs(r.hr_attemptedat) <= CLAIM_TTL_MS);
+      const winner = live.map(r => r.hr_notificationlogid).filter(Boolean).sort()[0];
+      if (winner === mineId) return { won: true, id: mineId };
+      await this._drop(mineId);
+      return { won: false, id: mineId };
+    } catch (e) { global.logger?.warn?.(`[notif-ledger] claim arbitrate failed (fail-open): ${e.message}`); return { won: true, id: mineId }; }
+  },
+
+  /** Turn the winner's pending claim into the terminal sent/failed record. */
+  async finalize(id, rec) {
+    if (!id) return this.record(rec);
+    try {
+      await d365.update(SET, id, {
+        hr_status: rec.status, hr_error: rec.error ? String(rec.error).slice(0, 4000) : '',
+        ...(rec.status === 'sent' ? { hr_sentat: iso() } : {}),
+      });
+    } catch (e) { global.logger?.warn?.(`[notif-ledger] finalize failed: ${e.message}`); await this.record(rec); }
+  },
+
+  async _drop(id) { try { await d365.delete(SET, id); } catch (_) { /* stale pending self-expires via CLAIM_TTL_MS */ } },
+
   async record(rec) {
     try {
       await d365.create(SET, {
@@ -89,17 +147,32 @@ async function sendOnce(opts) {
 async function _sendOnce({ employeeId, date, type, to, cc, subject, html, from, attachments, requestId, entity }, key) {
   if (store === d365Store) await ensureTable();
 
+  // 1) Fast path: a prior SUCCESSFUL send for this key → never duplicate.
   if (await store.hasSent(employeeId, date, type)) {
     global.logger?.info?.(`[notif-ledger] duplicate suppressed: ${key} → ${to}`);
     return { skipped: true, reason: 'already_sent' };
   }
 
+  // 2) Cross-process guard: claim the slot BEFORE sending so two PM2 instances racing
+  //    the same event yield exactly ONE winner (see store.claim). Stores without claim
+  //    fall back to the legacy record-after-send path (still at-most-once via hasSent).
+  let claimId;
+  if (typeof store.claim === 'function') {
+    const c = await store.claim({ employeeId, date, type, to, cc, subject, requestId, entity });
+    if (!c.won) {
+      global.logger?.info?.(`[notif-ledger] duplicate suppressed (lost claim): ${key} → ${to}`);
+      return { skipped: true, reason: 'already_claimed' };
+    }
+    claimId = c.id;
+  }
+
   const r = await notification.sendEmail(to, subject, html, { from, cc, attachments, meta: { type } });
   const ok = !!r?.success;
-  await store.record({
-    employeeId, date, type, status: ok ? 'sent' : 'failed',
-    to, cc, subject, error: ok ? '' : (r?.error || 'send failed'), requestId, entity,
-  });
+  const rec = { employeeId, date, type, status: ok ? 'sent' : 'failed', to, cc, subject, error: ok ? '' : (r?.error || 'send failed'), requestId, entity };
+  // Record 'sent' ONLY after the email service accepted it (never before). The winner's
+  // pending claim becomes the terminal record; a failure stays retryable (not 'sent').
+  if (typeof store.finalize === 'function') await store.finalize(claimId, rec);
+  else await store.record(rec);
   return ok ? { sent: true } : { sent: false, error: r?.error || 'send failed' };
 }
 

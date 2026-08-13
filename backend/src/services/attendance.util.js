@@ -161,4 +161,4 @@ function computeFromPunches(rawPunches, shiftCode) {
   };
 }
 
-module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches };
+module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches, LATE_ENTRY_GRACE_MIN };

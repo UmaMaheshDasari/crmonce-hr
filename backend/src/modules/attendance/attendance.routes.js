@@ -275,6 +275,7 @@ function maybeSendLateEntry(employeeId, date, shift, c) {
       await exceptionSvc.sendLateLoginNotice(emp, {
         date, shift: shiftLabel, expectedTime: shift.start,
         actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '', lateBy: c.lateEntryMinutes,
+        grace: c.graceMinutes,
       });
     })
     .catch((err) => global.logger?.warn?.(`[checkin] late-entry notice failed: ${err.message}`));

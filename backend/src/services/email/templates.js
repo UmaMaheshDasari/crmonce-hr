@@ -180,12 +180,14 @@ function newRequestApprover(d) {
   return { subject, html: layout({ title: subject, preheader: `Approve or reject ${d.employee.name}'s ${d.moduleTitle.toLowerCase()} request`, content }) };
 }
 
-// Informational copy for CC recipients — NO approve/reject buttons or links.
+// Informational copy for CC recipients WITHOUT approval access — NO approve/reject
+// buttons, NO action links or tokens. Subject is explicitly prefixed "For Your
+// Information:" so the recipient sees at a glance that no action is expected of them.
 function newRequestCc(d) {
-  const subject = `${d.moduleTitle} Request - ${d.employee.name}`;
+  const subject = `For Your Information: ${d.moduleTitle} Request - ${d.employee.name}`;
   const content =
     greet(d.recipientName) +
-    `<p style="margin:0 0 4px;color:#374151;">A new ${d.moduleTitle.toLowerCase()} request has been submitted by <strong>${esc(d.employee.name)}</strong>.</p>` +
+    `<p style="margin:0 0 4px;color:#374151;">This ${d.moduleTitle.toLowerCase()} request has been submitted for approval by <strong>${esc(d.employee.name)}</strong>. You are receiving this notification for information only.</p>` +
     profileCard(d.employee) +
     summaryCard('Request details', requestRows(d)) +
     banner(`This email is for your information only. No action is required from you.<br>Awaiting approval from <strong>${esc(d.approverName || 'the approver')}</strong>.`);
@@ -298,16 +300,19 @@ function missingPunch(d) {
  * d: { employeeName, date, shift, expectedTime, actualTime }
  */
 function lateLoginNotice(d) {
-  const subject = `Late Entry - ${d.date}`;
-  const lateByTxt = (d.lateBy != null && Number(d.lateBy) > 0) ? `${Number(d.lateBy)} minute${Number(d.lateBy) === 1 ? '' : 's'}` : '—';
+  const subject = `Late Login Notification - ${d.date}`;
+  const mins = (n) => `${Number(n)} minute${Number(n) === 1 ? '' : 's'}`;
+  const lateByTxt = (d.lateBy != null && Number(d.lateBy) > 0) ? mins(d.lateBy) : '—';
+  const graceTxt = (d.grace != null && Number(d.grace) > 0) ? mins(d.grace) : '5 minutes';
   const content =
     greet(d.employeeName) +
     `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Our attendance system recorded a <strong>Late Entry</strong> for <strong>${esc(d.date)}</strong>. This is for your information only — it does not affect your salary, attendance, or leave, and no action is required.</p>` +
     summaryCard('Attendance', [
+      ['Employee', esc(d.employeeName || '—')],
       ['Date', esc(d.date)],
-      ['Shift', esc(d.shift || '—')],
-      ['Shift Start', esc(d.expectedTime || '—')],
-      ['Check-In Time', esc(d.actualTime || '—')],
+      ['Scheduled Start', esc(d.expectedTime || '—')],
+      ['Grace Period', esc(graceTxt)],
+      ['Actual Check-In', esc(d.actualTime || '—')],
       ['Late By', esc(lateByTxt)],
       ['Attendance Status', statusBadge('Late Entry')],
     ]) +

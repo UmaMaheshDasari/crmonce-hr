@@ -116,13 +116,16 @@ test('missingPunch template: subject + all §7 fields', () => {
   assert.match(html, /10:05 AM/);
 });
 
-test('lateLoginNotice template: Late Entry subject + shift-start/check-in/late-by', () => {
-  const { subject, html } = T.lateLoginNotice({ employeeName: 'Vishwesh', date: '10 Aug 2026', shift: 'General', expectedTime: '09:00', actualTime: '09:06 AM', lateBy: 6 });
-  assert.strictEqual(subject, 'Late Entry - 10 Aug 2026');
-  assert.match(html, /Late Entry/);
-  assert.match(html, /09:06 AM/);       // check-in time
-  assert.match(html, /6 minutes/);      // Late By (from shift start, not grace end)
-  assert.match(html, /does not affect your salary/i);   // no-impact reassurance
+test('lateLoginNotice template: subject + employee/date/start/grace/check-in/late-by/status', () => {
+  const { subject, html } = T.lateLoginNotice({ employeeName: 'Pavan Kumar', date: '13 Aug 2026', shift: 'General', expectedTime: '09:00 AM', actualTime: '09:17 AM', lateBy: 17, grace: 5 });
+  assert.strictEqual(subject, 'Late Login Notification - 13 Aug 2026');
+  assert.match(html, /Late Entry/);          // attendance status
+  assert.match(html, /Pavan Kumar/);         // employee name
+  assert.match(html, /09:00 AM/);            // scheduled start
+  assert.match(html, /5 minutes/);           // grace period
+  assert.match(html, /09:17 AM/);            // actual check-in
+  assert.match(html, /17 minutes/);          // late by (from shift start, not grace end)
+  assert.match(html, /does not affect your salary/i);   // no payroll impact
 });
 
 // ── §7/§14: missing-punch email goes to the EMPLOYEE ONLY (no CC) and once ──
