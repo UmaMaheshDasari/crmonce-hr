@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { lateLoginApi, employeeApi } from '../../api/endpoints';
+import { lateLoginApi, employeeApi, requestLifecycleApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import { PlusIcon, XMarkIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
@@ -12,18 +12,20 @@ const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-
 // Late Login is an INFORMATION record (no approval). Statuses: submitted → completed /
 // absent_leave_required (set by the daily attendance-verification job) / cancelled.
 // Legacy pending/approved/rejected are kept only so old records still render.
+// Late Login has NO approval — only these statuses. Legacy pending/approved/rejected
+// (from the old approval era) are mapped to the new set so no approval wording shows.
 const STATUS = {
   submitted: 'bg-blue-50 text-blue-700 border-blue-200',
   completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   absent_leave_required: 'bg-red-50 text-red-700 border-red-200',
   cancelled: 'bg-gray-100 text-gray-500 border-gray-200',
-  pending: 'bg-amber-50 text-amber-700 border-amber-200',
-  approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  rejected: 'bg-red-50 text-red-700 border-red-200',
+  pending: 'bg-blue-50 text-blue-700 border-blue-200',        // legacy → Submitted
+  approved: 'bg-emerald-50 text-emerald-700 border-emerald-200', // legacy → Completed
+  rejected: 'bg-gray-100 text-gray-500 border-gray-200',       // legacy → Cancelled
 };
 const STATUS_LABEL = {
-  submitted: 'Submitted', completed: 'Completed', absent_leave_required: 'Absent - Leave Required',
-  cancelled: 'Cancelled', pending: 'Pending', approved: 'Approved', rejected: 'Rejected',
+  submitted: 'Submitted', completed: 'Completed', absent_leave_required: 'Leave Required',
+  cancelled: 'Cancelled', pending: 'Submitted', approved: 'Completed', rejected: 'Cancelled',
 };
 const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—'; } catch { return d || '—'; } };
 // Times in HH:MM (24h). Late By = Late Login Time − Shift Start Time (no grace subtracted).
@@ -53,49 +55,59 @@ const canon = (r) => {
 };
 const todayStr = new Date().toISOString().slice(0, 10);
 
-function SubmitModal({ isHR, employees, policy, onClose }) {
+function SubmitModal({ isHR, employees, policy, editRecord, onClose }) {
   const qc = useQueryClient();
-  const [f, setF] = useState({ employeeId: '', date: todayStr, actualTime: '', reason: '', remarks: '' });
+  const isEdit = !!editRecord;
+  const [f, setF] = useState(isEdit
+    ? { employeeId: editRecord.employeeId || '', date: String(editRecord.date || '').slice(0, 10), actualTime: editRecord.actualTime || '', reason: editRecord.reason || '', remarks: editRecord.remarks || '' }
+    : { employeeId: '', date: todayStr, actualTime: '', reason: '', remarks: '' });
 
   // Shift Start Time is AUTO from the employee's shift (source of truth = Attendance
   // shift config), read-only. For HR it follows the selected employee; for a normal
-  // employee it is their own (from the page-level policy). Never hardcoded to 09:00.
+  // employee it is their own (page-level policy). On edit, the record's stored shift
+  // start is used. Never hardcoded to 09:00.
   const { data: empPolicy } = useQuery({
     queryKey: ['late-login-shift', f.employeeId],
     queryFn: () => lateLoginApi.policy({ employeeId: f.employeeId }).then(r => r.data),
-    enabled: isHR && !!f.employeeId,
+    enabled: !isEdit && isHR && !!f.employeeId,
   });
-  const shiftStart = ((isHR && f.employeeId) ? empPolicy?.shiftStart : policy?.shiftStart) || '';
+  const shiftStart = (isEdit ? (editRecord.expectedTime || policy?.shiftStart)
+    : ((isHR && f.employeeId) ? empPolicy?.shiftStart : policy?.shiftStart)) || '';
 
   const backdatedDays = Number(policy?.backdatedDays) || 30;
   const minDate = format(subDays(new Date(), backdatedDays), 'yyyy-MM-dd');
   const maxDate = policy?.allowFuture ? undefined : todayStr;
 
+  // Late Login Time must be AFTER Shift Start — otherwise Late By is invalid ("-").
+  const lateBeforeShift = !!(shiftStart && f.actualTime && lateByMin(shiftStart, f.actualTime) <= 0);
+
   const mut = useMutation({
-    mutationFn: () => lateLoginApi.create({ ...f, expectedTime: shiftStart }),
+    mutationFn: () => (isEdit
+      ? requestLifecycleApi.edit('late_login', editRecord.id, { date: f.date, actualTime: f.actualTime, reason: f.reason, remarks: f.remarks })
+      : lateLoginApi.create({ ...f, expectedTime: shiftStart })),
     onSuccess: (res) => {
       const warning = res?.data?.warning;
       if (warning) toast(warning, { icon: '⚠️', duration: 6000 });
-      else toast.success('Late Login submitted');
+      else toast.success(isEdit ? 'Late Login updated' : 'Late Login submitted');
       qc.invalidateQueries({ queryKey: ['late-login'] });
       onClose();
     },
-    onError: (e) => toast.error(e.response?.data?.error || 'Failed to submit'),
+    onError: (e) => toast.error(e.response?.data?.error || (isEdit ? 'Failed to update' : 'Failed to submit')),
   });
-  const invalid = (isHR && !f.employeeId) || !f.date || !shiftStart || !f.actualTime || !f.reason.trim();
+  const invalid = (isHR && !isEdit && !f.employeeId) || !f.date || !shiftStart || !f.actualTime || !f.reason.trim() || lateBeforeShift;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl my-8">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-bold text-gray-900">Late Login Request</h2>
+          <h2 className="text-lg font-bold text-gray-900">{isEdit ? 'Edit Late Login' : 'Late Login Request'}</h2>
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
           {policy?.maxPerMonth != null && (
-            <p className="text-xs text-gray-500">Informational record · Limit {policy.maxPerMonth}/month · {policy.allowFuture ? 'Future dates allowed' : 'Today & past only'} · Backdated up to {backdatedDays} days.</p>
+            <p className="text-xs text-gray-500">Limit {policy.maxPerMonth}/month · Today &amp; future allowed · Backdated up to {backdatedDays} days.</p>
           )}
-          {isHR && (
+          {isHR && !isEdit && (
             <div><label className="block text-xs font-semibold text-gray-600 mb-1">Employee</label>
               <select className={inp} value={f.employeeId} onChange={e => setF(p => ({ ...p, employeeId: e.target.value }))}>
                 <option value="">Select employee…</option>
@@ -110,17 +122,19 @@ function SubmitModal({ isHR, employees, policy, onClose }) {
                 <span>Shift Start Time</span>
                 <span className="text-[10px] font-medium text-indigo-500 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5">Auto</span>
               </label>
-              <input readOnly value={to12h(shiftStart) || (isHR && !f.employeeId ? 'Select employee' : '—')}
+              <input readOnly value={to12h(shiftStart) || (isHR && !isEdit && !f.employeeId ? 'Select employee' : '—')}
                 className={`${inp} bg-gray-100 text-gray-600 cursor-not-allowed`} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Late Login Time</label>
-              <input type="time" className={inp} value={f.actualTime} onChange={e => setF(p => ({ ...p, actualTime: e.target.value }))} />
+              <input type="time" className={`${inp} ${lateBeforeShift ? 'border-red-300 ring-2 ring-red-500/20' : ''}`} value={f.actualTime} onChange={e => setF(p => ({ ...p, actualTime: e.target.value }))} />
             </div>
           </div>
-          {shiftStart && f.actualTime && lateByLong(shiftStart, f.actualTime) && (
+          {lateBeforeShift ? (
+            <p className="text-xs font-semibold text-red-600">Late Login Time must be later than Shift Start Time.</p>
+          ) : (shiftStart && f.actualTime && lateByLong(shiftStart, f.actualTime) && (
             <p className="text-xs font-semibold text-amber-700">Late By: {lateByLong(shiftStart, f.actualTime)}</p>
-          )}
+          ))}
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
             <input className={inp} value={f.reason} onChange={e => setF(p => ({ ...p, reason: e.target.value }))} placeholder="Why were you / will you be late?" /></div>
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Remarks (optional)</label>
@@ -128,7 +142,7 @@ function SubmitModal({ isHR, employees, policy, onClose }) {
         </div>
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
-          <Button onClick={() => mut.mutate()} loading={mut.isPending} disabled={invalid}>Submit</Button>
+          <Button onClick={() => mut.mutate()} loading={mut.isPending} disabled={invalid}>{isEdit ? 'Save' : 'Submit'}</Button>
         </div>
       </div>
     </div>
@@ -139,6 +153,7 @@ export default function LateLoginPage() {
   const { user, isHR } = useAuth();
   const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
   const [show, setShow] = useState(false);
+  const [editRec, setEditRec] = useState(null);   // the record being edited (employee, own)
   const [period, setPeriod] = useState('this_month');
   const [statusF, setStatusF] = useState('');
   const [deptF, setDeptF] = useState('');
@@ -249,11 +264,19 @@ export default function LateLoginPage() {
                   <td className="px-4 py-3"><span className={`inline-flex text-[11px] font-semibold border px-2 py-0.5 rounded-full ${STATUS[r.status] || STATUS.submitted}`}>{STATUS_LABEL[r.status] || r.status}</span></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 justify-end">
-                      {r.employeeId === user?.id && (
+                      {r.employeeId === user?.id ? (
                         <RequestLifecycleActions
                           type="late_login" id={r.id} status={canon(r)}
+                          caps={{
+                            canEdit: ['submitted', 'pending'].includes(r.status),
+                            canDelete: ['submitted', 'pending'].includes(r.status),
+                            canResubmit: false, canCancel: false,
+                          }}
+                          onEdit={() => setEditRec(r)}
                           invalidateKeys={[['late-login'], ['late-login-summary']]}
                         />
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
                       )}
                     </div>
                   </td>
@@ -264,7 +287,7 @@ export default function LateLoginPage() {
         </div>
       </div>
 
-      {show && <SubmitModal isHR={hr} employees={employees} policy={policy} onClose={() => setShow(false)} />}
+      {(show || editRec) && <SubmitModal isHR={hr} employees={employees} policy={policy} editRecord={editRec} onClose={() => { setShow(false); setEditRec(null); }} />}
     </div>
   );
 }

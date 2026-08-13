@@ -40,16 +40,36 @@ function memStore() {
   };
 }
 
+const payrollSettings = require('../src/services/payroll-settings.service');
 let orig;
 beforeEach(() => {
-  orig = { gio: d365.getByIdOptional, gl: d365.getList, glo: d365.getListOptional, up: d365.update };
+  orig = { gio: d365.getByIdOptional, gl: d365.getList, glo: d365.getListOptional, up: d365.update, cr: d365.create, ps: payrollSettings.getResolved };
   notif.clearOutbox();
   notif.setTransport(() => {});
 });
 afterEach(() => {
-  d365.getByIdOptional = orig.gio; d365.getList = orig.gl; d365.getListOptional = orig.glo; d365.update = orig.up;
+  d365.getByIdOptional = orig.gio; d365.getList = orig.gl; d365.getListOptional = orig.glo; d365.update = orig.up; d365.create = orig.cr;
+  payrollSettings.getResolved = orig.ps;
   notif.resetTransport(); notif.clearOutbox(); ledger.setStore(null);
 });
+
+// Stub every dependency create() touches; returns the array of payloads written.
+function stubCreate({ existingForDate = false, shiftStart = '16:30', monthCount = 0 } = {}) {
+  payrollSettings.getResolved = async () => ({ lateLogin: { maxPerMonth: 3, backdatedDays: 30, allowFuture: false, attendanceMode: 'late_present' } });
+  const created = [];
+  d365.getByIdOptional = async (entity) => (entity === EMP
+    ? { hr_hremployeeid: 'E1', hr_shiftstarttime: shiftStart, hr_email: 'v@crmonce.com', hr_hremployee1: 'Vishwesh', hr_employeeid: 'EMP1039' } : {});
+  d365.getList = async (entity, opts) => {
+    const flt = String(opts?.filter || '');
+    if (entity === LATE && /ne 'cancelled'/.test(flt)) return { data: existingForDate ? [{ hr_lateloginid: 'X', hr_status: 'submitted' }] : [] };  // duplicate check
+    if (entity === LATE) return { data: Array.from({ length: monthCount }, () => ({ hr_status: 'submitted' })) };                                      // monthlyCount
+    if (entity === EMP) return { data: [{ hr_email: 'hr@crmonce.com' }] };                                                                            // hrEmails
+    return { data: [] };
+  };
+  d365.create = async (_e, payload) => { created.push(payload); return { hr_lateloginid: 'NEW1' }; };
+  return created;
+}
+const TODAY = new Date().toISOString().slice(0, 10);
 
 // ── Templates (pure, no network) ────────────────────────────────────────────
 test('lateLoginInfo template: Shift Start / Late Login labels, hours+minutes late-by, no buttons', () => {
@@ -69,6 +89,50 @@ test('lateLoginInfo template: Shift Start / Late Login labels, hours+minutes lat
   assert.match(html, /Bank work/);                   // reason (full)
   assert.match(html, /No approval is required/i);
   assert.strictEqual(hasButtons(html), false);       // NO approve/reject
+});
+
+// ── create(): duplicate prevention, time validation, status, AM/PM ──────────
+test('duplicate: an existing active Late Login for the same employee+date is rejected (409)', async () => {
+  stubCreate({ existingForDate: true });
+  await assert.rejects(
+    () => lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, expectedTime: '16:30', actualTime: '18:30', reason: 'x' }),
+    (e) => e.status === 409 && /already exists for this date/i.test(e.message),
+  );
+});
+
+test('different employee, same date → allowed (duplicate guard is per employee)', async () => {
+  const created = stubCreate({ existingForDate: false });   // no record for THIS employee
+  const r = await lateLogin.create({ employeeId: 'E2', employeeName: 'Other', date: TODAY, expectedTime: '16:30', actualTime: '18:30', reason: 'x' });
+  assert.strictEqual(r.record.status, 'submitted');
+  assert.strictEqual(created.length, 1);
+});
+
+test('same employee, different date → allowed', async () => {
+  const created = stubCreate({ existingForDate: false });
+  await lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, expectedTime: '16:30', actualTime: '18:30', reason: 'x' });
+  assert.strictEqual(created.length, 1);
+});
+
+test('Late Login BEFORE shift start → 400 "must be later than Shift Start Time"', async () => {
+  stubCreate({ shiftStart: '16:30' });   // shift 4:30 PM
+  await assert.rejects(
+    () => lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, expectedTime: '16:30', actualTime: '11:30', reason: 'x' }),  // 11:30 AM
+    (e) => e.status === 400 && /later than Shift Start Time/i.test(e.message),
+  );
+});
+
+test('Late Login AFTER shift start → allowed; status=submitted; shift start is server-resolved', async () => {
+  const created = stubCreate({ shiftStart: '16:30' });
+  const r = await lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, expectedTime: 'ignored', actualTime: '18:30', reason: 'x' });
+  assert.strictEqual(r.record.status, 'submitted');
+  assert.strictEqual(created[0].hr_expectedtime, '16:30', 'shift start comes from the shift config, not the client');
+  assert.ok(!('hr_managerstatus' in created[0]) || created[0].hr_managerstatus === '', 'no approval state');
+});
+
+test('AM/PM preserved: a 11:30 PM late login is stored as 23:30 (not 11:30)', async () => {
+  const created = stubCreate({ shiftStart: '16:30' });
+  await lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, expectedTime: '16:30', actualTime: '23:30', reason: 'x' });
+  assert.strictEqual(created[0].hr_actualtime, '23:30', 'PM value kept as 24h 23:30');
 });
 
 test('resolveShiftStart: reads the employee shift start (Attendance source of truth), never hardcoded 09:00', async () => {

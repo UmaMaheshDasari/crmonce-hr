@@ -151,7 +151,10 @@ async function emailLateLoginInfoToHR({ employeeId, employeeName, date, expected
     // Show the HUMAN Employee ID (EMP1039), never the Dataverse GUID passed in as employeeId.
     employeeName: employeeName || emp?.hr_hremployee1 || '', employeeId: requestNotify.employeeIdOf(emp) || '—',
     department: emp?.hr_department || '', date: time.fmtDate(date),
-    expectedTime, actualTime, lateBy: lateByMinutes(expectedTime, actualTime), reason, remarks,
+    // Display 12-hour times (4:30 PM / 11:30 PM) — AM/PM preserved from the stored 24h
+    // value; Late By is computed from the raw 24h times.
+    expectedTime: time.to12h(expectedTime) || expectedTime, actualTime: time.to12h(actualTime) || actualTime,
+    lateBy: lateByMinutes(expectedTime, actualTime), reason, remarks,
   });
   const r = await notif.sendEmail(to, subject, html, { from: s.sender, saveToSentItems: false, meta: { type: 'late_login_info' } });
   global.logger?.[r?.success ? 'info' : 'error'](`[late-login] HR info email FROM ${s.sender} → ${to.join(',')}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
@@ -226,6 +229,16 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   const earliest = addDays(t, -(Number(p.backdatedDays) || 30));
   if (ds < earliest) { const e = new Error(`You can submit Late Login requests only within the previous ${Number(p.backdatedDays) || 30} days.`); e.status = 400; throw e; }
 
+  // DUPLICATE GUARD (backend-enforced, never rely on the UI): one ACTIVE Late Login per
+  // employee + date. Any existing non-cancelled record for the same day blocks a new one.
+  try {
+    const { data: dup } = await d365.getList(LATE, {
+      select: 'hr_lateloginid,hr_status',
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(ds)}' and hr_status ne 'cancelled'`, top: 1,
+    });
+    if (dup && dup[0]) { const e = new Error('A Late Login request already exists for this date.'); e.status = 409; throw e; }
+  } catch (err) { if (err.status) throw err; /* lookup failure (e.g. table not provisioned) must not block a legit submit */ }
+
   const month = ds.slice(0, 7);
   const priorCount = await monthlyCount(employeeId, month);
   const warning = (priorCount + 1) > Number(p.maxPerMonth || 0)
@@ -236,6 +249,12 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   // client — the form shows it read-only, but never trust a submitted value. Fall back
   // to the client value only if the lookup fails.
   const shiftStart = (await resolveShiftStart(employeeId)) || String(expectedTime || '');
+  // Late Login Time must be LATER than Shift Start (else Late By is negative / "-"). This
+  // also catches an AM/PM mistake (e.g. 11:30 AM entered against a 4:30 PM shift).
+  const sMin = toMin(shiftStart), aMin = toMin(actualTime);
+  if (sMin != null && aMin != null && aMin <= sMin) {
+    const e = new Error('Late Login Time must be later than Shift Start Time.'); e.status = 400; throw e;
+  }
   // Late Login is an INFORMATION record — NOT an approval workflow. New records are
   // always 'submitted' (never pending/approved/rejected). The daily verification job
   // later moves them to 'completed' or 'absent_leave_required'. Attachment is not
