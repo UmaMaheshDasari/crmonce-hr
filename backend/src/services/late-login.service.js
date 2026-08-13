@@ -12,6 +12,8 @@
 const d365 = require('./d365.service');
 const payrollSettings = require('./payroll-settings.service');
 const { toValue } = require('./picklist');
+const requestNotify = require('./request-notify.service');
+const { LATE_ENTRY_GRACE_MIN } = require('./attendance.util');   // fixed 5-minute grace
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
 
@@ -106,6 +108,43 @@ async function hrEmails() {
 
 const REQ_LABEL = { late_login: 'Late Login', early_logout: 'Early Logout', wfh: 'Work From Home', permission: 'Permission', on_duty: 'On Duty', client_visit: 'Client Visit', travel: 'Business Travel' };
 
+// "Late By" from the submitted Expected vs Actual login times (minutes). null when a
+// time is unparseable (then we DON'T suppress the email — fail open to sending).
+const toMin = (hhmm) => { const m = String(hhmm || '').match(/(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+function lateByMinutes(expectedTime, actualTime) {
+  const e = toMin(expectedTime), a = toMin(actualTime);
+  if (e == null || a == null) return null;
+  return a - e;   // >0 = late, <=0 = on time / early
+}
+const minsLabel = (n) => (n == null ? '—' : `${n} minute${Math.abs(n) === 1 ? '' : 's'}`);
+
+/**
+ * Approval recipients for a Late Login request, mirroring Leave's approver + CC model:
+ *   approver = the employee's reporting manager (gets Approve/Reject);
+ *   cc       = active HR / Super Admin (authorized role → they ALSO get Approve/Reject).
+ * If the employee has no manager (or no manager mailbox), the first HR becomes the
+ * approver. The approver is never also CC'd.
+ */
+async function resolveApprovalRecipients(employeeId) {
+  let approver = null;
+  try {
+    const emp = await d365.getByIdOptional(EMP, employeeId, { select: 'hr_hremployeeid', optionalSelect: '_hr_manager_value' });
+    const mid = emp?._hr_manager_value;
+    if (mid) {
+      const m = await d365.getById(EMP, mid, { select: 'hr_hremployeeid,hr_hremployee1,hr_email' });
+      if (m?.hr_email) approver = { id: m.hr_hremployeeid, name: m.hr_hremployee1, email: m.hr_email };
+    }
+  } catch (_) { /* manager optional */ }
+
+  // getApprovers() returns active HR + Super Admin (all authorized) → tag the role so
+  // the shared CC logic renders Approve/Reject for them.
+  const hrs = await requestNotify.getApprovers().catch(() => []);
+  let cc = (hrs || []).map(h => ({ id: h.hr_hremployeeid, name: h.hr_hremployee1, email: h.hr_email, role: 'hr_manager' }));
+  if (!approver && cc.length) { const first = cc.shift(); approver = { id: first.id, name: first.name, email: first.email }; }
+  if (approver) cc = cc.filter(c => c.id !== approver.id && String(c.email || '').toLowerCase() !== String(approver.email || '').toLowerCase());
+  return { approver, cc };
+}
+
 /**
  * Create a request. Returns { record, warning }. Validates the date window
  * (backdated ≤ setting; future only when allowed). `warning` is set when the
@@ -152,11 +191,37 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   audit({ category: 'Attendance', type: 'latelogin_submitted', title: `${label} submitted`, name, meta: { date: ds, requestType, ip, exceeded: !!warning } });
   if (!autoApprove) {
     broadcast('latelogin:pending', { employeeName: name, date: ds });
-    // Email manager + HR (spec §6).
-    const [mgr, hrs] = await Promise.all([managerEmail(employeeId), hrEmails()]);
-    const recipients = [...new Set([mgr, ...hrs].filter(Boolean))];
-    const html = `<p>${name || 'An employee'} submitted a ${label} request.</p><p><b>Date:</b> ${ds}<br/><b>Expected:</b> ${expectedTime || '—'} · <b>Actual:</b> ${actualTime || '—'}<br/><b>Reason:</b> ${reason || '—'}</p>${warning ? `<p style="color:#b45309">${warning}</p>` : ''}<p>Please review in the HR portal.</p>`;
-    for (const to of recipients) await sendEmail(to, `${label} Request Submitted`, html);
+    // Professional approval email — SAME design + secure Approve/Reject flow as the
+    // Leave approval email (To = reporting manager; CC = HR/Super Admin who, being
+    // authorized, also get Approve/Reject). Only sent when the employee is late beyond
+    // the fixed 5-minute grace (0–5 min → not a Late Login email). Fire-and-forget so
+    // mail issues never block or fail the submission.
+    const lateBy = lateByMinutes(expectedTime, actualTime);
+    if (lateBy == null || lateBy > LATE_ENTRY_GRACE_MIN) {
+      (async () => {
+        try {
+          const emp = await getEmployee(employeeId);
+          const { approver, cc } = await resolveApprovalRecipients(employeeId);
+          if (!approver) { global.logger?.warn?.('[late-login] approval email skipped: no manager/HR mailbox'); return; }
+          await requestNotify.notifyNewRequest({
+            type: 'late_login',
+            recordId: created.hr_lateloginid,
+            actor: { id: employeeId, name: name || emp?.hr_hremployee1 || '', email: emp?.hr_email || '' },
+            details: [
+              ['Date', ds],
+              ['Expected Login Time', expectedTime || '—'],
+              ['Actual Login Time', actualTime || '—'],
+              ['Late By', minsLabel(lateBy)],
+              ['Reason', reason || '—'],
+            ].concat(warning ? [['Monthly Limit', warning]] : []),
+            applyTime: new Date().toISOString(),
+            approver, cc, status: 'Pending',
+          });
+        } catch (e) { global.logger?.warn?.(`[late-login] approval email skipped: ${e.message}`); }
+      })();
+    } else {
+      global.logger?.info?.(`[late-login] within ${LATE_ENTRY_GRACE_MIN}-min grace (late ${lateBy}) — no approval email for ${employeeId} on ${ds}`);
+    }
   } else {
     notifyUser(employeeId, 'latelogin:approved', { date: ds });
   }
@@ -243,4 +308,4 @@ async function approvedSet({ from, to, employeeId } = {}) {
   } catch { return new Set(); }
 }
 
-module.exports = { list, getRaw, shape, create, managerDecide, hrDecide, cancel, monthlyCount, summary, approvedOn, approvedSet, policy, REQ_LABEL };
+module.exports = { list, getRaw, shape, create, managerDecide, hrDecide, cancel, monthlyCount, summary, approvedOn, approvedSet, policy, REQ_LABEL, lateByMinutes, resolveApprovalRecipients };

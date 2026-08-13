@@ -25,6 +25,7 @@ const LEAVE = d365.constructor.entities.leave;
 
 const TYPE_CFG = {
   leave:           { title: 'Leave' },
+  late_login:      { title: 'Late Login' },
   late_permission: { title: 'Late Permission' },
   missing_punch:   { title: 'Missing Punch' },
 };
@@ -110,7 +111,7 @@ async function getLeaveBalance(employeeId) {
  * New request → email the SELECTED approver (buttons) + optional CC (informational).
  * In-app notification goes only to the approver. Call AFTER a successful create.
  */
-async function notifyNewRequest({ type, recordId, actor, details, applyTime, approver, cc = [] }) {
+async function notifyNewRequest({ type, recordId, actor, details, applyTime, approver, cc = [], status }) {
   try {
     const cfg = TYPE_CFG[type] || { title: type };
     if (approver?.id) {
@@ -135,7 +136,7 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     //    The applicant is the SENDER, never a recipient, and saveToSentItems is
     //    false so NO copy of this buttoned email reaches the applicant's mailbox.
     const a = T.newRequestApprover({
-      moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: approver.name, approveUrl, rejectUrl,
+      moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: approver.name, approveUrl, rejectUrl, status,
     });
     const ra = await sendEmail(approver.email, a.subject, a.html, {
       from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_approver` },
@@ -157,7 +158,7 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
         // Same signed Approve/Reject links as the approver — the backend still validates
         // the logged-in user's role/approver identity before any write (defence in depth).
         const am = T.newRequestApprover({
-          moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: c.name, approveUrl, rejectUrl,
+          moduleTitle: cfg.title, employee, rows: details, applyTime, approverName: c.name, approveUrl, rejectUrl, status,
         });
         const rc = await sendEmail(c.email, am.subject, am.html, {
           from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc_approver` },
@@ -166,7 +167,7 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
           `${cfg.title} CC (actionable, ${c.role}) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
       } else {
         const cm = T.newRequestCc({
-          moduleTitle: cfg.title, employee, rows: details, applyTime, recipientName: c.name, approverName: approver.name,
+          moduleTitle: cfg.title, employee, rows: details, applyTime, recipientName: c.name, approverName: approver.name, status,
         });
         const rc = await sendEmail(c.email, cm.subject, cm.html, {
           from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc` },
