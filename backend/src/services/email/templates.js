@@ -321,6 +321,48 @@ function lateLoginNotice(d) {
 }
 
 /**
+ * Late Login INFORMATION email to HR (manual Late Login Request — NOT the automatic
+ * Late Entry notice above, and NOT an approval). No Approve/Reject, no link, no token.
+ * d: { employeeName, employeeId, department, date, expectedTime, actualTime, lateBy, reason, remarks }
+ */
+function lateLoginInfo(d) {
+  const subject = `Late Login Information - ${d.employeeName} - ${d.date}`;
+  const lateByTxt = (d.lateBy != null && Number.isFinite(Number(d.lateBy)))
+    ? `${Number(d.lateBy)} minute${Math.abs(Number(d.lateBy)) === 1 ? '' : 's'}` : '—';
+  const content =
+    `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear HR,</p>` +
+    `<p style="margin:0 0 4px;color:#374151;"><strong>${esc(d.employeeName)}</strong> has submitted a Late Login entry.</p>` +
+    summaryCard('Late Login Details', [
+      ['Employee', esc(d.employeeName)],
+      ['Employee ID', esc(d.employeeId)],
+      ['Department', esc(d.department || '—')],
+      ['Date', esc(d.date)],
+      ['Expected Login Time', esc(d.expectedTime || '—')],
+      ['Actual Login Time', esc(d.actualTime || '—')],
+      ['Late By', esc(lateByTxt)],
+      ['Reason', longText(d.reason || '—')],
+      ['Remarks', longText(d.remarks || '—')],
+    ]) +
+    banner('This is an informational notification only. No approval is required.');
+  return { subject, html: layout({ title: subject, preheader: `Late Login information — ${d.employeeName}`, content }) };
+}
+
+/**
+ * "Leave Request Required" email to the EMPLOYEE — sent by the daily verification job
+ * when a Late Login date arrives with NO recorded check-in. Informational + guidance
+ * (no buttons/approval). d: { employeeName, date }
+ */
+function lateLoginLeaveRequired(d) {
+  const subject = `Leave Request Required - ${d.date}`;
+  const content =
+    greet(d.employeeName) +
+    `<p style="margin:0 0 8px;font-size:14px;color:#374151;line-height:1.6;">You submitted a Late Login request for <strong>${esc(d.date)}</strong>. Our attendance system shows that <strong>no Check-In was recorded</strong> for you on this date.</p>` +
+    `<p style="margin:0 0 8px;font-size:14px;color:#374151;line-height:1.6;">If you were absent on this day, please submit a <strong>Leave Request</strong> in the HR System to regularize your attendance.</p>` +
+    banner('Please apply for Leave to regularize your attendance for this date.', 'warn');
+  return { subject, html: layout({ title: subject, preheader: `No check-in recorded on ${d.date} — please apply for Leave`, content }) };
+}
+
+/**
  * New performance goal assigned → email to the employee.
  * d: { employeeName, goalTitle, description, quarter, financialYear, priority,
  *      weightage, dueDate, assignedBy, assignedOn, viewUrl }
@@ -353,6 +395,6 @@ module.exports = {
   statusBadge, button, profileCard, summaryCard, banner, layout,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
-  missingPunch, lateLoginNotice, goalAssigned,
+  missingPunch, lateLoginNotice, lateLoginInfo, lateLoginLeaveRequired, goalAssigned,
   _esc: esc, _longText: longText,
 };

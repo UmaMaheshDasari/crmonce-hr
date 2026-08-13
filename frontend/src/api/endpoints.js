@@ -110,9 +110,6 @@ export const lateLoginApi = {
   policy: () => api.get('/attendance/late-login/policy'),
   summary: (params) => api.get('/attendance/late-login/summary', { params }),
   create: (data) => api.post('/attendance/late-login', data),
-  managerDecide: (id, action, remarks) => api.patch(`/attendance/late-login/${id}/manager`, { action, remarks }),
-  hrDecide: (id, action, remarks) => api.patch(`/attendance/late-login/${id}/hr`, { action, remarks }),
-  emailAction: (id, action, token, remarks) => api.post(`/attendance/late-login/${id}/email-action`, { action, token, remarks }),
   cancel: (id) => api.patch(`/attendance/late-login/${id}/cancel`),
   export: (params) => api.get('/attendance/late-login/export', { params, responseType: 'blob' }),
 };

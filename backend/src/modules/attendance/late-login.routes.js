@@ -11,12 +11,9 @@ const express = require('express');
 const router = express.Router();
 const ExcelJS = require('exceljs');
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
 const lateLogin = require('../../services/late-login.service');
 const payrollSettings = require('../../services/payroll-settings.service');
 const { ensureLateLoginTable } = require('../../services/provision-late-login');
-const { verifyApprovalToken } = require('../../services/approval-token');
-const requestNotify = require('../../services/request-notify.service');
 
 const EMP = d365.constructor.entities.employee;
 const HR = ['super_admin', 'hr_manager'];
@@ -130,76 +127,17 @@ router.post('/', async (req, res, next) => {
   } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
-// PATCH /:id/manager  — reporting manager (or HR) decision.
-router.patch('/:id/manager', async (req, res, next) => {
-  try {
-    const action = req.body?.action === 'rejected' ? 'rejected' : 'approved';
-    res.json(await lateLogin.managerDecide(req.params.id, action, req.user, req.body?.remarks));
-  } catch (err) { next(err); }
-});
+// NOTE: Late Login is now an INFORMATION record, NOT an approval workflow. The former
+// manager/HR decision endpoints (PATCH /:id/manager, /:id/hr) and the email-action
+// Approve/Reject endpoint have been REMOVED. Employees edit/delete their own record via
+// the shared Request Lifecycle (/api/requests/late_login/:id/...). Cancel remains below.
 
-// PATCH /:id/hr  — HR final decision.
-router.patch('/:id/hr', requireRole(...HR), async (req, res, next) => {
-  try {
-    const action = req.body?.action === 'rejected' ? 'rejected' : 'approved';
-    res.json(await lateLogin.hrDecide(req.params.id, action, req.user, req.body?.remarks));
-  } catch (err) { next(err); }
-});
-
-// POST /:id/email-action — Approve/Reject from the email button (secure).
-// Security (backend is the only source of truth — the button/URL never grants access):
-//   1. authenticateToken (mounted globally) → a valid login JWT is required
-//   2. verifyApprovalToken → the emailed link is authentic and NOT expired
-//   3. token {type,id} must match the URL → no tampering across requests
-//   4. authorization: the employee's reporting manager (the approver) OR any HR/Super
-//      Admin may act — the SAME rule the email used to decide who got buttons. A normal
-//      CC/employee is rejected (403). CC membership alone grants nothing.
-//   5. status must still be 'pending' → blocks duplicate approvals / replay, and the
-//      response reflects the current status.
-router.post('/:id/email-action', async (req, res, next) => {
-  try {
-    const { action, token, remarks } = req.body || {};
-    if (!token) return res.status(400).json({ error: 'Approval token required' });
-    let claim;
-    try { claim = verifyApprovalToken(token); }
-    catch (_) { return res.status(401).json({ error: 'Approval link is invalid or has expired' }); }
-    if (claim.type !== 'late_login' || claim.id !== req.params.id) {
-      return res.status(400).json({ error: 'Approval link does not match this request' });
-    }
-    const decision = action || claim.action;
-    if (!['approved', 'rejected'].includes(decision)) return res.status(400).json({ error: 'Invalid action' });
-
-    const row = await lateLogin.getRaw(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Request not found' });
-
-    // The employee's reporting manager is the request's approver.
-    let managerId = null;
-    try {
-      const emp = await d365.getByIdOptional(EMP, row.hr_employeeid, { select: 'hr_hremployeeid', optionalSelect: '_hr_manager_value' });
-      managerId = emp?._hr_manager_value || null;
-    } catch (_) { /* manager optional */ }
-    if (!requestNotify.canActOnApproval({ role: req.user.role, userId: req.user.id, approverId: managerId })) {
-      return res.status(403).json({ error: 'You are not authorized to approve this request.' });
-    }
-    if (String(row.hr_status) !== 'pending') {
-      return res.status(409).json({ error: `This request is already ${row.hr_status}.` });
-    }
-
-    // Preserve the existing two-step: HR/Super Admin finalize; a non-HR reporting
-    // manager performs the manager step. (Auto-approve requests never reach here.)
-    const result = isHR(req.user)
-      ? await lateLogin.hrDecide(req.params.id, decision, req.user, remarks)
-      : await lateLogin.managerDecide(req.params.id, decision, req.user, remarks);
-    res.json(result);
-  } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
-});
-
-// PATCH /:id/cancel  — employee cancels their own pending request (or HR).
+// PATCH /:id/cancel  — employee cancels their own submitted request (or HR).
 router.patch('/:id/cancel', async (req, res, next) => {
   try {
     const row = await lateLogin.getRaw(req.params.id);
     if (!isHR(req.user) && row.hr_employeeid !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-    if (['approved', 'rejected', 'cancelled'].includes(row.hr_status)) return res.status(400).json({ error: `Cannot cancel a ${row.hr_status} request.` });
+    if (['cancelled', 'completed', 'absent_leave_required'].includes(row.hr_status)) return res.status(400).json({ error: `Cannot cancel a ${row.hr_status} request.` });
     res.json(await lateLogin.cancel(req.params.id, req.user));
   } catch (err) { next(err); }
 });

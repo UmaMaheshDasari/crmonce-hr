@@ -12,19 +12,25 @@
 const d365 = require('./d365.service');
 const payrollSettings = require('./payroll-settings.service');
 const { toValue } = require('./picklist');
-const requestNotify = require('./request-notify.service');
-const { LATE_ENTRY_GRACE_MIN } = require('./attendance.util');   // fixed 5-minute grace
+const requestNotify = require('./request-notify.service');       // getApprovers() → HR recipients (reused)
+const { punchesFromRecord } = require('./attendance.util');       // check-in verification
+const { resolveSender } = require('./email/sender');              // dynamic employee mailbox (reused)
+const ledger = require('./notification-ledger.service');          // one-email idempotency (reused)
+const time = require('./time.util');                             // company-timezone (IST) "today"
+const T = require('./email/templates');                          // shared HTML email templates
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
 
 const LATE = d365.constructor.entities.lateLogin;
 const EMP = d365.constructor.entities.employee;
+const ATT = d365.constructor.entities.attendance;
+const ATT_PUNCH_SELECT = 'hr_hrattendanceid,hr_date,hr_allpunches,hr_intime,hr_outtime,hr_punchcount,_hr_hremployee_value';
 
 const audit = (p) => { try { activity?.record?.(p); } catch (_) {} };
 const notifyUser = (id, ev, p) => { try { notif?.notifyUser?.(id, ev, p); } catch (_) {} };
 const broadcast = (ev, p) => { try { notif?.broadcast?.(ev, p); } catch (_) {} };
 const esc = (v) => String(v ?? '').replace(/'/g, "''");
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => time.istDateStr();   // "today" in the company timezone (Asia/Kolkata), not raw UTC
 const addDays = (dateStr, days) => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + Number(days)); return d.toISOString().slice(0, 10); };
 
 // New columns (requestType/attachmentId/ip) are optional so reads degrade until provisioned.
@@ -86,16 +92,7 @@ async function monthlyCount(employeeId, month) {
 }
 
 // ── email helpers (best-effort; never throw / block) ──────────────────────────
-async function sendEmail(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html); } catch (e) { global.logger?.warn?.(`[late-login] email skipped: ${e.message}`); } }
 async function getEmployee(id) { try { return await d365.getByIdOptional(EMP, id, { select: 'hr_email,hr_hremployee1,hr_department', optionalSelect: '_hr_manager_value' }); } catch { return null; } }
-async function managerEmail(employeeId) {
-  try {
-    const emp = await d365.getByIdOptional(EMP, employeeId, { select: 'hr_hremployeeid', optionalSelect: '_hr_manager_value' });
-    if (!emp?._hr_manager_value) return null;
-    const mgr = await d365.getById(EMP, emp._hr_manager_value, { select: 'hr_email' });
-    return mgr?.hr_email || null;
-  } catch { return null; }
-}
 async function hrEmails() {
   try {
     const { data } = await d365.getList(EMP, {
@@ -116,33 +113,88 @@ function lateByMinutes(expectedTime, actualTime) {
   if (e == null || a == null) return null;
   return a - e;   // >0 = late, <=0 = on time / early
 }
-const minsLabel = (n) => (n == null ? '—' : `${n} minute${Math.abs(n) === 1 ? '' : 's'}`);
 
 /**
- * Approval recipients for a Late Login request, mirroring Leave's approver + CC model:
- *   approver = the employee's reporting manager (gets Approve/Reject);
- *   cc       = active HR / Super Admin (authorized role → they ALSO get Approve/Reject).
- * If the employee has no manager (or no manager mailbox), the first HR becomes the
- * approver. The approver is never also CC'd.
+ * INFORMATION-ONLY email to HR after a Late Login is submitted (NO approval — no
+ * Approve/Reject, no token, no manager). Sent FROM the submitting employee's own
+ * company mailbox (dynamic sender, reused from Leave); TO = configured HR recipients.
+ * Best-effort: a bad/absent employee mailbox is logged and skipped, never failing the
+ * submission (the record is already saved by the time this runs).
  */
-async function resolveApprovalRecipients(employeeId) {
-  let approver = null;
-  try {
-    const emp = await d365.getByIdOptional(EMP, employeeId, { select: 'hr_hremployeeid', optionalSelect: '_hr_manager_value' });
-    const mid = emp?._hr_manager_value;
-    if (mid) {
-      const m = await d365.getById(EMP, mid, { select: 'hr_hremployeeid,hr_hremployee1,hr_email' });
-      if (m?.hr_email) approver = { id: m.hr_hremployeeid, name: m.hr_hremployee1, email: m.hr_email };
-    }
-  } catch (_) { /* manager optional */ }
+async function emailLateLoginInfoToHR({ employeeId, employeeName, date, expectedTime, actualTime, reason, remarks }) {
+  const [emp, hrs] = await Promise.all([getEmployee(employeeId), hrEmails()]);
+  const to = (hrs || []).filter(Boolean);
+  if (!to.length) { global.logger?.warn?.('[late-login] HR info email skipped: no HR recipients'); return; }
 
-  // getApprovers() returns active HR + Super Admin (all authorized) → tag the role so
-  // the shared CC logic renders Approve/Reject for them.
-  const hrs = await requestNotify.getApprovers().catch(() => []);
-  let cc = (hrs || []).map(h => ({ id: h.hr_hremployeeid, name: h.hr_hremployee1, email: h.hr_email, role: 'hr_manager' }));
-  if (!approver && cc.length) { const first = cc.shift(); approver = { id: first.id, name: first.name, email: first.email }; }
-  if (approver) cc = cc.filter(c => c.id !== approver.id && String(c.email || '').toLowerCase() !== String(approver.email || '').toLowerCase());
-  return { approver, cc };
+  // Sender = the employee's OWN company mailbox (never a generic HR mailbox). If it is
+  // missing/external, log and skip — Leave uses the exact same rule.
+  const s = resolveSender({ email: emp?.hr_email, label: 'Employee' });
+  if (!s.ok) { global.logger?.warn?.(`[late-login] HR info email skipped: ${s.reason}`); return; }
+  const v = notif?.verifyMailbox ? await notif.verifyMailbox(s.sender) : { ok: true };
+  if (!v.ok) { global.logger?.warn?.(`[late-login] HR info email skipped: ${v.reason}`); return; }
+
+  const { subject, html } = T.lateLoginInfo({
+    employeeName: employeeName || emp?.hr_hremployee1 || '', employeeId,
+    department: emp?.hr_department || '', date: time.fmtDate(date),
+    expectedTime, actualTime, lateBy: lateByMinutes(expectedTime, actualTime), reason, remarks,
+  });
+  const r = await notif.sendEmail(to, subject, html, { from: s.sender, saveToSentItems: false, meta: { type: 'late_login_info' } });
+  global.logger?.[r?.success ? 'info' : 'error'](`[late-login] HR info email FROM ${s.sender} → ${to.join(',')}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+}
+
+/** Does the employee have ANY punch (a valid Check-In) on `date`? Reads attendance in
+ *  the company timezone. Best-effort → false on any read failure (never blocks). */
+async function hasCheckIn(employeeId, date) {
+  try {
+    const ds = String(date).slice(0, 10);
+    const { data } = await d365.getList(ATT, {
+      select: ATT_PUNCH_SELECT,
+      filter: `_hr_hremployee_value eq '${esc(employeeId)}' and hr_date eq ${ds}`, top: 5,
+    });
+    return (data || []).some(r => punchesFromRecord(r).length > 0);
+  } catch (e) { global.logger?.warn?.(`[late-login] check-in lookup failed for ${employeeId}/${date}: ${e.message}`); return false; }
+}
+
+/** "Leave Request Required" email to the EMPLOYEE — ONE per (employee, date) via the
+ *  notification ledger, so re-runs / multiple PM2 workers / restarts never duplicate it. */
+async function emailLeaveRequired(row) {
+  const emp = await getEmployee(row.employeeId);
+  if (!emp?.hr_email || requestNotify.isPlaceholderEmail(emp.hr_email)) { global.logger?.warn?.(`[late-login] leave-required email skipped: no employee mailbox (${row.employeeId})`); return { skipped: true }; }
+  const { subject, html } = T.lateLoginLeaveRequired({ employeeName: emp.hr_hremployee1 || row.employeeName || '', date: time.fmtDate(row.date) });
+  return ledger.sendOnce({
+    employeeId: row.employeeId, date: row.date, type: 'LATE_LOGIN_LEAVE_REQUIRED',
+    to: emp.hr_email, subject, html, entity: 'attendance',
+  });
+}
+
+/**
+ * Daily attendance verification for Late Login requests dated TODAY (company TZ).
+ * For each of today's records not already finalised: if a valid Check-In exists →
+ * mark 'completed'; otherwise → mark 'absent_leave_required' and email the employee to
+ * apply Leave (deduped by the ledger). Safe under PM2 (the scheduler runs on one
+ * instance) AND idempotent (the ledger + status guard) so a re-run never re-emails.
+ */
+async function verifyTodaysAttendance() {
+  const ds = today();
+  let rows = [];
+  try { rows = await list({ from: ds, to: ds }); }
+  catch (e) { global.logger?.error?.(`[late-login] daily verify read failed: ${e.message}`); return { processed: 0, attended: 0, absent: 0 }; }
+
+  let attended = 0, absent = 0;
+  for (const r of rows) {
+    if (['cancelled', 'completed', 'absent_leave_required', 'rejected'].includes(r.status)) continue;   // already handled
+    const present = await hasCheckIn(r.employeeId, ds);
+    try {
+      if (present) { await d365.update(LATE, r.id, { hr_status: 'completed' }); attended++; }
+      else {
+        await d365.update(LATE, r.id, { hr_status: 'absent_leave_required' });
+        await emailLeaveRequired(r);
+        absent++;
+      }
+    } catch (e) { global.logger?.warn?.(`[late-login] daily verify failed for ${r.id}: ${e.message}`); }
+  }
+  global.logger?.info?.(`[late-login] daily verify ${ds}: ${rows.length} record(s), attended ${attended}, absent ${absent}`);
+  return { processed: rows.length, attended, absent };
 }
 
 /**
@@ -162,19 +214,21 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   const month = ds.slice(0, 7);
   const priorCount = await monthlyCount(employeeId, month);
   const warning = (priorCount + 1) > Number(p.maxPerMonth || 0)
-    ? `This is Late Login #${priorCount + 1} this month, exceeding the limit of ${p.maxPerMonth}. HR approval is required.`
+    ? `This is Late Login #${priorCount + 1} this month, exceeding the limit of ${p.maxPerMonth}.`
     : '';
   const name = employeeName || '';
-  const autoApprove = !p.approvalRequired;
+  // Late Login is an INFORMATION record — NOT an approval workflow. New records are
+  // always 'submitted' (never pending/approved/rejected). The daily verification job
+  // later moves them to 'completed' or 'absent_leave_required'. Attachment is not
+  // stored for Late Login (the column stays for backward compatibility).
   let payload = {
     hr_name: `${name || employeeId} · ${REQ_LABEL[requestType] || 'Late Login'} · ${ds}`.slice(0, 250),
     hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,
     hr_expectedtime: String(expectedTime || ''), hr_actualtime: String(actualTime || ''),
     hr_reason: reason || '', hr_remarks: remarks || '',
-    hr_status: autoApprove ? 'approved' : 'pending', hr_managerstatus: autoApprove ? 'approved' : 'pending',
+    hr_status: 'submitted', hr_managerstatus: '',
     hr_createdby: createdBy || '', hr_requesttype: requestType || 'late_login',
-    hr_attachmentid: attachmentId || '', hr_ip: ip || '',
-    ...(autoApprove ? { hr_approvedby: 'Auto', hr_approveddate: new Date().toISOString() } : {}),
+    hr_ip: ip || '',
   };
   // Resilient create — strip a not-yet-provisioned optional column and retry.
   let created;
@@ -188,72 +242,18 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
 
   const label = REQ_LABEL[requestType] || 'Late Login';
   notifyUser(employeeId, 'latelogin:submitted', { date: ds });
+  broadcast('latelogin:submitted', { employeeName: name, date: ds });
   audit({ category: 'Attendance', type: 'latelogin_submitted', title: `${label} submitted`, name, meta: { date: ds, requestType, ip, exceeded: !!warning } });
-  if (!autoApprove) {
-    broadcast('latelogin:pending', { employeeName: name, date: ds });
-    // Professional approval email — SAME design + secure Approve/Reject flow as the
-    // Leave approval email (To = reporting manager; CC = HR/Super Admin who, being
-    // authorized, also get Approve/Reject). Only sent when the employee is late beyond
-    // the fixed 5-minute grace (0–5 min → not a Late Login email). Fire-and-forget so
-    // mail issues never block or fail the submission.
-    const lateBy = lateByMinutes(expectedTime, actualTime);
-    if (lateBy == null || lateBy > LATE_ENTRY_GRACE_MIN) {
-      (async () => {
-        try {
-          const emp = await getEmployee(employeeId);
-          const { approver, cc } = await resolveApprovalRecipients(employeeId);
-          if (!approver) { global.logger?.warn?.('[late-login] approval email skipped: no manager/HR mailbox'); return; }
-          await requestNotify.notifyNewRequest({
-            type: 'late_login',
-            recordId: created.hr_lateloginid,
-            actor: { id: employeeId, name: name || emp?.hr_hremployee1 || '', email: emp?.hr_email || '' },
-            details: [
-              ['Date', ds],
-              ['Expected Login Time', expectedTime || '—'],
-              ['Actual Login Time', actualTime || '—'],
-              ['Late By', minsLabel(lateBy)],
-              ['Reason', reason || '—'],
-            ].concat(warning ? [['Monthly Limit', warning]] : []),
-            applyTime: new Date().toISOString(),
-            approver, cc, status: 'Pending',
-          });
-        } catch (e) { global.logger?.warn?.(`[late-login] approval email skipped: ${e.message}`); }
-      })();
-    } else {
-      global.logger?.info?.(`[late-login] within ${LATE_ENTRY_GRACE_MIN}-min grace (late ${lateBy}) — no approval email for ${employeeId} on ${ds}`);
-    }
-  } else {
-    notifyUser(employeeId, 'latelogin:approved', { date: ds });
-  }
+
+  // INFORMATION-ONLY email to HR (from the employee's mailbox). Fire-and-forget: a mail
+  // failure never blocks or fails the submission — the record is already saved.
+  emailLateLoginInfoToHR({ employeeId, employeeName: name, date: ds, expectedTime, actualTime, reason, remarks })
+    .catch(e => global.logger?.warn?.(`[late-login] HR info email error: ${e.message}`));
+
   return { record: shape({ ...payload, hr_lateloginid: created.hr_lateloginid }), warning };
 }
 
-// Manager decision (first step). action = 'approved' | 'rejected'.
-async function managerDecide(id, action, approver, remarks) {
-  const row = await getRaw(id);
-  const patch = { hr_managerstatus: action };
-  if (action === 'rejected') { patch.hr_status = 'rejected'; patch.hr_approvedby = approver?.name || 'Manager'; patch.hr_approveddate = new Date().toISOString(); if (remarks) patch.hr_remarks = remarks; }
-  await d365.update(LATE, id, patch);
-  if (action === 'approved') { broadcast('latelogin:manager_approved', { employeeName: row.hr_employeename, date: row.hr_date }); }
-  else { notifyUser(row.hr_employeeid, 'latelogin:rejected', { date: row.hr_date, by: 'Manager' }); await emailDecision(row, 'rejected'); }
-  audit({ category: 'Attendance', type: `latelogin_manager_${action}`, title: `Late Login ${action} (Manager)`, name: row.hr_employeename, meta: { by: approver?.name } });
-  return shape({ ...row, ...patch });
-}
-
-// HR decision (final step). action = 'approved' | 'rejected'.
-async function hrDecide(id, action, approver, remarks) {
-  const row = await getRaw(id);
-  const patch = { hr_status: action, hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString() };
-  if (action === 'approved') patch.hr_managerstatus = 'approved';
-  if (remarks) patch.hr_remarks = remarks;
-  await d365.update(LATE, id, patch);
-  notifyUser(row.hr_employeeid, `latelogin:${action}`, { date: row.hr_date, by: approver?.name || 'HR' });
-  await emailDecision(row, action);
-  audit({ category: 'Attendance', type: `latelogin_${action}`, title: `Late Login ${action}`, name: row.hr_employeename, meta: { by: approver?.name, approvedDate: patch.hr_approveddate } });
-  return shape({ ...row, ...patch });
-}
-
-// Employee cancels their own pending request.
+// Employee cancels their own submitted request (or HR).
 async function cancel(id, by) {
   const row = await getRaw(id);
   await d365.update(LATE, id, { hr_status: 'cancelled' });
@@ -261,45 +261,46 @@ async function cancel(id, by) {
   return shape({ ...row, hr_status: 'cancelled' });
 }
 
-async function emailDecision(row, action) {
-  const emp = await getEmployee(row.hr_employeeid);
-  const label = REQ_LABEL[row.hr_requesttype || 'late_login'] || 'Late Login';
-  const subject = action === 'approved' ? `${label} Approved` : `${label} Rejected`;
-  const html = `<p>Hi ${emp?.hr_hremployee1 || row.hr_employeename || ''},</p><p>Your ${label} request for <b>${row.hr_date}</b> has been <b>${action}</b>.</p>${row.hr_remarks ? `<p><b>Remarks:</b> ${row.hr_remarks}</p>` : ''}`;
-  await sendEmail(emp?.hr_email, subject, html);
-}
-
 /** Dashboard counts for an employee (or all, for HR). */
 async function summary({ employeeId, month } = {}) {
   const rows = await list({ employeeId, month });
+  const n = (s) => rows.filter(r => r.status === s).length;
   return {
     total: rows.length,
-    pending: rows.filter(r => r.status === 'pending').length,
-    approved: rows.filter(r => r.status === 'approved').length,
-    rejected: rows.filter(r => r.status === 'rejected').length,
-    cancelled: rows.filter(r => r.status === 'cancelled').length,
+    submitted: n('submitted'),
+    completed: n('completed'),
+    absentLeaveRequired: n('absent_leave_required'),
+    cancelled: n('cancelled'),
+    // legacy statuses (records created before Late Login became information-only)
+    pending: n('pending'), approved: n('approved'), rejected: n('rejected'),
   };
 }
 
-/** Is there an APPROVED late login for this employee on this date? (attendance overlay) */
+// A recorded late login means the employee was PRESENT-but-late that day: 'submitted'
+// (claimed), 'completed' (verified check-in) — plus legacy 'approved'. It is NOT
+// 'absent_leave_required' / 'rejected' / 'cancelled'. Used only to LABEL the attendance
+// grid ("Late Present"); it never changes the computed attendance status.
+const PRESENT_LATE_STATUSES = `(hr_status eq 'submitted' or hr_status eq 'completed' or hr_status eq 'approved')`;
+
+/** Is there a recorded (present-late) late login for this employee on this date? */
 async function approvedOn(employeeId, date) {
   try {
     const { data } = await d365.getList(LATE, {
       select: 'hr_lateloginid',
-      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(String(date).slice(0, 10))}' and hr_status eq 'approved'`, top: 1,
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(String(date).slice(0, 10))}' and ${PRESENT_LATE_STATUSES}`, top: 1,
     });
     return !!(data && data[0]);
   } catch { return false; }
 }
 
 /**
- * A Set of `${employeeId}|${date}` for every APPROVED late login in a window —
+ * A Set of `${employeeId}|${date}` for every present-late late login in a window —
  * used by the attendance list to label days without extra per-row queries.
  * Best-effort: any failure (e.g. table not yet provisioned) yields an empty Set.
  */
 async function approvedSet({ from, to, employeeId } = {}) {
   try {
-    const filters = [`hr_status eq 'approved'`];
+    const filters = [PRESENT_LATE_STATUSES];
     if (employeeId) filters.push(`hr_employeeid eq '${esc(employeeId)}'`);
     if (from) filters.push(`hr_date ge '${esc(String(from).slice(0, 10))}'`);
     if (to) filters.push(`hr_date le '${esc(String(to).slice(0, 10))}'`);
@@ -308,4 +309,7 @@ async function approvedSet({ from, to, employeeId } = {}) {
   } catch { return new Set(); }
 }
 
-module.exports = { list, getRaw, shape, create, managerDecide, hrDecide, cancel, monthlyCount, summary, approvedOn, approvedSet, policy, REQ_LABEL, lateByMinutes, resolveApprovalRecipients };
+module.exports = {
+  list, getRaw, shape, create, cancel, monthlyCount, summary, approvedOn, approvedSet, policy, REQ_LABEL,
+  lateByMinutes, emailLateLoginInfoToHR, emailLeaveRequired, hasCheckIn, verifyTodaysAttendance,
+};

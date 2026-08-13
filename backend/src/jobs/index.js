@@ -87,6 +87,22 @@ function initJobs() {
     global.logger?.info('Month-end Comp Off scan scheduled (1st of month, 02:00 IST, previous month)');
   }
 
+  // Late Login attendance verification — daily at 21:00 IST. For Late Login requests
+  // dated TODAY (company timezone): if the employee has a valid Check-In → mark the
+  // record 'completed'; if not → mark 'absent_leave_required' and email the employee to
+  // apply Leave (deduped by the notification ledger, so a re-run / multiple workers /
+  // restart never re-send). Runs ONLY on the primary instance (single scheduler) AND is
+  // idempotent. Disable with LATE_LOGIN_ATTENDANCE_CHECK=false.
+  if (process.env.LATE_LOGIN_ATTENDANCE_CHECK !== 'false') {
+    const lateLogin = require('../services/late-login.service');
+    cron.schedule('0 21 * * *', () => {
+      lateLogin.verifyTodaysAttendance()
+        .then(r => global.logger?.info(`[late-login] daily attendance verify: ${r.processed} processed, ${r.attended} attended, ${r.absent} absent`))
+        .catch(e => global.logger?.error(`[late-login] daily attendance verify failed: ${e.message}`));
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Late Login attendance verification scheduled (21:00 IST daily)');
+  }
+
   // Celebrations — Birthday / Marriage Anniversary / Work Anniversary wishes.
   // Ticks every 30 min; celebrations.runDaily() only actually sends once the
   // configured Send Time (default 09:00 IST) has passed, and the audit log guards
