@@ -327,8 +327,12 @@ function lateLoginNotice(d) {
  */
 function lateLoginInfo(d) {
   const subject = `Late Login Information - ${d.employeeName} - ${d.date}`;
-  const lateByTxt = (d.lateBy != null && Number.isFinite(Number(d.lateBy)))
-    ? `${Number(d.lateBy)} minute${Math.abs(Number(d.lateBy)) === 1 ? '' : 's'}` : '—';
+  const lateByTxt = (() => {
+    const n = Number(d.lateBy);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    const h = Math.floor(n / 60), m = n % 60;
+    return [h ? `${h} hour${h === 1 ? '' : 's'}` : '', m ? `${m} minute${m === 1 ? '' : 's'}` : ''].filter(Boolean).join(' ') || '0 minutes';
+  })();
   const content =
     `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear HR,</p>` +
     `<p style="margin:0 0 4px;color:#374151;"><strong>${esc(d.employeeName)}</strong> has submitted a Late Login entry.</p>` +
@@ -337,8 +341,8 @@ function lateLoginInfo(d) {
       ['Employee ID', esc(d.employeeId)],
       ['Department', esc(d.department || '—')],
       ['Date', esc(d.date)],
-      ['Expected Login Time', esc(d.expectedTime || '—')],
-      ['Actual Login Time', esc(d.actualTime || '—')],
+      ['Shift Start Time', esc(d.expectedTime || '—')],
+      ['Late Login Time', esc(d.actualTime || '—')],
       ['Late By', esc(lateByTxt)],
       ['Reason', longText(d.reason || '—')],
       ['Remarks', longText(d.remarks || '—')],

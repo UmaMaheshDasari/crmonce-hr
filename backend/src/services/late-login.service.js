@@ -96,6 +96,17 @@ async function monthlyCount(employeeId, month) {
 
 // ── email helpers (best-effort; never throw / block) ──────────────────────────
 async function getEmployee(id) { try { return await d365.getByIdOptional(EMP, id, { select: 'hr_email,hr_hremployee1,hr_department', optionalSelect: '_hr_manager_value' }); } catch { return null; } }
+
+/** The employee's SHIFT START ("HH:MM") — the SAME source of truth Attendance uses
+ *  (attendance.config.resolveEmployeeShift). Never a hardcoded 09:00; when no shift is
+ *  configured it falls back to the configured default shift. '' only on a lookup error. */
+async function resolveShiftStart(employeeId) {
+  try {
+    const emp = await d365.getByIdOptional(EMP, employeeId, { select: 'hr_hremployeeid', optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime' });
+    const attnCfg = require('./attendance.config');
+    return attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime)?.start || '';
+  } catch { return ''; }
+}
 async function hrEmails() {
   try {
     const { data } = await d365.getList(EMP, {
@@ -220,6 +231,10 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
     ? `This is Late Login #${priorCount + 1} this month, exceeding the limit of ${p.maxPerMonth}.`
     : '';
   const name = employeeName || '';
+  // Shift Start Time is AUTHORITATIVE from the shift config (source of truth), not the
+  // client — the form shows it read-only, but never trust a submitted value. Fall back
+  // to the client value only if the lookup fails.
+  const shiftStart = (await resolveShiftStart(employeeId)) || String(expectedTime || '');
   // Late Login is an INFORMATION record — NOT an approval workflow. New records are
   // always 'submitted' (never pending/approved/rejected). The daily verification job
   // later moves them to 'completed' or 'absent_leave_required'. Attachment is not
@@ -227,7 +242,7 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   let payload = {
     hr_name: `${name || employeeId} · ${REQ_LABEL[requestType] || 'Late Login'} · ${ds}`.slice(0, 250),
     hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,
-    hr_expectedtime: String(expectedTime || ''), hr_actualtime: String(actualTime || ''),
+    hr_expectedtime: String(shiftStart || ''), hr_actualtime: String(actualTime || ''),
     hr_reason: reason || '', hr_remarks: remarks || '',
     hr_status: 'submitted', hr_managerstatus: '',
     hr_createdby: createdBy || '', hr_requesttype: requestType || 'late_login',
@@ -250,7 +265,7 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
 
   // INFORMATION-ONLY email to HR (from the employee's mailbox). Fire-and-forget: a mail
   // failure never blocks or fails the submission — the record is already saved.
-  emailLateLoginInfoToHR({ employeeId, employeeName: name, date: ds, expectedTime, actualTime, reason, remarks })
+  emailLateLoginInfoToHR({ employeeId, employeeName: name, date: ds, expectedTime: shiftStart, actualTime, reason, remarks })
     .catch(e => global.logger?.warn?.(`[late-login] HR info email error: ${e.message}`));
 
   return { record: shape({ ...payload, hr_lateloginid: created.hr_lateloginid }), warning };
@@ -314,5 +329,5 @@ async function approvedSet({ from, to, employeeId } = {}) {
 
 module.exports = {
   list, getRaw, shape, create, cancel, monthlyCount, summary, approvedOn, approvedSet, policy, REQ_LABEL,
-  lateByMinutes, emailLateLoginInfoToHR, emailLeaveRequired, hasCheckIn, verifyTodaysAttendance,
+  lateByMinutes, emailLateLoginInfoToHR, emailLeaveRequired, hasCheckIn, verifyTodaysAttendance, resolveShiftStart,
 };

@@ -52,21 +52,34 @@ afterEach(() => {
 });
 
 // ── Templates (pure, no network) ────────────────────────────────────────────
-test('lateLoginInfo template: information-only HR email — no Approve/Reject, full details', () => {
+test('lateLoginInfo template: Shift Start / Late Login labels, hours+minutes late-by, no buttons', () => {
   const { subject, html } = T.lateLoginInfo({
     employeeName: 'Boina Vishwesh', employeeId: 'E1', department: 'Engineering',
-    date: '14 August 2026', expectedTime: '09:00 AM', actualTime: '10:15 AM', lateBy: 75, reason: 'Bank work', remarks: 'nil',
+    date: '14 August 2026', expectedTime: '09:00 AM', actualTime: '11:30 AM', lateBy: 150, reason: 'Bank work', remarks: 'nil',
   });
   assert.strictEqual(subject, 'Late Login Information - Boina Vishwesh - 14 August 2026');
   assert.match(html, /Dear HR/);
   assert.match(html, /Boina Vishwesh/);
   assert.match(html, /E1/);                          // employee id
-  assert.match(html, /09:00 AM/);                    // expected
-  assert.match(html, /10:15 AM/);                    // actual
-  assert.match(html, /75 minutes/);                  // late by
+  assert.match(html, /Shift Start Time/);            // renamed field
+  assert.match(html, /Late Login Time/);             // renamed field
+  assert.match(html, /09:00 AM/);                    // shift start
+  assert.match(html, /11:30 AM/);                    // late login
+  assert.match(html, /2 hours 30 minutes/);          // late by (150 min → hours+minutes)
   assert.match(html, /Bank work/);                   // reason (full)
   assert.match(html, /No approval is required/i);
   assert.strictEqual(hasButtons(html), false);       // NO approve/reject
+});
+
+test('resolveShiftStart: reads the employee shift start (Attendance source of truth), never hardcoded 09:00', async () => {
+  const origGio = d365.getByIdOptional;
+  try {
+    d365.getByIdOptional = async () => ({ hr_hremployeeid: 'E1', hr_shiftstarttime: '11:30', hr_shiftendtime: '20:30' });
+    assert.strictEqual(await lateLogin.resolveShiftStart('E1'), '11:30');
+    // No shift configured → the configured default shift (GENERAL 09:00), not a frontend hardcode.
+    d365.getByIdOptional = async () => ({ hr_hremployeeid: 'E2' });
+    assert.strictEqual(await lateLogin.resolveShiftStart('E2'), '09:00');
+  } finally { d365.getByIdOptional = origGio; }
 });
 
 test('lateLoginLeaveRequired template: guidance to apply Leave — no buttons', () => {

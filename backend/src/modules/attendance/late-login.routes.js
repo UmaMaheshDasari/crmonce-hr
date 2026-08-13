@@ -46,12 +46,10 @@ async function withDepartments(rows) {
 router.get('/policy', async (req, res, next) => {
   try {
     const p = await lateLogin.policy();   // allowFuture forced true (Late Login is an info record)
-    let shiftStart = '';
-    try {
-      const emp = await d365.getByIdOptional(EMP, req.user.id, { select: 'hr_hremployeeid', optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime' });
-      const attnCfg = require('../../services/attendance.config');
-      shiftStart = attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime)?.start || '';
-    } catch (_) { /* shift optional */ }
+    // Shift Start defaults to the SELECTED employee's shift (HR picks an employee);
+    // otherwise the requesting employee's own shift. Same source Attendance uses.
+    const targetId = (isHR(req.user) && req.query.employeeId) ? req.query.employeeId : req.user.id;
+    const shiftStart = await lateLogin.resolveShiftStart(targetId);
     res.json({ graceMinutes: p.graceMinutes, maxPerMonth: p.maxPerMonth, backdatedDays: p.backdatedDays, allowFuture: p.allowFuture, approvalRequired: p.approvalRequired, attendanceMode: p.attendanceMode, shiftStart });
   } catch (_) { res.json({ graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present', shiftStart: '' }); }
 });
@@ -111,8 +109,10 @@ router.get('/export', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const b = req.body || {};
-    if (!b.date || !b.expectedTime || !b.actualTime || !String(b.reason || '').trim()) {
-      return res.status(400).json({ error: 'Date, expected time, actual time and reason are required.' });
+    // Shift Start Time is resolved server-side from the shift config (not required from
+    // the client). The employee provides the Late Login Time (actualTime), reason, date.
+    if (!b.date || !b.actualTime || !String(b.reason || '').trim()) {
+      return res.status(400).json({ error: 'Date, late login time and reason are required.' });
     }
     const employeeId = isHR(req.user) && b.employeeId ? b.employeeId : req.user.id;
     const employeeName = employeeId === req.user.id ? req.user.name : (b.employeeName || '');

@@ -26,13 +26,22 @@ const STATUS_LABEL = {
   cancelled: 'Cancelled', pending: 'Pending', approved: 'Approved', rejected: 'Rejected',
 };
 const fmt = (d) => { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—'; } catch { return d || '—'; } };
-// Late By = actual − expected (minutes), from the submitted times. No grace subtracted.
+// Times in HH:MM (24h). Late By = Late Login Time − Shift Start Time (no grace subtracted).
 const toMin = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
-const lateByLabel = (expected, actual) => {
-  const e = toMin(expected), a = toMin(actual);
-  if (e == null || a == null) return '—';
-  const n = a - e;
-  return n > 0 ? `${n} min` : '—';
+const to12h = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); if (!m) return ''; let h = +m[1]; const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${ap}`; };
+const lateByMin = (start, actual) => { const s = toMin(start), a = toMin(actual); return (s == null || a == null) ? null : a - s; };
+// Compact for the table ("2h 30m"); long for the form ("2 hours 30 minutes").
+const lateByLabel = (start, actual) => {
+  const n = lateByMin(start, actual);
+  if (n == null || n <= 0) return '—';
+  const h = Math.floor(n / 60), m = n % 60;
+  return [h ? `${h}h` : '', m ? `${m}m` : ''].filter(Boolean).join(' ') || '0m';
+};
+const lateByLong = (start, actual) => {
+  const n = lateByMin(start, actual);
+  if (n == null || n <= 0) return '';
+  const h = Math.floor(n / 60), m = n % 60;
+  return [h ? `${h} hour${h === 1 ? '' : 's'}` : '', m ? `${m} minute${m === 1 ? '' : 's'}` : ''].filter(Boolean).join(' ') || '0 minutes';
 };
 // Map a Late Login row to the shared lifecycle canonical status (submitted/completed/
 // absent are all editable-while-open → canonical 'pending'; legacy states preserved).
@@ -46,16 +55,24 @@ const todayStr = new Date().toISOString().slice(0, 10);
 
 function SubmitModal({ isHR, employees, policy, onClose }) {
   const qc = useQueryClient();
-  // Expected Login Time defaults to the EMPLOYEE'S SHIFT START (from policy), not a
-  // fixed 09:00. Falls back to 09:00 only if the shift is unknown.
-  const [f, setF] = useState({ employeeId: '', date: todayStr, expectedTime: (/^\d{1,2}:\d{2}$/.test(policy?.shiftStart || '') ? policy.shiftStart : '09:00'), actualTime: '', reason: '', remarks: '' });
+  const [f, setF] = useState({ employeeId: '', date: todayStr, actualTime: '', reason: '', remarks: '' });
+
+  // Shift Start Time is AUTO from the employee's shift (source of truth = Attendance
+  // shift config), read-only. For HR it follows the selected employee; for a normal
+  // employee it is their own (from the page-level policy). Never hardcoded to 09:00.
+  const { data: empPolicy } = useQuery({
+    queryKey: ['late-login-shift', f.employeeId],
+    queryFn: () => lateLoginApi.policy({ employeeId: f.employeeId }).then(r => r.data),
+    enabled: isHR && !!f.employeeId,
+  });
+  const shiftStart = ((isHR && f.employeeId) ? empPolicy?.shiftStart : policy?.shiftStart) || '';
 
   const backdatedDays = Number(policy?.backdatedDays) || 30;
   const minDate = format(subDays(new Date(), backdatedDays), 'yyyy-MM-dd');
   const maxDate = policy?.allowFuture ? undefined : todayStr;
 
   const mut = useMutation({
-    mutationFn: () => lateLoginApi.create({ ...f }),
+    mutationFn: () => lateLoginApi.create({ ...f, expectedTime: shiftStart }),
     onSuccess: (res) => {
       const warning = res?.data?.warning;
       if (warning) toast(warning, { icon: '⚠️', duration: 6000 });
@@ -65,7 +82,7 @@ function SubmitModal({ isHR, employees, policy, onClose }) {
     },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to submit'),
   });
-  const invalid = (isHR && !f.employeeId) || !f.date || !f.expectedTime || !f.actualTime || !f.reason.trim();
+  const invalid = (isHR && !f.employeeId) || !f.date || !shiftStart || !f.actualTime || !f.reason.trim();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
@@ -88,11 +105,22 @@ function SubmitModal({ isHR, employees, policy, onClose }) {
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
             <input type="date" min={minDate} max={maxDate} className={inp} value={f.date} onChange={e => setF(p => ({ ...p, date: e.target.value }))} /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-xs font-semibold text-gray-600 mb-1">Expected Login Time</label>
-              <input type="time" className={inp} value={f.expectedTime} onChange={e => setF(p => ({ ...p, expectedTime: e.target.value }))} /></div>
-            <div><label className="block text-xs font-semibold text-gray-600 mb-1">Actual Login Time</label>
-              <input type="time" className={inp} value={f.actualTime} onChange={e => setF(p => ({ ...p, actualTime: e.target.value }))} /></div>
+            <div>
+              <label className="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
+                <span>Shift Start Time</span>
+                <span className="text-[10px] font-medium text-indigo-500 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5">Auto</span>
+              </label>
+              <input readOnly value={to12h(shiftStart) || (isHR && !f.employeeId ? 'Select employee' : '—')}
+                className={`${inp} bg-gray-100 text-gray-600 cursor-not-allowed`} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Late Login Time</label>
+              <input type="time" className={inp} value={f.actualTime} onChange={e => setF(p => ({ ...p, actualTime: e.target.value }))} />
+            </div>
           </div>
+          {shiftStart && f.actualTime && lateByLong(shiftStart, f.actualTime) && (
+            <p className="text-xs font-semibold text-amber-700">Late By: {lateByLong(shiftStart, f.actualTime)}</p>
+          )}
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
             <input className={inp} value={f.reason} onChange={e => setF(p => ({ ...p, reason: e.target.value }))} placeholder="Why were you / will you be late?" /></div>
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Remarks (optional)</label>
@@ -197,8 +225,8 @@ export default function LateLoginPage() {
               <tr className="text-left">
                 {hr && <th className="px-4 py-3 font-semibold">Employee</th>}
                 <th className="px-4 py-3 font-semibold">Date</th>
-                <th className="px-4 py-3 font-semibold">Expected</th>
-                <th className="px-4 py-3 font-semibold">Actual</th>
+                <th className="px-4 py-3 font-semibold">Shift Start</th>
+                <th className="px-4 py-3 font-semibold">Late Login</th>
                 <th className="px-4 py-3 font-semibold">Late By</th>
                 <th className="px-4 py-3 font-semibold">Reason</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
@@ -214,8 +242,8 @@ export default function LateLoginPage() {
                 <tr key={r.id} className="hover:bg-gray-50/50">
                   {hr && <td className="px-4 py-3 font-medium text-gray-800">{r.employeeName || '—'}</td>}
                   <td className="px-4 py-3 text-gray-600">{fmt(r.date)}</td>
-                  <td className="px-4 py-3 font-mono text-gray-600">{r.expectedTime || '—'}</td>
-                  <td className="px-4 py-3 font-mono text-gray-600">{r.actualTime || '—'}</td>
+                  <td className="px-4 py-3 font-mono text-gray-600">{to12h(r.expectedTime) || '—'}</td>
+                  <td className="px-4 py-3 font-mono text-gray-600">{to12h(r.actualTime) || '—'}</td>
                   <td className="px-4 py-3 font-mono text-gray-600">{lateByLabel(r.expectedTime, r.actualTime)}</td>
                   <td className="px-4 py-3 text-gray-500 max-w-[14rem] truncate" title={r.reason}>{r.reason || '—'}</td>
                   <td className="px-4 py-3"><span className={`inline-flex text-[11px] font-semibold border px-2 py-0.5 rounded-full ${STATUS[r.status] || STATUS.submitted}`}>{STATUS_LABEL[r.status] || r.status}</span></td>

@@ -107,7 +107,7 @@ export const compOffApi = {
 // ── Late Login ───────────────────────────────────────────────────
 export const lateLoginApi = {
   list: (params) => api.get('/attendance/late-login', { params }),
-  policy: () => api.get('/attendance/late-login/policy'),
+  policy: (params) => api.get('/attendance/late-login/policy', { params }),
   summary: (params) => api.get('/attendance/late-login/summary', { params }),
   create: (data) => api.post('/attendance/late-login', data),
   cancel: (id) => api.patch(`/attendance/late-login/${id}/cancel`),
