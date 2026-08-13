@@ -66,10 +66,21 @@ function normalizeLedger(rows) {
 
 const sumDays = (leaves, cat) => leaves.filter((l) => l.category === cat).reduce((s, l) => s + l.days, 0);
 const sumLedger = (ledger, kind) => ledger.filter((x) => x.kind === kind).reduce((s, x) => s + x.days, 0);
+// Entitlement-raising ledger credits: a manual HR 'adjustment' AND the annual
+// 'carry_forward' (e.g. Casual Leave carried from last year) both add to entitlement.
 function adjustmentsByCategory(ledger) {
   const adj = { casual: 0, sick: 0, compoff: 0 };
-  for (const x of ledger) if (x.kind === 'adjustment' && adj[x.category] !== undefined) adj[x.category] += x.days;
+  for (const x of ledger) if ((x.kind === 'adjustment' || x.kind === 'carry_forward') && adj[x.category] !== undefined) adj[x.category] += x.days;
   return { casual: r2(adj.casual), sick: r2(adj.sick), compoff: r2(adj.compoff) };
+}
+
+// Default max CL days carried to the next year (overridable via Payroll Settings →
+// leavePolicy.casualCarryForwardMax). Carry = MIN(clamp0(prev-year CL remaining), max).
+const CASUAL_CARRY_FORWARD_MAX = 5;
+/** Pure carry-forward formula: MIN(max(0, remaining), max). Negative → 0. */
+function casualCarryForward(remaining, max = CASUAL_CARRY_FORWARD_MAX) {
+  const r = clamp0(remaining);                 // never carry a negative balance
+  return Math.min(r, Math.max(0, r2(max)));    // never carry more than the cap
 }
 
 /**
@@ -261,10 +272,74 @@ async function readLedger(employeeId, year) {
   return ledger;
 }
 
+// ── Casual Leave annual carry-forward ─────────────────────────────────────────
+
+/** Has a CL carry-forward ledger entry already been written for this employee/year?
+ *  This is the idempotency guard — a re-run must never double-credit. */
+async function carryForwardExists(employeeId, year) {
+  try {
+    const { data } = await d365.getList(LEDGER, {
+      select: 'hr_leaveledgerid',
+      filter: `hr_employeeid eq '${employeeId}' and hr_year eq '${year}' and hr_kind eq 'carry_forward' and hr_category eq 'casual'`,
+      top: 1,
+    });
+    return !!(data && data[0]);
+  } catch { return false; }   // table not provisioned / read failed → treat as "not yet" (guard is best-effort)
+}
+
+/**
+ * Year-end Casual Leave carry-forward for ALL active employees:
+ *   carry = MIN(clamp0(prev-year CL remaining), casualCarryForwardMax)   [default max 5]
+ * Written as ONE ledger row (kind 'carry_forward', category 'casual') dated
+ * toYear-01-01, which raises next year's CL entitlement (12 + carry) via
+ * adjustmentsByCategory. IDEMPOTENT: an employee who already has a carry_forward row
+ * for toYear is skipped, so running twice never adds days twice. Never throws.
+ */
+async function rollCasualLeaveForward({ fromYear, toYear, createdBy = 'Year-End Rollover', employees } = {}) {
+  const fy = Number(fromYear);
+  const ty = Number(toYear || fy + 1);
+  if (!fy || !ty) { const e = new Error('fromYear (and toYear) are required'); e.status = 400; throw e; }
+  const policy = await getPolicy();
+  const max = Number(policy.casualCarryForwardMax) || CASUAL_CARRY_FORWARD_MAX;
+
+  let emps = employees;
+  if (!emps) {
+    try {
+      const { data } = await d365.getList(EMP, {
+        select: 'hr_hremployeeid,hr_hremployee1',
+        filter: `hr_status eq ${toValue('hr_employee_status', 'active')}`,
+        top: 5000,
+      });
+      emps = data || [];
+    } catch (e) { global.logger?.error?.(`[leave-carryforward] employee read failed: ${e.message}`); return { fromYear: fy, toYear: ty, max, processed: 0, carried: 0, skipped: 0, totalDays: 0 }; }
+  }
+
+  let carried = 0, skipped = 0, totalDays = 0;
+  for (const emp of emps) {
+    const id = emp.hr_hremployeeid;
+    if (!id) continue;
+    try {
+      if (await carryForwardExists(id, ty)) { skipped++; continue; }          // already processed → idempotent
+      const bal = await getBalance(id, fy);
+      const days = casualCarryForward(bal?.casual?.remaining, max);
+      if (days <= 0) continue;                                                 // nothing to carry (0 is a no-op)
+      await addLedgerEntry({
+        employeeId: id, employeeName: emp.hr_hremployee1, year: ty,
+        kind: 'carry_forward', category: 'casual', days,
+        effectiveDate: `${ty}-01-01`, reason: `Casual Leave carry-forward from ${fy} (max ${max})`, createdBy,
+      });
+      carried++; totalDays = r2(totalDays + days);
+    } catch (e) { global.logger?.warn?.(`[leave-carryforward] ${id} failed: ${e.message}`); }
+  }
+  global.logger?.info?.(`[leave-carryforward] ${fy}→${ty}: processed ${emps.length}, carried ${carried}, skipped(existing) ${skipped}, days ${totalDays}`);
+  return { fromYear: fy, toYear: ty, max, processed: emps.length, carried, skipped, totalDays };
+}
+
 module.exports = {
   // pure
   categoryOfType, normalizeLeaves, normalizeLedger, adjustmentsByCategory,
-  computeBalance, computeMonthSplit,
+  computeBalance, computeMonthSplit, casualCarryForward, CASUAL_CARRY_FORWARD_MAX,
   // async
   getBalance, splitMonthLeave, pendingMonthDays, addLedgerEntry, readLedger,
+  carryForwardExists, rollCasualLeaveForward,
 };

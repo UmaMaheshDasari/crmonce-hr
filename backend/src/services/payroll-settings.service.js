@@ -161,6 +161,9 @@ function resolve(settings = null) {
       paidPerYear: num(g.hr_paidleavesperyear, 18),
       casual: num(g.hr_casualleaves, 12),
       sick: num(g.hr_sickleaves, 6),
+      // Max Casual Leave days carried into the next year (default 5). Configurable so
+      // the rule is never hardcoded; carry-forward = MIN(prev-year CL remaining, this).
+      casualCarryForwardMax: num(g.hr_casualcarryforwardmax, 5),
     },
     // Sick-leave medical-certificate policy.
     medCert: { required: bool(g.hr_medcertrequired), afterDays: num(g.hr_medcertafterdays, 1) },

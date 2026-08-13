@@ -103,6 +103,25 @@ function initJobs() {
     global.logger?.info('Late Login attendance verification scheduled (21:00 IST daily)');
   }
 
+  // Casual Leave carry-forward — year-end rollover. On 1 Jan at 03:00 IST, carry each
+  // active employee's leftover Casual Leave (MIN(remaining, max — default 5)) from the
+  // just-ended year into the new year as a 'carry_forward' ledger credit, so the new
+  // year's CL entitlement = annual allocation + carried days. IDEMPOTENT (skips anyone
+  // already carried) → a re-run never double-credits. Single scheduler instance only.
+  // Disable with LEAVE_CARRY_FORWARD=false.
+  if (process.env.LEAVE_CARRY_FORWARD !== 'false') {
+    const leaveEngine = require('../services/leave-engine.service');
+    cron.schedule('0 3 1 1 *', async () => {
+      const now = new Date();
+      const toYear = now.getFullYear();          // the new year that just started
+      try {
+        const r = await leaveEngine.rollCasualLeaveForward({ fromYear: toYear - 1, toYear, createdBy: 'Year-End Rollover' });
+        global.logger?.info(`[leave-carryforward] ${r.fromYear}→${r.toYear}: carried ${r.carried} (skipped ${r.skipped}), ${r.totalDays} days`);
+      } catch (e) { global.logger?.error(`[leave-carryforward] year-end run failed: ${e.message}`); }
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Casual Leave carry-forward scheduled (1 Jan 03:00 IST, previous year → new year)');
+  }
+
   // Celebrations — Birthday / Marriage Anniversary / Work Anniversary wishes.
   // Ticks every 30 min; celebrations.runDaily() only actually sends once the
   // configured Send Time (default 09:00 IST) has passed, and the audit log guards

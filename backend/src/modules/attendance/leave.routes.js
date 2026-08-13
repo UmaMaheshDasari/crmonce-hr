@@ -1006,4 +1006,18 @@ router.post('/adjust', requireRole('super_admin', 'hr_manager'), async (req, res
   }
 });
 
+// POST /carry-forward — run the Casual Leave YEAR-END carry-forward for all active
+// employees (HR / Super Admin). carry = MIN(prev-year CL remaining, max — default 5).
+// IDEMPOTENT: re-running never double-credits. ?fromYear=2026[&toYear=2027] (toYear
+// defaults to fromYear+1). Reuses the existing leave ledger — no parallel balance system.
+router.post('/carry-forward', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const fromYear = Number(req.query.fromYear || req.body?.fromYear);
+    const toYear = Number(req.query.toYear || req.body?.toYear) || (fromYear ? fromYear + 1 : 0);
+    if (!fromYear) return res.status(400).json({ error: 'fromYear is required (e.g. ?fromYear=2026).' });
+    const result = await leaveEngine.rollCasualLeaveForward({ fromYear, toYear, createdBy: req.user?.name || req.user?.email || 'HR' });
+    res.json(result);
+  } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
+
 module.exports = router;
