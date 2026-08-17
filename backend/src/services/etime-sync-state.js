@@ -32,7 +32,15 @@ function recordHeartbeat(agent) {
 }
 
 function pickAgent(a) {
-  return { host: String(a.host || a.hostname || '').slice(0, 120), pending: Number(a.pending) || 0, failed: Number(a.failed) || 0, version: String(a.version || '').slice(0, 40) };
+  return {
+    host: String(a.host || a.hostname || '').slice(0, 120),
+    pending: Number(a.pending) || 0, failed: Number(a.failed) || 0,
+    version: String(a.version || '').slice(0, 40),
+    // The agent tells us WHAT it couldn't reach so HR sees a precise message. The agent
+    // can only report deviceError while it CAN reach us — if it can't reach us at all,
+    // that surfaces here as "offline" (which also covers "HR server unavailable").
+    deviceError: !!a.deviceError,
+  };
 }
 
 function online() {
@@ -40,10 +48,18 @@ function online() {
   return Number.isFinite(t) && (Date.now() - t) <= ONLINE_WINDOW_MS;
 }
 
+/** A single machine-readable status the HR UI maps to an exact message. */
+function condition() {
+  if (!online()) return 'offline';                       // agent process down OR agent can't reach the HR server
+  if (state.agent && state.agent.deviceError) return 'device_unavailable';   // agent up, ZK device unreachable
+  return 'ok';
+}
+
 /** Safe snapshot for the HR UI — no secrets, no internal errors. */
 function snapshot() {
   return {
     online: online(),
+    condition: condition(),
     lastSyncAt: state.lastSyncAt,
     lastAttemptAt: state.lastAttemptAt,
     lastResult: state.lastResult,

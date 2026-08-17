@@ -161,3 +161,10 @@ test('sync-state: records a sync, reports online, and accumulates totals', () =>
   assert.strictEqual(s.agent.host, 'OFFICE-PC');
   assert.ok(s.totals.received >= 5);
 });
+
+test('sync-state condition: ok when online & healthy; device_unavailable when the agent reports a ZK error', () => {
+  syncState.recordSync({ received: 1, created: 1 }, { host: 'PC', pending: 0 });
+  assert.strictEqual(syncState.snapshot().condition, 'ok');
+  syncState.recordHeartbeat({ host: 'PC', pending: 3, deviceError: true });   // agent reached us but device is down
+  assert.strictEqual(syncState.snapshot().condition, 'device_unavailable');
+});

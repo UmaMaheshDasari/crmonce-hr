@@ -160,21 +160,28 @@ export default function AttendancePage() {
     onSuccess: (res) => {
       const s = res.data || {};
       qc.invalidateQueries({ queryKey: ['attendance'] });
-      if (!s.online) {
-        toast.error('Office attendance sync agent is offline.', { duration: 6000 });
+      // Precise status per the actual architecture (agent ↔ device ↔ HR server).
+      if (s.condition === 'offline') {
+        toast.error('Office Attendance Sync Agent is offline.', { duration: 6000 });
+        return;
+      }
+      if (s.condition === 'device_unavailable') {
+        toast.error('ZK device is unavailable.', { duration: 6000 });
         return;
       }
       const r = s.lastResult;
       if (r) {
         toast.success(
-          `Attendance sync completed\nFetched: ${r.received} · Created: ${r.created} · Updated: ${r.updated} · Duplicates: ${r.duplicates} · Failed: ${r.failed}`,
+          `Sync completed\nFetched: ${r.received} · Created: ${r.created} · Updated: ${r.updated} · Duplicates: ${r.duplicates} · Failed: ${r.failed}`,
           { duration: 7000 },
         );
       } else {
         toast('Office sync agent is online. Waiting for the first sync…', { icon: 'ℹ️', duration: 5000 });
       }
     },
-    onError: () => toast.error('Could not read the eTime sync status.'),
+    // The HR page can't reach the OFFICE agent directly; a read failure here means the
+    // HR server/status call failed.
+    onError: () => toast.error('HR server is unavailable.'),
   });
 
   const records = data?.data?.data || [];
