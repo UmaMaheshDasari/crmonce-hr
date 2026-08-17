@@ -35,7 +35,12 @@ const CFG = {
   intervalMs: parseInt(process.env.SYNC_INTERVAL_MS || '60000', 10),   // pull+push cycle
   batchSize: parseInt(process.env.SYNC_BATCH_SIZE || '500', 10),
   spoolFile: process.env.SPOOL_FILE || path.join(__dirname, 'spool.json'),
-  version: '1.0.0',
+  // BACKFILL controls: run one cycle then exit, and/or only sync a date window
+  // (YYYY-MM-DD inclusive). Use these to pull the punches missed during the outage.
+  runOnce: /^(1|true|yes)$/i.test(process.env.RUN_ONCE || ''),
+  fromDate: (process.env.SYNC_FROM_DATE || '').trim(),
+  toDate: (process.env.SYNC_TO_DATE || '').trim(),
+  version: '1.1.0',
 };
 
 if (!CFG.apiUrl || !CFG.agentKey) {
@@ -78,7 +83,9 @@ async function readDevicePunches() {
         time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,                       // IST civil time
       });
     }
-    return out;
+    // Optional backfill window (inclusive) — pull only the outage period.
+    const inRange = (dt) => (!CFG.fromDate || dt >= CFG.fromDate) && (!CFG.toDate || dt <= CFG.toDate);
+    return out.filter((p) => inRange(p.date));
   } catch (err) {
     try { await zk.disconnect(); } catch (_) {}
     throw new Error(`ZK device ${CFG.deviceIp}:${CFG.devicePort} unavailable: ${err.message || err.code || 'connection failed'}`);
@@ -111,10 +118,12 @@ let running = false;
 async function cycle() {
   if (running) return;
   running = true;
+  let deviceRead = false;
   try {
     // 1) Read the device (if reachable) and add NEW punches to the spool.
     try {
       const punches = await readDevicePunches();
+      deviceRead = true;
       let added = 0;
       for (const p of punches) {
         if (!p.etimeCode) continue;
@@ -147,13 +156,22 @@ async function cycle() {
       log('INFO', `pushed ${batch.length} → received ${res.received}, created ${res.created}, updated ${res.updated}, dup ${res.duplicates}, unmapped ${res.unmapped}, failed ${res.failed}; spool=${spool.length}`);
     }
     await heartbeat(spool.length);
+
+    // Backfill mode: run one cycle then exit with a clear status.
+    if (CFG.runOnce) {
+      if (!deviceRead) { log('ERROR', 'RUN_ONCE aborted: the ZK device could not be read (check LAN/IP).'); process.exit(2); }
+      if (spool.length === 0) { log('INFO', 'RUN_ONCE complete: all fetched punches were pushed (missing days backfilled; duplicates skipped by the server).'); process.exit(0); }
+      log('WARN', `RUN_ONCE: ${spool.length} punch(es) still spooled (backend issue) — re-run to finish; nothing lost.`); process.exit(1);
+    }
   } finally {
     running = false;
   }
 }
 
-log('INFO', `Office eTime Sync Agent v${CFG.version} → ${CFG.apiUrl} | device ${CFG.deviceIp}:${CFG.devicePort} | every ${CFG.intervalMs}ms | spool=${spool.length}`);
+const windowNote = (CFG.fromDate || CFG.toDate) ? ` | window ${CFG.fromDate || '…'}→${CFG.toDate || '…'}` : '';
+const modeNote = CFG.runOnce ? ' | RUN_ONCE (backfill)' : ` | every ${CFG.intervalMs}ms`;
+log('INFO', `Office eTime Sync Agent v${CFG.version} → ${CFG.apiUrl} | device ${CFG.deviceIp}:${CFG.devicePort}${modeNote}${windowNote} | spool=${spool.length}`);
 cycle();
-setInterval(cycle, CFG.intervalMs);
+if (!CFG.runOnce) setInterval(cycle, CFG.intervalMs);   // continuous mode; RUN_ONCE exits inside cycle()
 process.on('SIGINT', () => { saveSpool(spool); log('INFO', 'stopped'); process.exit(0); });
 process.on('SIGTERM', () => { saveSpool(spool); process.exit(0); });

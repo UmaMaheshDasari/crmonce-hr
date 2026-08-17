@@ -65,6 +65,23 @@ npm i -g node-windows
 **Option C — Task Scheduler:** create a task “At startup”, action `node.exe agent.js`,
 “Run whether user is logged on or not”, and set **Restart on failure**.
 
+## Backfill punches missed during an outage
+
+The device keeps its punches internally. To pull the ones missed while sync was down, run
+the agent once with a date window (it reads the device's stored log, pushes to the backend,
+which **creates the missing days and skips duplicates**, then exits):
+
+```powershell
+# PowerShell — one-time backfill of a window (adjust dates)
+$env:RUN_ONCE="true"; $env:SYNC_FROM_DATE="2026-08-01"; $env:SYNC_TO_DATE="2026-08-17"; npm start
+```
+Or set `RUN_ONCE`/`SYNC_FROM_DATE`/`SYNC_TO_DATE` in `.env`. It prints
+`pushed N → created … updated … duplicates …` and then `RUN_ONCE complete`. Run it as many
+times as you like — it's idempotent, so nothing is duplicated. Then start the agent normally
+(without `RUN_ONCE`) for ongoing sync. (Only punches still stored on the device can be
+recovered; if its internal log already overwrote very old records, those are gone — a device
+limitation, not the agent.)
+
 ## Behavior
 - **Retries / offline:** if the device, internet, or VPS is down, punches stay in
   `spool.json` and are flushed on the next cycle — nothing is lost.
