@@ -32,6 +32,7 @@ const activityRoutes   = require('./modules/activity/activity.routes');
 const dashboardRoutes  = require('./modules/dashboard/dashboard.routes');
 const attendanceRequestRoutes = require('./modules/attendance/attendance-request.routes');
 const holidayRoutes    = require('./modules/attendance/holiday.routes');
+const etimeAgentRoutes = require('./modules/attendance/etime-agent.routes');
 
 const { authenticateToken } = require('./middleware/auth.middleware');
 const { isAxiosError, formatAxiosError, summarize } = require('./utils/axiosError');
@@ -107,6 +108,9 @@ app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().
 // ── API Routes ────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);
 app.use('/api/employees',   authenticateToken, employeeRoutes);
+// Office Sync Agent — authenticated by ETIME_AGENT_KEY (NOT a login JWT), so it is
+// mounted WITHOUT authenticateToken. Still rate-limited by the /api limiter above.
+app.use('/api/etime',       etimeAgentRoutes);
 app.use('/api/attendance',  authenticateToken, attendanceRoutes);
 app.use('/api/payroll/tax-declarations', authenticateToken, taxDeclarationRoutes);
 app.use('/api/payroll/settings', authenticateToken, payrollSettingsRoutes);

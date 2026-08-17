@@ -1,0 +1,18 @@
+{
+  "name": "crmonce-etime-office-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Office-side sync agent: reads ZK/eTime punches on the office LAN and pushes them over HTTPS to the CRMONCE HR backend.",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "zklib-js": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -203,6 +203,13 @@ router.get('/device/logs', requireRole('super_admin', 'hr_manager'), async (req,
   } catch (err) { next(err); }
 });
 
+// GET /api/attendance/etime-sync/status — Office Sync Agent status for the HR "Sync eTime"
+// panel: online/offline, last successful/attempted sync, last punch, and running totals.
+// This is the modern path (agent → HTTPS → backend). No device connection is attempted.
+router.get('/etime-sync/status', requireRole('super_admin', 'hr_manager'), (req, res) => {
+  res.json(require('../../services/etime-sync-state').snapshot());
+});
+
 // ── Web punch session (multi-punch: IN/OUT/IN/OUT…, never locks) ──────────────
 const PUNCH_SELECT = 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_workedhours,hr_overtime,hr_status,hr_source,_hr_hremployee_value,hr_allpunches,hr_punchcount,hr_breakduration,hr_effectivehours';
 // Punch time + "today" are computed in the app timezone (Asia/Kolkata), NOT the

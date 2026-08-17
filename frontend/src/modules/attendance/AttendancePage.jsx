@@ -152,13 +152,29 @@ export default function AttendancePage() {
   };
   const yearOptions = (() => { const y = today.getFullYear(); return [y, y - 1, y - 2, y - 3]; })();
 
+  // Attendance now syncs via the Office Sync Agent (office LAN → HTTPS → backend →
+  // Dataverse); the VPS never dials the office device. The button reports the agent's
+  // status + latest sync result instead of attempting an (impossible) direct pull.
   const syncMutation = useMutation({
-    mutationFn: () => attendanceApi.sync(from, to),
+    mutationFn: () => attendanceApi.etimeSyncStatus(),
     onSuccess: (res) => {
-      toast.success(`Sync complete: ${res.data.synced} records synced`);
+      const s = res.data || {};
       qc.invalidateQueries({ queryKey: ['attendance'] });
+      if (!s.online) {
+        toast.error('Office attendance sync agent is offline.', { duration: 6000 });
+        return;
+      }
+      const r = s.lastResult;
+      if (r) {
+        toast.success(
+          `Attendance sync completed\nFetched: ${r.received} · Created: ${r.created} · Updated: ${r.updated} · Duplicates: ${r.duplicates} · Failed: ${r.failed}`,
+          { duration: 7000 },
+        );
+      } else {
+        toast('Office sync agent is online. Waiting for the first sync…', { icon: 'ℹ️', duration: 5000 });
+      }
     },
-    onError: () => toast.error('Sync failed. Check eTime connection.'),
+    onError: () => toast.error('Could not read the eTime sync status.'),
   });
 
   const records = data?.data?.data || [];
