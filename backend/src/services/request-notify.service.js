@@ -28,7 +28,7 @@ const TYPE_CFG = {
   leave:           { title: 'Leave' },
   late_login:      { title: 'Late Login' },
   late_permission: { title: 'Late Permission' },
-  missing_punch:   { title: 'Missing Punch' },
+  missing_punch:   { title: 'Missing Punch' },   // decision emails keep this wording; submission emails pass moduleTitle:'Attendance Correction'
 };
 
 // Seed/placeholder addresses that must never receive mail (e.g. admin@yourcompany.com).
@@ -196,21 +196,66 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
 
 /** Acknowledgement → email the employee immediately after submission, FROM their
  *  own company mailbox (never info@). Skipped with a reason if unusable. */
-async function emailApplyAcknowledgement({ type, toEmail, employeeName, approverName }) {
+async function emailApplyAcknowledgement({ type, toEmail, employeeName, approverName, moduleTitle }) {
   try {
     const cfg = TYPE_CFG[type] || { title: type };
+    // moduleTitle override lets a flow use a different display name than the type's
+    // default WITHOUT changing TYPE_CFG (which drives the decision emails). e.g.
+    // Attendance Correction submission uses 'Attendance Correction' while the
+    // missing_punch DECISION email keeps 'Missing Punch'.
+    const title = moduleTitle || cfg.title;
     const s = resolveSender({ email: toEmail, label: 'Employee' });
     if (!s.ok) return auditSkip(type, `${type}_ack`, toEmail, toEmail, s.reason);
     const v = await verifyMailbox(s.sender);
     if (!v.ok) return auditSkip(type, `${type}_ack`, s.sender, toEmail, v.reason);
 
-    const { subject, html } = T.acknowledgement({ moduleTitle: cfg.title, employeeName, approverName });
+    const { subject, html } = T.acknowledgement({ moduleTitle: title, employeeName, approverName });
     // saveToSentItems=false → the applicant gets exactly ONE copy (inbox), not a
     // second copy in Sent. This is the ONLY email the employee should receive.
     const r = await sendEmail(toEmail, subject, html, { from: s.sender, saveToSentItems: false, meta: { type: `${type}_ack` } });
-    global.logger?.[r?.success ? 'info' : 'error'](`${cfg.title} acknowledgement FROM ${s.sender} → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+    global.logger?.[r?.success ? 'info' : 'error'](`${title} acknowledgement FROM ${s.sender} → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailApplyAcknowledgement(${type}) failed: ${err.message}`);
+  }
+}
+
+/**
+ * Attendance Correction request → ONE actionable email to the WHOLE authorized HR
+ * queue: every ACTIVE Super Admin + HR Manager on the TO line (NO CC). There is no
+ * employee-selected approver. FROM = the employee's OWN company mailbox (resolved
+ * from actor.email; if missing/invalid it is skipped + audited, NEVER sent from
+ * info@). All recipients get the SAME actionable email, but receiving it grants
+ * nothing — the approval API re-validates the acting user's role on every click
+ * (canActOnApproval), so authorization is unchanged.
+ * d: { recordId, actor:{id,name,email}, details:[[label,value]…], applyTime }
+ */
+async function emailCorrectionRequestToHR({ recordId, actor, details, applyTime }) {
+  try {
+    const approvers = await getApprovers();                                    // active super_admin + hr_manager (Dataverse roles)
+    const to = approvers.map(a => a.hr_email).filter(e => e && !isPlaceholderEmail(e));
+    if (!to.length) { global.logger?.warn('Attendance Correction email skipped: no HR recipients'); return; }
+
+    const s = resolveSender({ email: actor?.email, label: 'Employee' });       // FROM = employee mailbox (no fallback)
+    if (!s.ok) return auditSkip('missing_punch', 'missing_punch_new_hr', actor?.email, to.join(','), s.reason);
+    const v = await verifyMailbox(s.sender);
+    if (!v.ok) return auditSkip('missing_punch', 'missing_punch_new_hr', s.sender, to.join(','), v.reason);
+
+    const cardInfo = await employeeCardInfo(actor.id);
+    const employee = { name: actor?.name, id: cardInfo.employeeId || '—', department: cardInfo.department, email: actor?.email };
+    const { approveUrl, rejectUrl } = approvalUrls('missing_punch', recordId);  // signed per-request (not per-user)
+    // Submission display name is 'Attendance Correction'; TYPE_CFG (→ decision email) stays 'Missing Punch'.
+    const a = T.newRequestApprover({
+      moduleTitle: 'Attendance Correction', employee, rows: details,
+      applyTime: time.fmtDateTime(applyTime), approverName: 'HR Team', approveUrl, rejectUrl, status: 'L1 Pending',
+    });
+    // ONE email, all HR/Super Admin on TO, no CC.
+    const r = await sendEmail(to, a.subject, a.html, { from: s.sender, saveToSentItems: false, meta: { type: 'missing_punch_new_hr' } });
+    global.logger?.[r?.success ? 'info' : 'error'](
+      `Attendance Correction request FROM ${s.sender} → ${to.join(',')}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+    // In-app notification to each HR approver (email is the actionable channel).
+    for (const ap of approvers) if (ap.hr_hremployeeid) notifyUser(ap.hr_hremployeeid, 'request:new', { requestType: 'missing_punch', id: recordId, employeeName: actor?.name });
+  } catch (err) {
+    global.logger?.error(`emailCorrectionRequestToHR failed: ${err.message}`);
   }
 }
 
@@ -269,7 +314,7 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
 }
 
 module.exports = {
-  notifyNewRequest, emailApplyAcknowledgement, emailDecisionToEmployee,
+  notifyNewRequest, emailApplyAcknowledgement, emailCorrectionRequestToHR, emailDecisionToEmployee,
   getApprovers, isPlaceholderEmail, getLeaveBalance, approvalUrls,
   isAuthorizedApprovalRole, canActOnApproval, AUTHORIZED_APPROVAL_ROLES,
   employeeIdOf, employeeCardInfo,

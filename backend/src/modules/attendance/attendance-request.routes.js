@@ -160,19 +160,19 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     // Activity + emails (best-effort, never block the response).
     activity.record({ category: 'Attendance', type: 'correction_submitted', title: 'Attendance Correction Request',
       name: req.user.name, meta: `${PUNCH_TYPES[punchType]} @ ${requestedTime} on ${dateOnly}` });
-    requestNotify.emailApplyAcknowledgement({ type: 'missing_punch', toEmail: req.user.email, employeeName: req.user.name, approverName: 'HR' });
-    (async () => {
-      try {
-        const approvers = await requestNotify.getApprovers();
-        const approver = approvers[0];
-        if (approver) requestNotify.notifyNewRequest({
-          type: 'missing_punch', recordId: created.hr_attendancerequestid, actor: req.user,
-          details: [['Date', time.fmtDate(attendanceDate)], ['Punch Type', PUNCH_TYPES[punchType]], ['Requested Time', requestedTime], ['Reason', reason || '—']],
-          applyTime: new Date().toISOString(),
-          approver: { id: approver.hr_hremployeeid, name: approver.hr_hremployee1, email: approver.hr_email },
-        });
-      } catch (_) {}
-    })();
+    // Employee acknowledgement — "Attendance Correction Request Submitted", FROM the
+    // employee's own mailbox. (moduleTitle overrides the display name for THIS email
+    // only; the missing_punch DECISION email keeps its "Missing Punch" wording.)
+    requestNotify.emailApplyAcknowledgement({ type: 'missing_punch', moduleTitle: 'Attendance Correction', toEmail: req.user.email, employeeName: req.user.name, approverName: 'HR' });
+    // ONE actionable "Attendance Correction Request - {name}" email to the WHOLE
+    // authorized HR queue (all active Super Admin + HR Manager) on the TO line, no
+    // CC. FROM = the employee's own mailbox. Fire-and-forget — never blocks/faults
+    // the submission; the record is already saved.
+    requestNotify.emailCorrectionRequestToHR({
+      recordId: created.hr_attendancerequestid, actor: req.user,
+      details: [['Date', time.fmtDate(attendanceDate)], ['Punch Type', PUNCH_TYPES[punchType]], ['Requested Time', requestedTime], ['Reason', reason || '—']],
+      applyTime: new Date().toISOString(),
+    }).catch(() => {});
 
     res.status(201).json({ data: view(created) });
   } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
