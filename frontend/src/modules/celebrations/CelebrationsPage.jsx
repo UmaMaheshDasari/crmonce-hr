@@ -54,6 +54,7 @@ export default function CelebrationsPage() {
         hr_birthdaysubject: t.birthday.subject, hr_birthdaybody: t.birthday.body, hr_birthdaynotif: t.birthday.notif,
         hr_marriagesubject: t.marriage_anniversary.subject, hr_marriagebody: t.marriage_anniversary.body, hr_marriagenotif: t.marriage_anniversary.notif,
         hr_worksubject: t.work_anniversary.subject, hr_workbody: t.work_anniversary.body, hr_worknotif: t.work_anniversary.notif,
+        hr_ccrecipients: form.ccRecipients || '',
       });
     },
     onSuccess: (res) => {
@@ -112,7 +113,14 @@ export default function CelebrationsPage() {
           </div>
         </div>
 
-        <p className="text-xs text-gray-400">Templates support placeholders: <code className="text-indigo-600">{'{firstName}'}</code>, <code className="text-indigo-600">{'{name}'}</code>, <code className="text-indigo-600">{'{years}'}</code>, <code className="text-indigo-600">{'{department}'}</code>, <code className="text-indigo-600">{'{designation}'}</code>.</p>
+        <div className="rounded-xl border border-gray-100 p-4 space-y-1.5">
+          <label className="block text-xs font-semibold text-gray-600">Information (CC) Recipients</label>
+          <input className={inp} placeholder="hr@crmonce.com, team-lead@crmonce.com"
+            value={form.ccRecipients || ''} onChange={e => setForm(f => ({ ...f, ccRecipients: e.target.value }))} />
+          <p className="text-[11px] text-gray-400">Comma-separated. These addresses are <span className="font-semibold text-gray-500">CC'd for information only</span> — the employee is always the TO recipient of the HR wish. Leave blank to send only to the employee.</p>
+        </div>
+
+        <p className="text-xs text-gray-400">Templates support placeholders: <code className="text-indigo-600">{'{firstName}'}</code>, <code className="text-indigo-600">{'{name}'}</code>, <code className="text-indigo-600">{'{years}'}</code>, <code className="text-indigo-600">{'{department}'}</code>, <code className="text-indigo-600">{'{designation}'}</code>. The professional email design, the “For Information” CC note and the anniversary years line are applied automatically.</p>
 
         {EVENTS.map(ev => (
           <div key={ev.key} className="rounded-xl border border-gray-100 p-4 space-y-3">

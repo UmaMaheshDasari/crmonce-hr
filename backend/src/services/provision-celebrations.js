@@ -34,6 +34,8 @@ const SETTINGS = {
     str('hr_MarriageEnabled', 'Enable Marriage Anniversary Wishes', 6),
     str('hr_WorkAnnivEnabled', 'Enable Work Anniversary Wishes', 6),
     str('hr_SendTime', 'Send Time (HH:MM)', 5),
+    str('hr_CCRecipients', 'Information CC Recipients', 2000),  // comma-separated info-only addresses
+
     // Per-event email subject + body + in-app notification templates.
     str('hr_BirthdaySubject', 'Birthday Email Subject', 200),
     memo('hr_BirthdayBody', 'Birthday Email Body'),
@@ -81,18 +83,30 @@ const isLocked = (m) => /CustomizationLockException|customization is already run
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function post(path, body) { const headers = await d365.getHeaders({ 'Content-Type': 'application/json' }); return axios.post(`${d365.baseUrl}/${path}`, body, { headers }); }
 
-async function createSchema(t, log) {
-  try { await post('EntityDefinitions', entityBody(t)); log?.info?.(`[provision] created entity ${t.schema}`); }
-  catch (e) { const m = e.response?.data?.error?.message || e.message; if (isExists(m)) log?.info?.(`[provision] entity ${t.schema} already exists`); else if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); else throw new Error(m); }
+// Add every column (idempotent): an already-present column is a no-op, a lock
+// bubbles up so the caller can retry, any other failure is a warning only.
+async function addColumns(t, log) {
   for (const c of t.columns) {
     try { await post(`EntityDefinitions(LogicalName='${t.logical}')/Attributes`, c); }
     catch (e) { const m = e.response?.data?.error?.message || e.message; if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); if (!isExists(m)) log?.warn?.(`[provision] ${t.schema} column ${c.SchemaName}: ${m}`); }
   }
 }
 
+async function createSchema(t, log) {
+  try { await post('EntityDefinitions', entityBody(t)); log?.info?.(`[provision] created entity ${t.schema}`); }
+  catch (e) { const m = e.response?.data?.error?.message || e.message; if (isExists(m)) log?.info?.(`[provision] entity ${t.schema} already exists`); else if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); else throw new Error(m); }
+  await addColumns(t, log);
+}
+
 async function ensureOne(t, log, opts) {
-  const { retry = false, retryIntervalMs = 30000, retryTimeoutMs = 10 * 60 * 1000 } = opts;
-  try { await d365.getList(t.set, { top: 1 }); return { status: 'exists' }; }
+  const { retry = false, retryIntervalMs = 30000, retryTimeoutMs = 10 * 60 * 1000, ensureColumns = false } = opts;
+  try {
+    await d365.getList(t.set, { top: 1 });
+    // Table already exists — best-effort add of any NEW columns (e.g. hr_ccrecipients
+    // added after the table was first created). Idempotent; failures are non-fatal.
+    if (ensureColumns) { try { await addColumns(t, log); } catch (e) { if (!e.locked) log?.warn?.(`[provision] ${t.set} column ensure skipped: ${e.message}`); } }
+    return { status: 'exists' };
+  }
   catch (e) {
     const m = e.response?.data?.error?.message || e.message;
     if (!isMissing(m)) { log?.warn?.(`[provision] ${t.set} probe inconclusive (${m}); skipping`); return { status: 'unavailable', reason: m }; }
@@ -113,7 +127,9 @@ async function ensureOne(t, log, opts) {
 
 /** Ensure BOTH celebration tables exist. Best-effort, lock-aware. */
 async function ensureCelebrationTables(log = console, opts = {}) {
-  const settings = await ensureOne(SETTINGS, log, opts);
+  // ensureColumns on the settings table so a newly-added column (hr_ccrecipients)
+  // is provisioned onto an already-existing table, not only on fresh installs.
+  const settings = await ensureOne(SETTINGS, log, { ...opts, ensureColumns: true });
   const logs = await ensureOne(LOGS, log, opts);
   return { settings, logs };
 }

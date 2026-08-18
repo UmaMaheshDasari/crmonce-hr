@@ -9,6 +9,8 @@ process.env.AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || 'test-tenant';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const svc = require('../src/services/celebrations.service');
+const notifSvc = require('../src/services/notification.service');
+let activitySvc; try { activitySvc = require('../src/services/activity.service'); } catch { activitySvc = null; }
 
 test('mmdd: parses YYYY-MM-DD and ISO timestamps', () => {
   assert.strictEqual(svc.mmdd('1990-12-25'), '12-25');
@@ -90,4 +92,105 @@ test('merge: empty-string / null columns fall back to default (present-check, no
   const m = svc.merge({ hr_sendtime: '', hr_birthdaysubject: null });
   assert.strictEqual(m.hr_sendtime, svc.DEFAULTS.hr_sendtime);          // '' is absent → default
   assert.strictEqual(m.hr_birthdaysubject, svc.DEFAULTS.hr_birthdaysubject); // null is absent → default
+});
+
+// ── completed-years wording (marriage anniversary) ────────────────────────────
+test('togethernessLine: 1 year is singular, 2+ are "wonderful years", 0/invalid → none', () => {
+  assert.strictEqual(svc.togethernessLine(1), 'Celebrating 1 year of togetherness');
+  assert.strictEqual(svc.togethernessLine(2), 'Celebrating 2 wonderful years of togetherness');
+  assert.strictEqual(svc.togethernessLine(3), 'Celebrating 3 wonderful years of togetherness');
+  assert.strictEqual(svc.togethernessLine(5), 'Celebrating 5 wonderful years of togetherness');
+  assert.strictEqual(svc.togethernessLine('7'), 'Celebrating 7 wonderful years of togetherness');
+  assert.strictEqual(svc.togethernessLine(0), '');
+  assert.strictEqual(svc.togethernessLine(null), '');
+  assert.strictEqual(svc.togethernessLine(undefined), '');
+});
+
+// ── CC (information recipients) parsing ───────────────────────────────────────
+test('parseCcList: valid + de-duped, drops junk/placeholders, never the employee', () => {
+  const cc = svc.parseCcList('hr@crmonce.com, HR@crmonce.com , notanemail, foo@example.com, vishwesh@crmonce.com', 'vishwesh@crmonce.com');
+  assert.deepStrictEqual(cc, ['hr@crmonce.com']); // dup folded, junk + example.com placeholder dropped, self excluded
+});
+test('parseCcList: blank / null input → no CC', () => {
+  assert.deepStrictEqual(svc.parseCcList('', 'a@crmonce.com'), []);
+  assert.deepStrictEqual(svc.parseCcList('   ', 'a@crmonce.com'), []);
+  assert.deepStrictEqual(svc.parseCcList(null, ''), []);
+});
+
+// ── professional email HTML (Outlook-safe, TO vs CC framing) ──────────────────
+test('buildEmailHtml: birthday — name + title + greeting, no external assets, no CC strip', () => {
+  const html = svc.buildEmailHtml('birthday', { name: 'Vishwesh Boina', company: 'CRMONCE' }, 'Dear Vishwesh,\n\nHappy Birthday!', 0);
+  assert.match(html, /Vishwesh Boina/);
+  assert.match(html, /Happy Birthday/);
+  assert.doesNotMatch(html, /src=|http:\/\/|https:\/\//);  // nothing Outlook would block
+  assert.doesNotMatch(html, /For Information/);            // no CC → no info strip
+});
+test('buildEmailHtml: with CC → "For Information" strip is added, greeting still to employee', () => {
+  const html = svc.buildEmailHtml('birthday', { name: 'Vishwesh Boina' }, 'Dear Vishwesh, On behalf of HR...', 2);
+  assert.match(html, /For Information/);
+  assert.match(html, /birthday is today/);
+  assert.match(html, /information only/);
+  assert.match(html, /On behalf of HR/);
+});
+test('buildEmailHtml: marriage anniversary shows the correct completed-years line', () => {
+  assert.match(svc.buildEmailHtml('marriage_anniversary', { name: 'A B', years: 1 }, 'x', 0), /Celebrating 1 year of togetherness/);
+  assert.match(svc.buildEmailHtml('marriage_anniversary', { name: 'A B', years: 5 }, 'x', 0), /Celebrating 5 wonderful years of togetherness/);
+});
+test('buildEmailHtml: dynamic values are escaped (no HTML injection via the name)', () => {
+  const html = svc.buildEmailHtml('birthday', { name: '<script>x</script>' }, 'hi', 0);
+  assert.doesNotMatch(html, /<script>x<\/script>/);
+  assert.match(html, /&lt;script&gt;/);
+});
+
+// ── sendOne: ONE email, TO = employee, CC = information recipients ─────────────
+function settingsFixture(cc = '') {
+  return {
+    ccRecipients: cc,
+    templates: {
+      birthday: { subject: 'Happy Birthday - {name}', body: 'Dear {firstName},\n\nOn behalf of HR, we wish you a very Happy Birthday!\n\nRegards,\nHR Team', notif: 'Hi {firstName}' },
+      marriage_anniversary: { subject: 'Happy Marriage Anniversary - {name}', body: 'Dear {firstName},\n\nHappy Anniversary!\n\nRegards,\nHR Team', notif: 'Hi {firstName}' },
+      work_anniversary: { subject: 'Work - {name}', body: 'Hi {firstName}, {years} years', notif: 'Hi' },
+    },
+  };
+}
+async function withCapturedEmail(fn) {
+  const origSend = notifSvc.sendEmail, origNotify = notifSvc.notifyUser, origAct = activitySvc && activitySvc.record;
+  let captured = null;
+  notifSvc.sendEmail = async (to, subject, html, opts) => { captured = { to, subject, html, opts }; return { success: true }; };
+  notifSvc.notifyUser = () => {};
+  if (activitySvc) activitySvc.record = () => {};
+  try { const res = await fn(); return { captured, res }; }
+  finally { notifSvc.sendEmail = origSend; notifSvc.notifyUser = origNotify; if (activitySvc) activitySvc.record = origAct; }
+}
+
+test('sendOne birthday: TO = employee, CC = cleaned info list, subject has the name', async () => {
+  const emp = { id: 'e1', name: 'Vishwesh Boina', firstName: 'Vishwesh', email: 'vishwesh@crmonce.com', department: 'Sales', designation: 'Executive' };
+  const { captured, res } = await withCapturedEmail(() =>
+    svc.sendOne('birthday', emp, settingsFixture('hr@crmonce.com, vishwesh@crmonce.com, hr@crmonce.com')));
+  assert.strictEqual(res.emailStatus, 'sent');
+  assert.strictEqual(captured.to, 'vishwesh@crmonce.com');       // TO = the employee
+  assert.deepStrictEqual(captured.opts.cc, ['hr@crmonce.com']);  // employee excluded + dup folded
+  assert.match(captured.subject, /Happy Birthday/);
+  assert.match(captured.subject, /Vishwesh Boina/);
+  assert.match(captured.html, /On behalf of HR/);               // congratulations addressed to employee
+  assert.match(captured.html, /For Information/);               // CC info strip present
+});
+test('sendOne birthday: no CC configured → single TO email, no info strip', async () => {
+  const emp = { id: 'e1', name: 'A B', firstName: 'A', email: 'a@crmonce.com' };
+  const { captured } = await withCapturedEmail(() => svc.sendOne('birthday', emp, settingsFixture('')));
+  assert.strictEqual(captured.opts.cc, undefined);
+  assert.doesNotMatch(captured.html, /For Information/);
+});
+test('sendOne marriage: correct completed-years line; CC excludes the employee', async () => {
+  const emp = { id: 'e2', name: 'Priya Sharma', firstName: 'Priya', email: 'priya@crmonce.com', years: 5 };
+  const { captured } = await withCapturedEmail(() =>
+    svc.sendOne('marriage_anniversary', emp, settingsFixture('priya@crmonce.com, hr@crmonce.com')));
+  assert.deepStrictEqual(captured.opts.cc, ['hr@crmonce.com']);
+  assert.match(captured.html, /Celebrating 5 wonderful years of togetherness/);
+});
+test('sendOne: employee without an email → email skipped, sendEmail never called', async () => {
+  const emp = { id: 'e3', name: 'No Email', firstName: 'No', email: '' };
+  const { captured, res } = await withCapturedEmail(() => svc.sendOne('birthday', emp, settingsFixture('hr@crmonce.com')));
+  assert.strictEqual(res.emailStatus, 'skipped');
+  assert.strictEqual(captured, null);
 });

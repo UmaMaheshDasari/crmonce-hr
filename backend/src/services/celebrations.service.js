@@ -20,6 +20,7 @@ const { toValue } = require('./picklist');
 const { resolvePhoto } = require('./employee-photo.util');
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
+let sender; try { sender = require('./email/sender'); } catch (_) { sender = null; }
 
 const EMP = d365.constructor.entities.employee;
 const SETTINGS_SET = 'hr_celebrationsettings';
@@ -33,15 +34,20 @@ const DEFAULTS = {
   hr_marriageenabled: 'true',
   hr_workannivenabled: 'true',
   hr_sendtime: '09:00',
-  hr_birthdaysubject: '🎉 Happy Birthday!',
-  hr_birthdaybody: 'Happy Birthday {firstName}!\n\nWishing you a wonderful year ahead. Have a fantastic day!\n\nFrom,\nCRMONCE HR Team',
-  hr_birthdaynotif: '🎂 Happy Birthday, {firstName}! Wishing you a wonderful year ahead.',
-  hr_marriagesubject: '💐 Happy Wedding Anniversary!',
-  hr_marriagebody: 'Congratulations {firstName}!\n\nWishing you and your family many more wonderful years together.\n\nRegards,\nCRMONCE HR Team',
-  hr_marriagenotif: '💐 Happy Wedding Anniversary, {firstName}!',
-  hr_worksubject: '🎉 Happy Work Anniversary!',
-  hr_workbody: 'Congratulations {firstName} on completing {years} year(s) with CRMONCE!\n\nThank you for being a valuable part of our team.\n\nRegards,\nCRMONCE HR Team',
-  hr_worknotif: '🏆 Happy Work Anniversary, {firstName}! {years} year(s) with CRMONCE.',
+  // Information-only recipients CC'd on every wish (comma/space separated). The
+  // employee is always the TO; these addresses are copied for their information.
+  hr_ccrecipients: '',
+  // Bodies are the HR greeting addressed to the EMPLOYEE (TO). The professional
+  // HTML shell, the "For Information" CC strip and the years line are added in code.
+  hr_birthdaysubject: '🎉 Happy Birthday – {name}',
+  hr_birthdaybody: 'Dear {firstName},\n\nOn behalf of HR, we wish you a very Happy Birthday!\n\nWishing you happiness, good health, and continued success in the year ahead.\n\nRegards,\nHR Team',
+  hr_birthdaynotif: '🎂 Happy Birthday, {firstName}! Wishing you happiness, good health and continued success.',
+  hr_marriagesubject: '💐 Happy Marriage Anniversary – {name}',
+  hr_marriagebody: 'Dear {firstName},\n\nOn behalf of HR, we wish you a very Happy Marriage Anniversary!\n\nWishing you both many more years of happiness, togetherness, and wonderful memories.\n\nRegards,\nHR Team',
+  hr_marriagenotif: '💐 Happy Marriage Anniversary, {firstName}!',
+  hr_worksubject: '🏆 Happy Work Anniversary – {name}',
+  hr_workbody: 'Dear {firstName},\n\nOn behalf of HR, congratulations on completing {years} year(s) with {company}!\n\nThank you for your dedication and valuable contribution. We look forward to many more wonderful years together.\n\nRegards,\nHR Team',
+  hr_worknotif: '🏆 Happy Work Anniversary, {firstName}! {years} year(s) with {company}.',
 };
 const FIELDS = Object.keys(DEFAULTS);
 // Only these are writable via the settings PUT (whitelist).
@@ -89,6 +95,7 @@ async function getSettings() {
     marriageEnabled: bool(g.hr_marriageenabled),
     workAnnivEnabled: bool(g.hr_workannivenabled),
     sendTime: /^\d{2}:\d{2}$/.test(g.hr_sendtime) ? g.hr_sendtime : '09:00',
+    ccRecipients: g.hr_ccrecipients || '',
     templates: {
       birthday: { subject: g.hr_birthdaysubject, body: g.hr_birthdaybody, notif: g.hr_birthdaynotif },
       marriage_anniversary: { subject: g.hr_marriagesubject, body: g.hr_marriagebody, notif: g.hr_marriagenotif },
@@ -100,10 +107,25 @@ async function getSettings() {
 async function updateSettings(patch = {}) {
   const clean = {};
   for (const k of WRITABLE) if (patch[k] !== undefined) clean[k] = String(patch[k]);
+  // Resilient save (mirrors the resilient read): if a column is not yet
+  // provisioned (e.g. hr_ccrecipients on an older table), strip ONLY that column
+  // and retry — a single missing column must never fail the whole settings save.
+  let payload = { ...clean };
   const row = await getSettingsRow();
-  let saved;
-  if (row.hr_celebrationsettingid) saved = await d365.update(SETTINGS_SET, row.hr_celebrationsettingid, clean);
-  else saved = await d365.create(SETTINGS_SET, { hr_name: 'Default Celebration Settings', ...clean });
+  for (let i = 0; i <= Object.keys(payload).length; i++) {
+    try {
+      if (row.hr_celebrationsettingid) await d365.update(SETTINGS_SET, row.hr_celebrationsettingid, payload);
+      else await d365.create(SETTINGS_SET, { hr_name: 'Default Celebration Settings', ...payload });
+      break;
+    } catch (err) {
+      const prop = d365._isMissingProperty?.(err) ? d365._missingPropertyName?.(err) : null;
+      if (prop && prop in payload) {
+        global.logger?.warn?.(`[celebrations] settings save: dropping unprovisioned column ${prop}`);
+        const { [prop]: _omit, ...rest } = payload; payload = rest; continue;
+      }
+      throw err;
+    }
+  }
   invalidate();
   return getSettings();
 }
@@ -112,9 +134,21 @@ async function updateSettings(patch = {}) {
 // Each event has a template key + the in-app socket event name. Adding a new event
 // (festival/new-year/…) = add an entry here + a detector in findToday().
 const EVENTS = {
-  birthday: { label: 'Birthday', enabled: 'birthdayEnabled', notifEvent: 'celebration:birthday' },
-  marriage_anniversary: { label: 'Marriage Anniversary', enabled: 'marriageEnabled', notifEvent: 'celebration:marriage' },
-  work_anniversary: { label: 'Work Anniversary', enabled: 'workAnnivEnabled', notifEvent: 'celebration:work' },
+  birthday: {
+    label: 'Birthday', enabled: 'birthdayEnabled', notifEvent: 'celebration:birthday',
+    emailTitle: 'Happy Birthday', icon: '🎉', accent: '#4f46e5',
+    infoText: (name) => `${name}'s birthday is today.`,
+  },
+  marriage_anniversary: {
+    label: 'Marriage Anniversary', enabled: 'marriageEnabled', notifEvent: 'celebration:marriage',
+    emailTitle: 'Happy Marriage Anniversary', icon: '💐', accent: '#be185d',
+    infoText: (name) => `${name} is celebrating their marriage anniversary today.`,
+  },
+  work_anniversary: {
+    label: 'Work Anniversary', enabled: 'workAnnivEnabled', notifEvent: 'celebration:work',
+    emailTitle: 'Happy Work Anniversary', icon: '🏆', accent: '#0f766e',
+    infoText: (name) => `${name} is celebrating their work anniversary today.`,
+  },
 };
 
 // ── date helpers ──────────────────────────────────────────────────────────────
@@ -148,6 +182,92 @@ function matchesToday(dateVal, today) {
 }
 const firstNameOf = (n) => String(n || '').trim().split(/\s+/)[0] || 'there';
 function fill(tpl, ctx) { return String(tpl ?? '').replace(/\{(\w+)\}/g, (_, k) => (ctx[k] != null ? String(ctx[k]) : '')); }
+
+// ── email presentation (professional, Outlook-compatible, no external assets) ──
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** Correct "years completed" wording for a marriage anniversary (1 → singular). */
+function togethernessLine(years) {
+  const n = Number(years);
+  if (!Number.isFinite(n) || n < 1) return '';
+  return n === 1 ? 'Celebrating 1 year of togetherness' : `Celebrating ${n} wonderful years of togetherness`;
+}
+/** The small accent chip shown under the name (anniversaries only). */
+function yearsChip(type, ctx) {
+  if (type === 'marriage_anniversary') return togethernessLine(ctx.years);
+  const n = Number(ctx.years);
+  if (type === 'work_anniversary' && Number.isFinite(n) && n >= 1) return `Celebrating ${n} year${n === 1 ? '' : 's'} with ${ctx.company}`;
+  return '';
+}
+/** Plain-text template body → escaped HTML paragraphs (Outlook-safe). */
+function bodyToHtml(text) {
+  return esc(text).split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px 0">${p.replace(/\n/g, '<br/>')}</p>`).join('');
+}
+/**
+ * Parse the HR CC list into clean addresses: valid shape, de-duped, no placeholder
+ * domains, and NEVER the employee's own address (they are the TO recipient).
+ */
+function parseCcList(raw, excludeEmail) {
+  const ex = String(excludeEmail || '').trim().toLowerCase();
+  const seen = new Set(); const out = [];
+  for (const part of String(raw || '').split(/[,;\s]+/)) {
+    const e = part.trim(); if (!e) continue;
+    const lc = e.toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) continue;                       // shape
+    if (sender?.isPlaceholder && sender.isPlaceholder(e)) continue;            // seed/example domains
+    if (lc === ex || seen.has(lc)) continue;                                   // no self, no dupes
+    seen.add(lc); out.push(e);
+  }
+  return out;
+}
+/**
+ * Build ONE professional, Outlook-compatible email. The greeting is addressed to
+ * the EMPLOYEE (the TO recipient); when CC information-recipients exist, a clearly
+ * labelled "For Information" strip explains the copy so CC readers never mistake
+ * the HR congratulations as addressed to them. Table layout, inline styles, emoji
+ * (no images/fonts/links) — nothing for Outlook to block.
+ */
+function buildEmailHtml(type, ctx, greetingText, ccCount = 0) {
+  const ev = EVENTS[type] || {};
+  const accent = ev.accent || '#4f46e5';
+  const title = esc(ev.emailTitle || ev.label || 'Celebration');
+  const icon = ev.icon || '🎉';
+  const name = esc(ctx.name || 'Employee');
+  const role = [ctx.designation, ctx.department].filter(Boolean).map(esc).join(' &middot; ');
+  const chip = esc(yearsChip(type, ctx));
+  const company = esc(ctx.company || COMPANY);
+  const greeting = bodyToHtml(greetingText);
+  const info = esc(ev.infoText ? ev.infoText(ctx.name || 'This employee') : `${ctx.name || 'This employee'} has a celebration today.`);
+  const font = "font-family:'Segoe UI',Roboto,Arial,Helvetica,sans-serif";
+  const infoStrip = ccCount > 0 ? `
+      <tr><td style="padding:6px 32px 22px 32px">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:8px">
+          <tr><td style="padding:12px 14px;${font};font-size:12.5px;color:#6b7280;line-height:1.55">
+            <strong style="color:#374151">For Information:</strong> ${info}<br/>
+            <span style="color:#9ca3af">You are copied (CC) on this message — it is shared for your information only.</span>
+          </td></tr>
+        </table>
+      </td></tr>` : '';
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f5f7;margin:0;padding:0;${font}">
+  <tr><td align="center" style="padding:24px 12px">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px">
+      <tr><td align="center" style="background:${accent};padding:26px 32px;border-radius:12px 12px 0 0">
+        <div style="font-size:38px;line-height:1">${icon}</div>
+        <div style="color:#ffffff;font-size:21px;font-weight:700;padding-top:6px">${title}</div>
+      </td></tr>
+      <tr><td align="center" style="padding:22px 32px 4px 32px">
+        <div style="font-size:19px;font-weight:700;color:#111827">${name}</div>
+        ${role ? `<div style="font-size:13px;color:#6b7280;padding-top:3px">${role}</div>` : ''}
+        ${chip ? `<div style="display:inline-block;margin-top:12px;padding:5px 14px;background:#f3f4f6;color:${accent};font-size:12.5px;font-weight:600;border-radius:14px">${chip}</div>` : ''}
+      </td></tr>
+      <tr><td style="padding:18px 32px 4px 32px;color:#374151;font-size:15px;line-height:1.7">${greeting}</td></tr>${infoStrip}
+      <tr><td align="center" style="background:#fafafa;border-top:1px solid #eef0f2;border-radius:0 0 12px 12px;padding:16px 32px">
+        <div style="color:#9ca3af;font-size:11.5px;line-height:1.55">${company} &middot; HR Team<br/>This is an automated HR notification. Please do not reply to this email.</div>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>`;
+}
 
 // ── employee scan ─────────────────────────────────────────────────────────────
 const EMP_SELECT = 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,hr_status,hr_joiningdate';
@@ -231,16 +351,24 @@ async function writeLog({ id, employeeId, employeeName, type, date, emailStatus,
 async function sendOne(type, emp, settings) {
   const tpl = settings.templates[type] || {};
   const ctx = { name: emp.name, firstName: emp.firstName || firstNameOf(emp.name), years: emp.years ?? '', department: emp.department, designation: emp.designation, company: COMPANY };
-  const subject = fill(tpl.subject, ctx) || EVENTS[type]?.label || 'Celebration';
-  const bodyText = fill(tpl.body, ctx);
+  const subject = fill(tpl.subject, ctx) || `${EVENTS[type]?.emailTitle || EVENTS[type]?.label || 'Celebration'} – ${emp.name}`;
+  const greetingText = fill(tpl.body, ctx);
   const notifText = fill(tpl.notif, ctx) || subject;
 
-  // Email (best-effort).
+  // Email (best-effort). ONE email: TO = employee (HR congratulations); CC =
+  // HR-configured information recipients (never the employee, never duplicated).
+  // FROM stays the default HR/system mailbox (GRAPH_SENDER) — this is an
+  // HR-generated notification, not an employee-submitted request.
   let emailStatus = 'skipped';
+  let cc = [];
   if (emp.email) {
-    const html = `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:15px;color:#111;line-height:1.6">${bodyText.replace(/\n/g, '<br/>')}</div>`;
+    cc = parseCcList(settings.ccRecipients, emp.email);
+    const html = buildEmailHtml(type, ctx, greetingText, cc.length);
     try {
-      const r = await notif?.sendEmail?.(emp.email, subject, html, { meta: { type: `celebration_${type}` } });
+      const r = await notif?.sendEmail?.(emp.email, subject, html, {
+        cc: cc.length ? cc : undefined,
+        meta: { type: `celebration_${type}` },
+      });
       emailStatus = r?.success ? 'sent' : 'failed';
     } catch { emailStatus = 'failed'; }
   }
@@ -251,7 +379,9 @@ async function sendOne(type, emp, settings) {
     activity?.record?.({ category: 'Celebration', type: `celebration_${type}`, title: EVENTS[type]?.label || 'Celebration', name: emp.name, meta: notifText });
   } catch { notifStatus = 'failed'; }
 
-  return { emailStatus, notifStatus, detail: emp.years ? `${emp.years} year(s)` : (emp.email || '') };
+  const detail = [emp.years ? `${emp.years} year(s)` : (emp.email || ''), cc.length ? `cc:${cc.length}` : '']
+    .filter(Boolean).join(' · ');
+  return { emailStatus, notifStatus, detail };
 }
 
 /**
@@ -315,4 +445,5 @@ module.exports = {
   EVENTS, SETTINGS_SET, LOGS_SET, invalidate,
   // exposed for tests
   merge, DEFAULTS, mmdd, yearOf, matchesToday, fill, firstNameOf, todayIST,
+  sendOne, buildEmailHtml, togethernessLine, parseCcList,
 };
