@@ -361,6 +361,7 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
       remarks: remarks || '', status,
       fromDate: current.hr_fromdate, toDate: current.hr_todate,
       leaveType: toLabel('hr_leave_type', current.hr_leavetype),
+      requestDays: resolveDays(current.hr_days, current.hr_fromdate, current.hr_todate),
     });
   }
 
@@ -700,6 +701,7 @@ router.patch('/:id/l1', async (req, res, next) => {
         remarks: updatePayload.hr_remarks, status: finalStatus,
         fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
         leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
+        requestDays: resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate),
       });
     }
 
@@ -773,6 +775,7 @@ router.patch('/:id/l2', async (req, res, next) => {
       remarks: updatePayload.hr_remarks, status: l2Final,
       fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
       leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
+      requestDays: resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate),
     });
 
     broadcast('leave:updated', { leaveId: req.params.id, action, level: 'L2' });

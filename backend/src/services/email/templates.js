@@ -40,48 +40,51 @@ const statusKey = (s) => {
 function statusBadge(status) {
   const c = STATUS_COLORS[statusKey(status)];
   return `<span role="status" style="display:inline-block;padding:4px 12px;border-radius:999px;` +
-    `background:${c.bg};color:${c.fg};font-size:12px;font-weight:700;letter-spacing:.02em;">` +
+    `background-color:${c.bg};color:${c.fg};font-size:12px;font-weight:700;letter-spacing:.02em;">` +
     `<span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;` +
-    `background:${c.dot};margin-right:6px;"></span>${esc(status)}</span>`;
+    `background-color:${c.dot};margin-right:6px;"></span>${esc(status)}</span>`;
 }
 
 function button(label, url, variant = 'primary') {
   const bg = variant === 'reject' ? '#dc2626' : variant === 'approve' ? '#059669' : cfg.brand.primary;
+  // Solid background-color (no gradient) + explicit white text so the button
+  // stays a filled, readable pill in every Outlook theme.
   return `<a href="${esc(url)}" role="button" aria-label="${esc(label)}" ` +
-    `style="display:inline-block;padding:13px 30px;margin:0 6px;border-radius:10px;background:${bg};` +
+    `style="display:inline-block;padding:13px 30px;margin:0 6px;border-radius:10px;background-color:${bg};` +
     `color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;">${esc(label)}</a>`;
 }
 
 function header() {
   const b = cfg.brand;
+  // Solid navy background (NO gradient — Outlook's Word engine drops gradients,
+  // which would leave white header text on no background). bgcolor + inline color.
   return `
-  <tr><td style="padding:0;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,${b.navy} 0%,#0E2F44 100%);border-radius:16px 16px 0 0;">
-      <tr><td style="padding:26px 32px;">
-        <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-          <td style="vertical-align:middle;">
-            <span style="display:inline-block;width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,${b.primary},${b.primaryDark});text-align:center;line-height:40px;color:#fff;font-weight:800;font-size:18px;">C</span>
-          </td>
-          <td style="vertical-align:middle;padding-left:12px;">
-            <div style="color:#ffffff;font-size:18px;font-weight:800;letter-spacing:.02em;">${esc(b.name)}</div>
-            <div style="color:#9db3c4;font-size:11px;text-transform:uppercase;letter-spacing:.12em;">${esc(b.tagline)}</div>
-          </td>
+  <tr><td bgcolor="${b.navy}" style="background-color:${b.navy};padding:26px 32px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td style="vertical-align:middle;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td bgcolor="${b.primary}" width="40" height="40" align="center" valign="middle" style="background-color:${b.primary};width:40px;height:40px;border-radius:11px;color:#ffffff;font-weight:800;font-size:18px;line-height:40px;text-align:center;">C</td>
         </tr></table>
-      </td></tr>
-    </table>
+      </td>
+      <td style="vertical-align:middle;padding-left:12px;">
+        <div style="color:#ffffff;font-size:18px;font-weight:800;letter-spacing:.02em;">${esc(b.name)}</div>
+        <div style="color:#cdd9e3;font-size:11px;text-transform:uppercase;letter-spacing:.12em;">${esc(b.tagline)}</div>
+      </td>
+    </tr></table>
   </td></tr>`;
 }
 
 function footer() {
   const b = cfg.brand;
+  // Explicit light footer background + explicit secondary-gray text (never theme-inherited).
   return `
-  <tr><td style="padding:22px 32px;border-top:1px solid #eef0f3;">
-    <p style="margin:0;color:#8a94a6;font-size:12px;line-height:1.6;">
+  <tr><td bgcolor="#f8fafc" style="background-color:#f8fafc;padding:22px 32px;border-top:1px solid #e5e7eb;">
+    <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6;">
       ${esc(b.name)} · ${esc(b.tagline)}<br>
       <a href="${esc(b.appUrl)}" style="color:${b.primary};text-decoration:none;">${esc(b.appUrl)}</a>
       · Need help? <a href="mailto:${esc(b.supportEmail)}" style="color:${b.primary};text-decoration:none;">${esc(b.supportEmail)}</a>
     </p>
-    <p style="margin:8px 0 0;color:#b3bac6;font-size:11px;">This is an automated message from ${esc(b.name)} HR.</p>
+    <p style="margin:8px 0 0;color:#94a3b8;font-size:11px;">This is an automated message from ${esc(b.name)} HR.</p>
   </td></tr>`;
 }
 
@@ -89,14 +92,16 @@ function footer() {
 function profileCard({ name, id, department, email } = {}) {
   const initials = String(name || 'E').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   return card(`
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
       <td style="width:52px;vertical-align:middle;">
-        <span style="display:inline-block;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,${cfg.brand.primary},${cfg.brand.primaryDark});text-align:center;line-height:52px;color:#fff;font-weight:800;font-size:18px;">${esc(initials)}</span>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td bgcolor="${cfg.brand.primary}" width="52" height="52" align="center" valign="middle" style="background-color:${cfg.brand.primary};width:52px;height:52px;border-radius:50%;color:#ffffff;font-weight:800;font-size:18px;line-height:52px;text-align:center;">${esc(initials)}</td>
+        </tr></table>
       </td>
       <td style="vertical-align:middle;padding-left:14px;">
         <div style="font-size:16px;font-weight:700;color:#111827;">${esc(name)}</div>
-        <div style="font-size:13px;color:#6b7280;">${esc(department || 'Employee')}${email ? ' · ' + esc(email) : ''}</div>
-        <div style="font-size:11px;color:#9ca3af;">ID: ${esc(id)}</div>
+        <div style="font-size:13px;color:#64748b;">${esc(department || 'Employee')}${email ? ' · ' + esc(email) : ''}</div>
+        <div style="font-size:11px;color:#94a3b8;">ID: ${esc(id)}</div>
       </td>
     </tr></table>`);
 }
@@ -105,7 +110,7 @@ function profileCard({ name, id, department, email } = {}) {
 function summaryCard(title, rows) {
   const body = rows.map(([k, v]) =>
     `<tr>
-      <th scope="row" style="text-align:left;padding:7px 16px 7px 0;color:#6b7280;font-size:13px;font-weight:600;white-space:nowrap;vertical-align:top;">${esc(k)}</th>
+      <th scope="row" style="text-align:left;padding:7px 16px 7px 0;color:#64748b;font-size:13px;font-weight:600;white-space:nowrap;vertical-align:top;">${esc(k)}</th>
       <td style="padding:7px 0;color:#111827;font-size:14px;">${v}</td>
     </tr>`).join('');
   return card(
@@ -117,35 +122,67 @@ function summaryCard(title, rows) {
 function banner(text, tone = 'info') {
   const c = tone === 'warn' ? { bg: '#fffbeb', fg: '#92400e', bd: '#fde68a' }
         : tone === 'success' ? { bg: '#ecfdf5', fg: '#065f46', bd: '#a7f3d0' }
-        : { bg: '#eff6ff', fg: '#1e40af', bd: '#bfdbfe' };
-  return `<div role="note" style="margin:18px 0;padding:14px 16px;border:1px solid ${c.bd};background:${c.bg};color:${c.fg};border-radius:12px;font-size:13px;line-height:1.6;">${text}</div>`;
+        : { bg: '#eff6ff', fg: '#1e40af', bd: '#bfdbfe' };   // info (light blue / dark blue)
+  // Table + bgcolor (not a bare <div>) with an explicit text color on the cell so
+  // the message stays high-contrast even if Outlook tries to darken the email.
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${c.bg}" style="background-color:${c.bg};border:1px solid ${c.bd};border-radius:12px;margin:18px 0;">
+    <tr><td style="padding:14px 16px;color:${c.fg};font-size:13px;line-height:1.6;">${text}</td></tr>
+  </table>`;
 }
 
-function card(inner) {
-  return `<div style="margin:14px 0;padding:18px 20px;border:1px solid #eef0f3;border-radius:14px;background:#ffffff;">${inner}</div>`;
+// Table-based card (Outlook honours bgcolor on cells far more reliably than
+// background on a <div>). Explicit bg + border + a base text color on the cell.
+function card(inner, { bg = '#ffffff', border = '#e5e7eb', text = '#1f2937' } = {}) {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${bg}" style="background-color:${bg};border:1px solid ${border};border-radius:14px;margin:14px 0;">
+    <tr><td style="padding:18px 20px;color:${text};font-size:14px;">${inner}</td></tr>
+  </table>`;
 }
 
-/** Base responsive + dark-mode + accessible layout. `preheader` is hidden inbox text. */
+/**
+ * Prominent stat block (used for the Leave Balance figures). Light tinted
+ * background + dark high-contrast label/value, all explicit — readable in every
+ * Outlook theme, never black-on-black or white-on-white.
+ */
+function statBlock(label, value, tone = 'info') {
+  const t = tone === 'success' ? { bg: '#ecfdf5', bd: '#a7f3d0', lab: '#047857', val: '#065f46' }
+        : tone === 'danger' ? { bg: '#fef2f2', bd: '#fecaca', lab: '#b91c1c', val: '#991b1b' }
+        : { bg: '#eff6ff', bd: '#bfdbfe', lab: '#1d4ed8', val: '#1e3a8a' };   // info (light blue / dark blue)
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${t.bg}" style="background-color:${t.bg};border:1px solid ${t.bd};border-radius:12px;margin:10px 0;">
+    <tr><td style="padding:14px 18px;">
+      <div style="color:${t.lab};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;">${esc(label)}</div>
+      <div style="color:${t.val};font-size:20px;font-weight:800;line-height:1.25;padding-top:4px;">${esc(value)}</div>
+    </td></tr>
+  </table>`;
+}
+
+/**
+ * Base layout — Outlook-safe and theme-independent.
+ *
+ * Colors are NEVER left to the client's Outlook theme: every container carries an
+ * explicit `bgcolor` attribute AND an inline `background-color`, and every text
+ * element sets an explicit `color`. There is deliberately NO prefers-color-scheme
+ * rule (it darkened text on cards whose background stayed white → unreadable) and
+ * NO CSS variables / complex selectors. `color-scheme: light` tells clients this
+ * mail is designed for light and discourages automatic dark-mode inversion. The
+ * only <style> is a width-based responsive tweak (ignored gracefully by Outlook
+ * desktop, which uses the fixed 600px width). `preheader` is hidden inbox text.
+ */
 function layout({ title, preheader = '', content }) {
   return `<!-- ${esc(title)} -->
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(preheader)}</div>
 <style>
-  @media (prefers-color-scheme: dark) {
-    .hr-body { background:#0b1220 !important; }
-    .hr-card, .hr-shell { background:#111827 !important; border-color:#1f2937 !important; }
-    .hr-shell td, .hr-shell th, .hr-shell div, .hr-shell p { color:#e5e7eb !important; }
-  }
   @media only screen and (max-width:620px) {
     .hr-shell { width:100% !important; border-radius:0 !important; }
     .hr-btn { display:block !important; margin:8px 0 !important; text-align:center; }
   }
-  a { color:${cfg.brand.primary}; }
 </style>
-<table role="presentation" class="hr-body" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 0;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
-  <tr><td align="center">
-    <table role="presentation" class="hr-shell" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #eef0f3;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f4f6" style="background-color:#f3f4f6;margin:0;padding:24px 0;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <tr><td align="center" style="padding:0;">
+    <table role="presentation" class="hr-shell" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
       ${header()}
-      <tr><td style="padding:26px 32px;">${content}</td></tr>
+      <tr><td bgcolor="#ffffff" style="background-color:#ffffff;padding:26px 32px;color:#1f2937;">${content}</td></tr>
       ${footer()}
     </table>
   </td></tr>
@@ -216,13 +253,26 @@ function decision(d) {
     ['Remarks', esc(d.remarks)],
     ['Current Status', statusBadge(label)],
   ];
+
+  // Prominent, high-contrast Leave Balance figures (light-blue "information"
+  // theme). The numbers themselves are UNCHANGED — d.balance is computed upstream
+  // (annual entitlement − approved days taken this year); d.requestDays is the
+  // already-stored day count for THIS request (resolveDays). We only present them.
+  let balanceSection = '';
   if (d.balance) {
-    rows.push(['Leave Balance', `${esc(d.balance.balance)} / ${esc(d.balance.entitlement)} days remaining (${esc(d.balance.taken)} taken)`]);
+    const remaining = `${esc(d.balance.balance)} / ${esc(d.balance.entitlement)} days remaining`;
+    balanceSection += statBlock('Leave Balance', remaining, 'info');
+    const rd = Number(d.requestDays);
+    if (Number.isFinite(rd) && rd > 0) {
+      balanceSection += statBlock('Days Taken in This Request', `${rd} day${rd === 1 ? '' : 's'}`, 'info');
+    }
   }
+
   const content =
     greet(d.employeeName) +
-    `<p style="margin:0 0 4px;color:#374151;">Your ${d.moduleTitle.toLowerCase()} request has been <strong>${label.toLowerCase()}</strong>.</p>` +
+    `<p style="margin:0 0 4px;color:#374151;">Your ${d.moduleTitle.toLowerCase()} request has been <strong style="color:#111827;">${label.toLowerCase()}</strong>.</p>` +
     summaryCard('Decision', rows) +
+    balanceSection +
     (d.decision === 'approved' ? banner('An Outlook calendar invite is attached for your approved leave.', 'success') : '');
   return { subject, html: layout({ title: subject, preheader: `Your request was ${label.toLowerCase()}`, content }) };
 }
@@ -396,7 +446,7 @@ function goalAssigned(d) {
 
 module.exports = {
   // components (exported for tests/reuse)
-  statusBadge, button, profileCard, summaryCard, banner, layout,
+  statusBadge, button, profileCard, summaryCard, banner, layout, card, statBlock, header, footer,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
   missingPunch, lateLoginNotice, lateLoginInfo, lateLoginLeaveRequired, goalAssigned,

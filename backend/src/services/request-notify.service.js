@@ -222,7 +222,7 @@ async function emailApplyAcknowledgement({ type, toEmail, employeeName, approver
  * already notified when the request was submitted. The `cc` argument is accepted
  * for backward compatibility but is intentionally IGNORED. `approver` = {name,email}.
  */
-async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, cc = [] }) {   // eslint-disable-line no-unused-vars
+async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, requestDays, cc = [] }) {   // eslint-disable-line no-unused-vars
   try {
     const cfg = TYPE_CFG[type] || { title: type };
     let emp;
@@ -247,6 +247,7 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
       remarks: remarks || '—',
       decision,
       balance,
+      requestDays,   // days for THIS request (already-computed value; display only)
     });
 
     const attachments = [];
