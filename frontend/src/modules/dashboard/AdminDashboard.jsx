@@ -9,7 +9,7 @@ import {
   PencilSquareIcon, UserPlusIcon, DocumentTextIcon, ArrowRightOnRectangleIcon,
   ArrowLeftOnRectangleIcon, SignalIcon,
 } from '@heroicons/react/24/outline';
-import { dashboardApi, attendanceApi, lateLoginApi } from '../../api/endpoints';
+import { dashboardApi, attendanceApi, lateLoginApi, leaveApi, attendanceRequestApi, compOffApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import ActivityFeed from '../../components/ActivityFeed';
 import TodaysCelebrations from './TodaysCelebrations';
@@ -70,6 +70,33 @@ function Stat({ label, value, tone = 'text-gray-800' }) {
   );
 }
 
+// ── Pending Approvals helpers (all data comes from the existing module APIs) ──
+const cap = (s) => { const t = String(s ?? '').replace(/_/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : '—'; };
+// HR standard display date DD-MM-YYYY (never a raw ISO string).
+const fmtDate = (d) => { try { const s = String(d ?? '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? format(new Date(s + 'T00:00:00'), 'dd-MM-yyyy') : '—'; } catch { return '—'; } };
+const TYPE_PILL = { 'Leave': 'bg-indigo-50 text-indigo-700', 'Attendance Correction': 'bg-orange-50 text-orange-700', 'Comp Off': 'bg-violet-50 text-violet-700' };
+const statusPillClass = (s) => {
+  const k = String(s || '').toLowerCase();
+  if (k.includes('approve')) return 'bg-emerald-50 text-emerald-700';
+  if (k.includes('reject')) return 'bg-red-50 text-red-700';
+  if (k.includes('l2')) return 'bg-amber-100 text-amber-800';
+  return 'bg-amber-50 text-amber-700';   // pending / L1 pending
+};
+
+// Summary card for one approval type. Count comes from the live pending list length.
+function ApprovalCard({ icon: Icon, label, count, to, loading, error, iconBg, iconColor }) {
+  return (
+    <div className="rounded-xl border border-gray-100 p-4 flex flex-col">
+      <div className="flex items-center gap-2.5">
+        <div className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 ${iconBg}`}><Icon className={`w-4.5 h-4.5 ${iconColor}`} /></div>
+        <p className="text-sm font-semibold text-gray-700 leading-tight">{label}</p>
+      </div>
+      <p className="text-3xl font-extrabold text-gray-900 tabular-nums mt-2 leading-none">{loading ? '…' : error ? '—' : count}</p>
+      <Link to={to} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 mt-2">View Requests →</Link>
+    </div>
+  );
+}
+
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
@@ -109,10 +136,51 @@ export default function AdminDashboard() {
   const d = data?.data;
   const k = d?.kpis, a = d?.actions, t = d?.today, lv = d?.leave;
 
-  // Org-wide Late Login summary (this month) — HR approval workload.
+  // Org-wide Late Login summary (this month) — INFORMATIONAL only (no approval).
   const llMonth = format(new Date(), 'yyyy-MM');
   const { data: llRes } = useQuery({ queryKey: ['late-login-summary', 'admin', llMonth], queryFn: () => lateLoginApi.summary({ month: llMonth }).then(r => r.data), refetchInterval: 60000 });
   const ll = llRes || null;
+
+  // ── Pending Approvals — reuse the SAME list APIs the approval pages use. The
+  // status filter (pending) matches each module's own definition; counts are the
+  // live list lengths (never hard-coded). HR-only view (Dashboard routes this
+  // component to HR/Super Admin); the actual Approve/Reject stays on each module
+  // page where server-side authorization is enforced. ─────────────────────────
+  const leaveQ = useQuery({ queryKey: ['pending', 'leave'], queryFn: () => leaveApi.list({ status: 'pending' }).then(r => r.data?.data || []), refetchInterval: 60000, refetchOnWindowFocus: true, retry: 1 });
+  const corrQ = useQuery({ queryKey: ['pending', 'correction'], queryFn: () => attendanceRequestApi.list({ status: 'pending' }).then(r => r.data?.data || []), refetchInterval: 60000, refetchOnWindowFocus: true, retry: 1 });
+  const compQ = useQuery({ queryKey: ['pending', 'compoff'], queryFn: () => compOffApi.list({ status: 'pending' }).then(r => r.data?.data || []), refetchInterval: 60000, refetchOnWindowFocus: true, retry: 1 });
+
+  const leaveName = (l) => l['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee';
+  const leaveLevel = (l) => {
+    const l2 = String(l.hr_l2status || '').toLowerCase(), l1 = String(l.hr_l1status || '').toLowerCase();
+    if (l2 === 'pending_l2') return 'L2 Pending';
+    if (l1 === 'pending') return 'L1 Pending';
+    return 'Pending';
+  };
+  const leaveRows = (leaveQ.data || []).map(l => ({
+    key: 'leave-' + l.hr_hrleaveid, type: 'Leave', to: '/leave',
+    employee: leaveName(l), date: l.hr_fromdate,
+    details: `${l.hr_leavetype || 'Leave'}${l.hr_days ? ` · ${l.hr_days} day${Number(l.hr_days) === 1 ? '' : 's'}` : ''}`,
+    status: leaveLevel(l),
+  }));
+  const correctionRows = (corrQ.data || []).map(r => ({
+    key: 'corr-' + r.id, type: 'Attendance Correction', to: '/attendance-requests',
+    employee: r.employeeName || 'Employee', date: r.date,
+    details: `${r.punchTypeLabel || cap(r.punchType)}${r.requestedTime ? ` @ ${r.requestedTime}` : ''}`,
+    status: cap(r.status),
+  }));
+  const compOffRows = (compQ.data || []).map(r => ({
+    key: 'comp-' + r.id, type: 'Comp Off', to: '/comp-off',
+    employee: r.employeeName || 'Employee', date: r.workedDate,
+    details: `Comp Off${r.days ? ` · ${r.days} day${Number(r.days) === 1 ? '' : 's'}` : ''}${r.reason ? ` · ${r.reason}` : ''}`,
+    status: cap(r.status),
+  }));
+  const pendingRows = [...leaveRows, ...correctionRows, ...compOffRows]
+    .sort((a, b) => String(b.date).slice(0, 10).localeCompare(String(a.date).slice(0, 10)));
+  const pendingLoading = leaveQ.isLoading || corrQ.isLoading || compQ.isLoading;
+  const pendingError = leaveQ.isError || corrQ.isError || compQ.isError;
+  const refreshPending = () => { leaveQ.refetch(); corrQ.refetch(); compQ.refetch(); };
+  const lateLoginInfoCount = ll ? (Number(ll.submitted) || 0) : 0;
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admin-summary'] });
   const checkin = useMutation({ mutationFn: () => attendanceApi.checkin(), onSuccess: () => { toast.success('Checked in!'); invalidate(); }, onError: (e) => toast.error(e.response?.data?.error || 'Check-in failed') });
@@ -126,9 +194,10 @@ export default function AdminDashboard() {
     { icon: CurrencyDollarIcon, label: 'Payroll Status', value: k.payroll.status, sub: k.payroll.netTotal ? money(k.payroll.netTotal) : 'this month', iconBg: 'bg-violet-50', iconColor: 'text-violet-600' },
   ] : [];
 
+  // NOTE: Leave / Attendance Correction approvals now live in the dedicated
+  // "Pending Approvals" section above (accurate, request-level counts). These
+  // remaining cards are informational-only items, not approval workflows.
   const actions = a ? [
-    { icon: CalendarDaysIcon, label: 'Pending Leave Approvals', value: a.pendingLeaveApprovals, to: '/leave', iconBg: 'bg-amber-50', iconColor: 'text-amber-600' },
-    { icon: PencilSquareIcon, label: 'Corrections Pending', value: a.correctionsPending, to: '/attendance', iconBg: 'bg-orange-50', iconColor: 'text-orange-600' },
     { icon: UserPlusIcon, label: 'New Employees This Month', value: a.newEmployeesThisMonth, to: '/employees', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
     { icon: DocumentTextIcon, label: 'Documents Pending Review', value: a.documentsPendingReview, to: '/documents', iconBg: 'bg-blue-50', iconColor: 'text-blue-600' },
   ] : [];
@@ -170,6 +239,65 @@ export default function AdminDashboard() {
           : kpis.map(c => <Kpi key={c.label} {...c} />)}
       </div>
 
+      {/* ── Pending Approvals / Action Required (HR / Super Admin) ────────── */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+          <div>
+            <h2 className="text-base font-bold text-gray-900">Pending Approvals</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Requests awaiting HR / Super Admin action. Approve/Reject on the request page.</p>
+          </div>
+          <button onClick={refreshPending} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">Refresh</button>
+        </div>
+
+        {/* Summary cards — live counts from the module pending lists */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <ApprovalCard icon={CalendarDaysIcon} label="Leave Approvals" count={leaveRows.length} to="/leave" loading={leaveQ.isLoading && !leaveQ.data} error={leaveQ.isError} iconBg="bg-amber-50" iconColor="text-amber-600" />
+          <ApprovalCard icon={PencilSquareIcon} label="Attendance Corrections" count={correctionRows.length} to="/attendance-requests" loading={corrQ.isLoading && !corrQ.data} error={corrQ.isError} iconBg="bg-orange-50" iconColor="text-orange-600" />
+          <ApprovalCard icon={CalendarDaysIcon} label="Comp Off" count={compOffRows.length} to="/comp-off" loading={compQ.isLoading && !compQ.data} error={compQ.isError} iconBg="bg-violet-50" iconColor="text-violet-600" />
+        </div>
+
+        {/* Late Login is INFORMATIONAL-only (no approval) — shown as a note, never as an approve action */}
+        {lateLoginInfoCount > 0 && (
+          <div className="mb-4 flex items-center justify-between gap-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+            <p className="text-xs text-slate-600"><span className="font-semibold text-slate-700">Late Login:</span> {lateLoginInfoCount} submitted this month — <span className="italic">information only, no approval required</span>.</p>
+            <Link to="/late-login" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 whitespace-nowrap">View →</Link>
+          </div>
+        )}
+
+        {/* Combined Action Required list */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-semibold">Type</th>
+                <th className="px-3 py-2 font-semibold">Employee</th>
+                <th className="px-3 py-2 font-semibold">Date</th>
+                <th className="px-3 py-2 font-semibold">Details</th>
+                <th className="px-3 py-2 font-semibold">Status</th>
+                <th className="px-3 py-2 font-semibold text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {pendingLoading && !pendingRows.length ? (
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400">Loading pending items…</td></tr>
+              ) : pendingRows.length === 0 ? (
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400">No pending approvals — you're all caught up. 🎉</td></tr>
+              ) : pendingRows.map(r => (
+                <tr key={r.key} className="hover:bg-gray-50/60">
+                  <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${TYPE_PILL[r.type] || 'bg-gray-100 text-gray-600'}`}>{r.type}</span></td>
+                  <td className="px-3 py-2 font-medium text-gray-800">{r.employee}</td>
+                  <td className="px-3 py-2 text-gray-600 tabular-nums whitespace-nowrap">{fmtDate(r.date)}</td>
+                  <td className="px-3 py-2 text-gray-600">{r.details}</td>
+                  <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full ${statusPillClass(r.status)}`}>{r.status}</span></td>
+                  <td className="px-3 py-2 text-right"><Link to={r.to} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 whitespace-nowrap">Review →</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {pendingError && <p className="mt-2 text-[11px] text-amber-600">Some pending data could not be loaded — showing what's available.</p>}
+      </div>
+
       {/* ── Attendance Overview + Action items ───────────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         <div className="xl:col-span-2 bg-white rounded-xl border border-gray-100 p-5">
@@ -197,8 +325,7 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-2 xl:grid-cols-1 gap-3 content-start">
           {actions.length
             ? actions.map(c => <ActionCard key={c.label} {...c} />)
-            : Array.from({ length: 4 }).map((_, i) => <div key={i} className="bg-gray-50 rounded-xl h-[60px] animate-pulse" />)}
-          {ll && <ActionCard icon={ClockIcon} label="Late Login Requests Pending" value={ll.pending || 0} to="/late-login" iconBg="bg-rose-50" iconColor="text-rose-600" />}
+            : Array.from({ length: 2 }).map((_, i) => <div key={i} className="bg-gray-50 rounded-xl h-[60px] animate-pulse" />)}
         </div>
       </div>
 
