@@ -66,9 +66,14 @@ export default function RequestLifecycleActions({ type, id, status, caps = {}, o
       {canDelete && (
         <button onClick={() => setConfirmDelete(true)} className={`${btn} text-red-700 bg-red-50 hover:bg-red-100`}><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
       )}
-      {canCancel && (
+      {canCancel ? (
         <button onClick={() => { setReason(''); setModal('cancellation'); }} className={`${btn} text-orange-700 bg-orange-50 hover:bg-orange-100`}><XCircleIcon className="w-3.5 h-3.5" /> Request Cancellation</button>
-      )}
+      ) : (caps.cancelReason && ['approved', 'manager_approved'].includes(status)) ? (
+        // Rule blocks cancellation (e.g. a past leave with no Present attendance) —
+        // show the button DISABLED with the reason as a tooltip. The backend enforces
+        // the same rule regardless of this button.
+        <button type="button" disabled title={caps.cancelReason} className={`${btn} text-gray-400 bg-gray-100 cursor-not-allowed`}><XCircleIcon className="w-3.5 h-3.5" /> Request Cancellation</button>
+      ) : null}
       <button onClick={() => setShowAudit(true)} title="History" className={`${btn} text-gray-500 bg-gray-50 hover:bg-gray-100`}><ClockIcon className="w-3.5 h-3.5" /></button>
 
       {/* Delete confirmation */}

@@ -959,6 +959,13 @@ export default function LeavePage() {
                       {user?.id && leave._hr_hremployee_value === user.id && (
                         <RequestLifecycleActions
                           type="leave" id={leave.hr_hrleaveid} status={canonicalLeaveStatus(leave)}
+                          caps={{
+                            // Approved-leave cancellation rule (server-computed): future = always;
+                            // today/past = only if Present on that date. `cancelEligible` comes from
+                            // the leave list; undefined (not computed) falls back to allowed.
+                            canCancel: ['approved', 'manager_approved'].includes(canonicalLeaveStatus(leave)) && leave.cancelEligible !== false,
+                            cancelReason: leave.cancelReason,
+                          }}
                           onEdit={() => setEditLeave(leave)}
                           invalidateKeys={[['leaves'], ['leave-balance']]}
                         />

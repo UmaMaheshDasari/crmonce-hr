@@ -238,6 +238,23 @@ router.get('/', async (req, res, next) => {
       }
     } catch (_) { /* enrichment is best-effort */ }
 
+    // Cancellation eligibility for the VIEWER's OWN approved leaves — drives the
+    // "Request Cancellation" button + its disabled reason. Bounded to the caller's
+    // own approved rows; best-effort (never fails or blocks the list). Runs on the
+    // raw rows (numeric hr_status) before labelsForList; the added fields survive it.
+    try {
+      const cancelUtil = require('../../services/leave-cancel.util');
+      for (const l of (data.data || [])) {
+        if (l._hr_hremployee_value !== req.user.id) continue;
+        const st = toLabel('hr_leave_status', l.hr_status);
+        const isApproved = st === 'approved' || (st !== 'cancelled' && st !== 'rejected' && String(l.hr_l1status || '') === 'approved');
+        if (!isApproved) continue;
+        const el = await cancelUtil.leaveCancellationStatus({ employeeId: l._hr_hremployee_value, fromDate: l.hr_fromdate, toDate: l.hr_todate });
+        l.cancelEligible = el.ok;
+        if (!el.ok) l.cancelReason = el.reason;
+      }
+    } catch (_) { /* best-effort — backend still enforces on the cancellation action */ }
+
     res.json(labelsForList('hr_hrleaves', data));
   } catch (err) { next(err); }
 });
@@ -319,6 +336,16 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
     optionalSelect: 'hr_medcertdocid,hr_usecompoff',
   });
   const wasApproved = toLabel('hr_leave_status', current.hr_status) === 'approved';
+
+  // Approved-leave cancellation rule enforced on the DIRECT API too (defence in
+  // depth): a past/today leave date is only cancellable when the employee has a
+  // Present attendance record for that date; future leave is always cancellable.
+  if (status === 'cancelled' && wasApproved) {
+    const el = await require('../../services/leave-cancel.util').leaveCancellationStatus({
+      employeeId: current._hr_hremployee_value, fromDate: current.hr_fromdate, toDate: current.hr_todate,
+    });
+    if (!el.ok) { const e = new Error(el.reason); e.status = 400; throw e; }
+  }
 
   if (enforcePending) {
     const label = toLabel('hr_leave_status', current.hr_status);

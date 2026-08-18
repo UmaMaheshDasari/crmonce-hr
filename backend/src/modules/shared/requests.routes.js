@@ -42,7 +42,10 @@ router.get('/:type/:id', async (req, res, next) => {
         canEdit: v.adapter.canEdit !== false && v.canonical === 'pending',
         canDelete: v.adapter.canDelete !== false && ['pending', 'rejected'].includes(v.canonical),
         canResubmit: v.adapter.canResubmit !== false && v.canonical === 'rejected',
-        canRequestCancellation: v.adapter.canCancel !== false && ['approved', 'manager_approved'].includes(v.canonical) && !v.cancellation,
+        // Also gated by the adapter's eligibility rule (Leave: date + Present-attendance).
+        canRequestCancellation: v.adapter.canCancel !== false && ['approved', 'manager_approved'].includes(v.canonical) && !v.cancellation && (v.cancelEligibility?.ok !== false),
+        // Reason to show when cancellation is blocked by the rule (tooltip).
+        cancelReason: v.cancelEligibility && v.cancelEligibility.ok === false ? v.cancelEligibility.reason : undefined,
       },
     });
   } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }

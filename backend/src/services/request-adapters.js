@@ -47,7 +47,9 @@ const mapEdits = (edits, map) => { const out = {}; for (const [k, f] of Object.e
 // ── 1. Leave (numeric picklist status + L1/L2 text approval) ──────────────────
 registerAdapter({
   type: 'leave', label: 'Leave', entity: E.leave,
-  async get(id) { return d365.getByIdOptional(E.leave, id, { select: 'hr_hrleaveid,hr_status,hr_startdate,hr_enddate,hr_leavetype,_hr_hremployee_value', optionalSelect: 'hr_l1status,hr_l2status,hr_reason' }); },
+  // Uses the real leave date columns hr_fromdate/hr_todate (the same columns the
+  // rest of the leave module reads/writes) — needed for the cancellation rule.
+  async get(id) { return d365.getByIdOptional(E.leave, id, { select: 'hr_hrleaveid,hr_status,hr_fromdate,hr_todate,hr_leavetype,_hr_hremployee_value', optionalSelect: 'hr_l1status,hr_l2status,hr_reason' }); },
   ownerId: (r) => r._hr_hremployee_value,
   ownerName: (r) => r[`_hr_hremployee_value${FV}`] || '',
   status(r) {
@@ -57,6 +59,14 @@ registerAdapter({
     if (s === 'approved') return 'approved';
     if (String(r.hr_l1status || '') === 'approved') return 'manager_approved';
     return 'pending';
+  },
+  // Approved-leave cancellation rule (future = always; today/past = only if the
+  // employee was PRESENT on that date). Reuses the shared attendance status —
+  // enforced by the engine on requestCancellation and surfaced as a capability.
+  async canRequestCancellation(r) {
+    return require('./leave-cancel.util').leaveCancellationStatus({
+      employeeId: r._hr_hremployee_value, fromDate: r.hr_fromdate, toDate: r.hr_todate,
+    });
   },
   cancelledPatch: () => ({ hr_status: toValue('hr_leave_status', 'cancelled') }),
   resubmitPatch: () => ({ hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_l2status: '' }),
@@ -78,7 +88,7 @@ registerAdapter({
     }
     return out;
   },
-  summary: (r) => `${toLabel('hr_leave_type', r.hr_leavetype) || 'Leave'} ${String(r.hr_startdate || '').slice(0, 10)}→${String(r.hr_enddate || '').slice(0, 10)}`,
+  summary: (r) => `${toLabel('hr_leave_type', r.hr_leavetype) || 'Leave'} ${String(r.hr_fromdate || '').slice(0, 10)}→${String(r.hr_todate || '').slice(0, 10)}`,
   managerRecipients: (r) => managerRecipientsFor(r._hr_hremployee_value),
   hrRecipients,
   employeeContact: (r) => contactFor(r._hr_hremployee_value),

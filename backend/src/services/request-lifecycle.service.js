@@ -101,11 +101,19 @@ async function view({ type, id }) {
   if (!raw) { const e = new Error(`${adapter.label} request not found`); e.status = 404; throw e; }
   const canonical = adapter.status(raw);
   const cancellation = ['approved', 'manager_approved'].includes(canonical) ? await activeCancellation(type, id) : null;
+  // Adapter-specific cancellation eligibility (e.g. Leave: future=always, today/past=
+  // only if Present). Computed ONLY when a cancellation could actually be requested
+  // (approved/manager_approved, none already pending) — drives the capability + the
+  // backend re-validation in requestCancellation().
+  let cancelEligibility = null;
+  if (adapter.canRequestCancellation && adapter.canCancel !== false && !cancellation && ['approved', 'manager_approved'].includes(canonical)) {
+    try { cancelEligibility = await adapter.canRequestCancellation(raw); } catch { cancelEligibility = null; }
+  }
   return {
     adapter, raw, canonical,
     ownerId: adapter.ownerId(raw), ownerName: adapter.ownerName(raw),
     summary: adapter.summary ? adapter.summary(raw) : '',
-    cancellation,
+    cancellation, cancelEligibility,
   };
 }
 
@@ -175,6 +183,13 @@ async function requestCancellation({ type, id, reason, user }) {
     const e = new Error('Only an approved request can be cancelled via a cancellation request.'); e.status = 400; throw e;
   }
   if (v.cancellation) { const e = new Error('A cancellation request is already pending for this request.'); e.status = 400; throw e; }
+  // Backend re-validation of the adapter's cancellation rule (never trust the hidden
+  // frontend button). For Leave: a past/today leave date is only cancellable when the
+  // employee has a Present attendance record for that date.
+  if (v.adapter.canRequestCancellation) {
+    const el = v.cancelEligibility || await v.adapter.canRequestCancellation(v.raw).catch(() => ({ ok: true }));
+    if (el && el.ok === false) { const e = new Error(el.reason || 'This request cannot be cancelled.'); e.status = 400; throw e; }
+  }
   await d365.create(CANCEL_SET, {
     hr_name: `${v.ownerName || v.ownerId} · ${v.adapter.label} cancel · ${id}`.slice(0, 250),
     hr_employeeid: String(v.ownerId || ''), hr_employeename: v.ownerName || '',
