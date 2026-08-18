@@ -21,9 +21,15 @@ export default function AttendancePage() {
   const { isHR } = useAuth();
   const qc = useQueryClient();
   const today = new Date();
-  const [from, setFrom] = useState(format(startOfMonth(today), 'yyyy-MM-dd'));
-  const [to, setTo] = useState(format(endOfMonth(today), 'yyyy-MM-dd'));
-  const [range, setRange] = useState('this_month');   // quick date range preset
+  // Default date filter. Admin/HR open on TODAY — they manage day-to-day attendance
+  // and should see today's records immediately, without picking the date each visit.
+  // Employees keep the current-month view (behaviour unchanged). Uses the app's
+  // existing local-time format() (never toISOString/UTC), so "today" is the HR
+  // user's local/company date and never shifts to the previous/next day.
+  const hrDefaults = isHR();
+  const [from, setFrom] = useState(() => format(hrDefaults ? today : startOfMonth(today), 'yyyy-MM-dd'));
+  const [to, setTo] = useState(() => format(hrDefaults ? today : endOfMonth(today), 'yyyy-MM-dd'));
+  const [range, setRange] = useState(() => (hrDefaults ? 'today' : 'this_month'));   // quick date range preset
   const [empId, setEmpId] = useState('');
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
@@ -124,9 +130,10 @@ export default function AttendancePage() {
   };
 
   const resetFilters = () => {
-    setRange('this_month');
-    setFrom(clampFrom(format(startOfMonth(today), 'yyyy-MM-dd')));
-    setTo(format(endOfMonth(today), 'yyyy-MM-dd'));
+    // Reset returns to the role's default: Admin/HR → Today, employees → this month.
+    setRange(hrDefaults ? 'today' : 'this_month');
+    setFrom(clampFrom(format(hrDefaults ? today : startOfMonth(today), 'yyyy-MM-dd')));
+    setTo(format(hrDefaults ? today : endOfMonth(today), 'yyyy-MM-dd'));
     setEmpId(''); setStatus(''); setSource(''); setView(''); setDepartment(''); setLate(false); setMissingPunch(false); setPage(1);
   };
 
