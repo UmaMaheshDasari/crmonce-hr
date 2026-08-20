@@ -126,22 +126,49 @@ function isWorkingDayFor(dateStr) {
 }
 
 /**
- * PURE decision for TODAY's Late Login notice (unit-testable, no I/O).
- *   - Skip on night shift / weekly-off·holiday / approved leave.
- *   - Has a first punch → notify only when it is late (lateEntryMinutes > 0 — the
- *     SAME value computeSession produces with the 5-min grace).
- *   - No first punch → notify only once now is strictly PAST shift-start + grace
- *     (deadline). Before the deadline (incl. a shift later today) → do nothing.
+ * PURE decision for TODAY's Late Login notice (unit-testable, no I/O). The DEADLINE
+ * is always the employee's own `shiftStartMin + grace` (never a fixed clock time).
+ *   - Skip on night shift / weekly-off·holiday / approved leave / a Late Login
+ *     request ALREADY submitted for the date (suppress both notices).
+ *   - Has a late first punch (lateEntryMinutes > 0 — the SAME value computeSession
+ *     produces with the grace) → "you logged in late".
+ *   - No first punch and now strictly PAST shift-start + grace → "please apply for
+ *     Late Login". Before the deadline (incl. a shift later today) → do nothing.
+ *   - A first punch WITHIN grace → nothing.
  * @returns {{ notify:boolean, reason:string, lateBy?:number }}
  */
-function shouldNotifyLateLogin({ isNight, isWorkingDay, onLeave, nowMin, shiftStartMin, grace = LATE_ENTRY_GRACE_MIN, hasPunch, lateEntryMinutes = 0 }) {
-  if (isNight || !isWorkingDay || onLeave) return { notify: false, reason: 'skip' };
+function shouldNotifyLateLogin({ isNight, isWorkingDay, onLeave, alreadySubmitted, nowMin, shiftStartMin, grace = LATE_ENTRY_GRACE_MIN, hasPunch, lateEntryMinutes = 0 }) {
+  if (isNight || !isWorkingDay || onLeave || alreadySubmitted) return { notify: false, reason: 'skip' };
   if (hasPunch) {
     if ((lateEntryMinutes || 0) > 0) return { notify: true, reason: 'late_punch', lateBy: lateEntryMinutes };
     return { notify: false, reason: 'on_time' };                       // within grace (e.g. 09:04)
   }
   if (nowMin > shiftStartMin + grace) return { notify: true, reason: 'no_punch', lateBy: Math.max(0, nowMin - shiftStartMin) };
   return { notify: false, reason: 'before_deadline' };                 // future shift / grace not passed yet
+}
+
+const LATE = d365.constructor.entities.lateLogin;
+/** Employees who ALREADY have a Late Login request for `date` (any non-rejected/
+ *  cancelled status) → suppress BOTH automatic notices for them. */
+async function submittedLateLoginEmployees(date) {
+  const set = new Set();
+  try {
+    const { data } = await d365.getList(LATE, { select: 'hr_employeeid,hr_status', filter: `hr_date eq '${date}'`, top: 5000 });
+    for (const r of data || []) if (!['rejected', 'cancelled'].includes(String(r.hr_status || ''))) set.add(r.hr_employeeid);
+  } catch (_) { /* table not provisioned / read failure → treat as none submitted */ }
+  return set;
+}
+
+/** "Please apply for Late Login" notice (no valid punch by the deadline). Deduped by
+ *  the SAME ledger key as the late-entry notice, so an employee gets ONE per day. */
+async function sendLateLoginApplyPrompt(emp, { date, shift, expectedTime, grace }) {
+  const to = emp.hr_email;
+  if (!to || requestNotify.isPlaceholderEmail(to)) return { skipped: true };
+  const { subject, html } = templates.lateLoginApplyPrompt({
+    employeeName: emp.hr_hremployee1, date: time.fmtDate(date), shift, expectedTime, actualTime: '',
+    grace: grace != null ? grace : LATE_ENTRY_GRACE_MIN,
+  });
+  return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance' });
 }
 
 /** Employees on an APPROVED leave that covers `date` (skip — respect existing rules). */
@@ -169,15 +196,16 @@ async function sweepTodayLateLogins() {
   const date = time.istDateStr();                 // company/IST civil date — never UTC
   if (!isWorkingDayFor(date)) return { skipped: 'non_working_day', date };
   const nowMin = istNowMin();
-  let emps = [], recs = [], onLeave = new Set();
+  let emps = [], recs = [], onLeave = new Set(), submitted = new Set();
   try {
     const activeVal = require('./picklist').toValue('hr_employee_status', 'active');
-    const [e, r, lv] = await Promise.all([
+    const [e, r, lv, sub] = await Promise.all([
       d365.getListOptional(EMP, { select: 'hr_hremployeeid,hr_hremployee1,hr_email', optionalSelect: SHIFT_COLS, filter: `hr_status eq ${activeVal}`, top: 5000 }),
       d365.getList(ATT, { select: PUNCH_SELECT, filter: `hr_date eq ${date}`, top: 5000 }),   // TODAY only
       approvedLeaveEmployees(date),
+      submittedLateLoginEmployees(date),
     ]);
-    emps = e.data || []; recs = r.data || []; onLeave = lv;
+    emps = e.data || []; recs = r.data || []; onLeave = lv; submitted = sub;
   } catch (err) { global.logger?.error(`[late-login-sweep] read failed: ${err.message}`); return { scanned: 0, notified: 0, date }; }
 
   const recByEmp = new Map();
@@ -189,18 +217,24 @@ async function sweepTodayLateLogins() {
     const shift = shiftOf(emp);
     const rec = recByEmp.get(emp.hr_hremployeeid);
     const c = rec ? computeSession(punchesFromRecord(rec), shift) : null;
+    // Deadline = the employee's OWN shift start + grace (never a fixed clock time).
     const decision = shouldNotifyLateLogin({
-      isNight: !!shift.isNight, isWorkingDay: true, onLeave: onLeave.has(emp.hr_hremployeeid),
+      isNight: !!shift.isNight, isWorkingDay: true,
+      onLeave: onLeave.has(emp.hr_hremployeeid), alreadySubmitted: submitted.has(emp.hr_hremployeeid),
       nowMin, shiftStartMin: hhmmToMin(shift.start), grace: LATE_ENTRY_GRACE_MIN,
       hasPunch: !!(c && c.count > 0), lateEntryMinutes: c ? c.lateEntryMinutes : 0,
     });
     if (!decision.notify) continue;
     const shiftLabel = emp.hr_shiftname || `${shift.start}–${shift.end}`;
-    const res = await sendLateLoginNotice(emp, {
-      date, shift: shiftLabel, expectedTime: shift.start,
-      actualTime: c && c.firstPunch ? time.to12h(c.firstPunch) : '',
-      lateBy: decision.lateBy, grace: LATE_ENTRY_GRACE_MIN,
-    });
+    // No punch by the deadline → "Please apply for Late Login"; a late punch → "You
+    // logged in late". Both share ONE ledger key → exactly one email per employee/day.
+    const res = decision.reason === 'no_punch'
+      ? await sendLateLoginApplyPrompt(emp, { date, shift: shiftLabel, expectedTime: shift.start, grace: LATE_ENTRY_GRACE_MIN })
+      : await sendLateLoginNotice(emp, {
+          date, shift: shiftLabel, expectedTime: shift.start,
+          actualTime: c && c.firstPunch ? time.to12h(c.firstPunch) : '',
+          lateBy: decision.lateBy, grace: LATE_ENTRY_GRACE_MIN,
+        });
     if (!res?.skipped) notified++;
   }
   global.logger?.info?.(`[late-login-sweep] ${date}: scanned ${scanned}, notified ${notified}`);

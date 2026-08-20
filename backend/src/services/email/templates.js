@@ -371,6 +371,33 @@ function lateLoginNotice(d) {
 }
 
 /**
+ * "Please apply for Late Login" — sent to the EMPLOYEE when their shift start +
+ * grace has passed with NO valid first check-in yet (the no-punch case). Prompts
+ * them to submit a Late Login request. Employee-only, no approval/token.
+ * d: { employeeName, date, shift, expectedTime, actualTime, grace }
+ */
+function lateLoginApplyPrompt(d) {
+  const subject = `Late Login Required - ${d.date}`;
+  const mins = (n) => `${Number(n)} minute${Number(n) === 1 ? '' : 's'}`;
+  const graceTxt = (d.grace != null && Number(d.grace) > 0) ? mins(d.grace) : '5 minutes';
+  const applyUrl = `${cfg.brand.appUrl}/late-login`;
+  const content =
+    greet(d.employeeName) +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Our attendance system shows <strong>no check-in</strong> for <strong>${esc(d.date)}</strong> within the grace period after your shift start. Please submit a <strong>Late Login</strong> request in the HR Portal.</p>` +
+    summaryCard('Attendance', [
+      ['Employee', esc(d.employeeName || '—')],
+      ['Date', esc(d.date)],
+      ['Scheduled Start', esc(d.expectedTime || '—')],
+      ['Grace Period', esc(graceTxt)],
+      ['Actual Check-In', esc(d.actualTime || '—')],
+      ['Attendance Status', statusBadge('Late Login')],
+    ]) +
+    `<div style="text-align:center;margin:22px 0 6px;">${button('Apply for Late Login', applyUrl)}</div>` +
+    banner('If you have already checked in, please raise an Attendance Correction so HR can update your attendance.', 'warn');
+  return { subject, html: layout({ title: subject, preheader: `Late Login required for ${d.date}`, content }) };
+}
+
+/**
  * Late Login INFORMATION email to HR (manual Late Login Request — NOT the automatic
  * Late Entry notice above, and NOT an approval). No Approve/Reject, no link, no token.
  * d: { employeeName, employeeId, department, date, expectedTime, actualTime, lateBy, reason, remarks }
@@ -449,6 +476,6 @@ module.exports = {
   statusBadge, button, profileCard, summaryCard, banner, layout, card, statBlock, header, footer,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
-  missingPunch, lateLoginNotice, lateLoginInfo, lateLoginLeaveRequired, goalAssigned,
+  missingPunch, lateLoginNotice, lateLoginApplyPrompt, lateLoginInfo, lateLoginLeaveRequired, goalAssigned,
   _esc: esc, _longText: longText,
 };

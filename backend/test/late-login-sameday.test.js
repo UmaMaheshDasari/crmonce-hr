@@ -44,23 +44,41 @@ test('D — punch 09:30 → Late Login, Late By 30', () => {
 test('F — a shift LATER today (14:00), now 09:15 → not yet (no premature notice)', () => {
   assert.strictEqual(shouldNotifyLateLogin({ ...base, shiftStartMin: M('14:00'), hasPunch: false, nowMin: M('09:15') }).notify, false);
 });
-test('skips: night shift / weekly-off·holiday / approved leave → never notify', () => {
+test('skips: night / weekly-off·holiday / approved leave / already-submitted → never notify', () => {
   assert.strictEqual(shouldNotifyLateLogin({ ...base, isNight: true, hasPunch: false, nowMin: M('10:00') }).notify, false);
   assert.strictEqual(shouldNotifyLateLogin({ ...base, isWorkingDay: false, hasPunch: false, nowMin: M('10:00') }).notify, false);
   assert.strictEqual(shouldNotifyLateLogin({ ...base, onLeave: true, hasPunch: false, nowMin: M('10:00') }).notify, false);
+  // Point 4: a Late Login request already submitted for the date → suppress BOTH notices.
+  assert.strictEqual(shouldNotifyLateLogin({ ...base, alreadySubmitted: true, hasPunch: false, nowMin: M('10:00') }).notify, false);
+  assert.strictEqual(shouldNotifyLateLogin({ ...base, alreadySubmitted: true, hasPunch: true, lateEntryMinutes: 30 }).notify, false);
+});
+
+// DYNAMIC deadline = employee shift start + grace (never a fixed 09:05).
+test('DYNAMIC deadline per shift: 08:30→08:35, 09:30→09:35, 10:00→10:05 (no hardcoded time)', () => {
+  const noPunch = (shift, now) => shouldNotifyLateLogin({ ...base, shiftStartMin: M(shift), hasPunch: false, nowMin: M(now) }).notify;
+  assert.strictEqual(noPunch('08:30', '08:34'), false); assert.strictEqual(noPunch('08:30', '08:36'), true);   // deadline 08:35
+  assert.strictEqual(noPunch('09:30', '09:34'), false); assert.strictEqual(noPunch('09:30', '09:36'), true);   // deadline 09:35
+  assert.strictEqual(noPunch('10:00', '10:04'), false); assert.strictEqual(noPunch('10:00', '10:06'), true);   // deadline 10:05
+  // late-by is measured from the shift start, not a fixed clock
+  assert.strictEqual(shouldNotifyLateLogin({ ...base, shiftStartMin: M('08:30'), hasPunch: false, nowMin: M('08:40') }).lateBy, 10);
 });
 
 // ── sweep integration (d365 + ledger stubbed) ────────────────────────────────
 const EMP = { hr_hremployeeid: 'E1', hr_hremployee1: 'Test One', hr_email: 'e1@crmonce.com', hr_shiftname: 'Day', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00' };
 const att = (punches, id = 'E1', date = '2026-08-18') => ({ _hr_hremployee_value: id, hr_date: date, hr_allpunches: JSON.stringify(punches) });
 
-function stub({ today = '2026-08-18', now = '09:15', employees = [EMP], attendance = [], approvedLeaves = [] } = {}) {
+function stub({ today = '2026-08-18', now = '09:15', employees = [EMP], attendance = [], approvedLeaves = [], submittedLateLogins = [] } = {}) {
   const o = { glo: d365.getListOptional, gl: d365.getList, ds: time.istDateStr, hm: time.istHHMM, so: ledger.sendOnce };
   const sends = []; const seen = new Set();
   time.istDateStr = () => today;
   time.istHHMM = () => now;
   d365.getListOptional = async () => ({ data: employees });
-  d365.getList = async (_e, opts) => (String(opts?.filter || '').includes('hr_date eq') ? { data: attendance } : { data: approvedLeaves });
+  d365.getList = async (_e, opts) => {
+    const f = String(opts?.filter || '');
+    if (f.includes("hr_date eq '")) return { data: submittedLateLogins };   // late-login (quoted date)
+    if (f.includes('hr_date eq')) return { data: attendance };              // attendance (unquoted date)
+    return { data: approvedLeaves };                                        // approved leaves
+  };
   // Simulate the ledger's dedup so re-runs / a later punch never double-send.
   ledger.sendOnce = async (p) => { const k = `${p.employeeId}|${p.date}|${p.type}`; if (seen.has(k)) return { skipped: true, reason: 'already_sent' }; seen.add(k); sends.push(p); return { skipped: false }; };
   return { sends, restore() { d365.getListOptional = o.glo; d365.getList = o.gl; time.istDateStr = o.ds; time.istHHMM = o.hm; ledger.sendOnce = o.so; } };
@@ -96,6 +114,27 @@ test('sweep F — shift 14:00 not yet reached (now 09:15) → no email', async (
 test('sweep — employee on approved leave today → no email', async () => {
   const s = stub({ attendance: [], approvedLeaves: [{ _hr_hremployee_value: 'E1', hr_fromdate: '2026-08-18', hr_todate: '2026-08-18', hr_status: 1 }] });
   try { assert.strictEqual((await exc.sweepTodayLateLogins()).notified, 0); }
+  finally { s.restore(); }
+});
+test('2 vs 3 — no punch → "Please apply for Late Login"; late punch → "You logged in late"', async () => {
+  const noPunch = stub({ attendance: [] });
+  try { const r = await exc.sweepTodayLateLogins(); assert.strictEqual(r.notified, 1); assert.match(noPunch.sends[0].subject, /Late Login Required/); }
+  finally { noPunch.restore(); }
+  const latePunch = stub({ attendance: [att(['09:06'])] });
+  try { const r = await exc.sweepTodayLateLogins(); assert.strictEqual(r.notified, 1); assert.match(latePunch.sends[0].subject, /Late Login Notification/); }
+  finally { latePunch.restore(); }
+});
+test('4 — a Late Login request already submitted today → BOTH auto notices suppressed', async () => {
+  const noPunch = stub({ attendance: [], submittedLateLogins: [{ hr_employeeid: 'E1', hr_status: 'submitted' }] });
+  try { assert.strictEqual((await exc.sweepTodayLateLogins()).notified, 0); assert.strictEqual(noPunch.sends.length, 0); }
+  finally { noPunch.restore(); }
+  const latePunch = stub({ attendance: [att(['09:30'])], submittedLateLogins: [{ hr_employeeid: 'E1', hr_status: 'completed' }] });
+  try { assert.strictEqual((await exc.sweepTodayLateLogins()).notified, 0); }
+  finally { latePunch.restore(); }
+});
+test('sweep DYNAMIC deadline — shift 08:30, no punch, now 08:40 → sends (deadline 08:35, not 09:05)', async () => {
+  const s = stub({ employees: [{ ...EMP, hr_shiftstarttime: '08:30' }], attendance: [], now: '08:40' });
+  try { assert.strictEqual((await exc.sweepTodayLateLogins()).notified, 1); }
   finally { s.restore(); }
 });
 test('E — running the sweep TWICE sends only ONE email (dedup via ledger)', async () => {
