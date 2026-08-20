@@ -105,6 +105,108 @@ async function sendLateLoginNotice(emp, { date, shift, expectedTime, actualTime,
   return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance' });
 }
 
+// ── SAME-DAY Late Login sweep ─────────────────────────────────────────────────
+// The nightly/morning runScan only processes COMPLETED days (hr_date lt today) and
+// only iterates existing records; and eTime device punches never fire the real-time
+// web check-in notice. So a late entry (or a no-punch-by-deadline) was only caught
+// the NEXT day. This sweep runs DURING the day and, once an employee's shift-start +
+// the (5-min) late-entry grace has passed, sends TODAY's Late Login notice — for a
+// late first punch (web OR eTime) OR for no valid first punch yet. All sends go
+// through the same ledger-deduped sendLateLoginNotice, so re-runs / a later eTime
+// punch / the nightly scan never produce a duplicate. Uses the company IST civil
+// date throughout (no UTC date shift).
+const LEAVE = d365.constructor.entities.leave;
+const hhmmToMin = (s) => { const [h, m] = String(s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+function istNowMin() { const [h, m] = String(time.istHHMM() || '00:00').split(':').map(Number); return (h || 0) * 60 + (m || 0); }
+function isWorkingDayFor(dateStr) {
+  try {
+    const dow = new Date(`${dateStr}T00:00:00Z`).getUTCDay();
+    return !attnCfg.weekOffDays.includes(dow) && !attnCfg.holidays.includes(dateStr);
+  } catch { return true; }
+}
+
+/**
+ * PURE decision for TODAY's Late Login notice (unit-testable, no I/O).
+ *   - Skip on night shift / weekly-off·holiday / approved leave.
+ *   - Has a first punch → notify only when it is late (lateEntryMinutes > 0 — the
+ *     SAME value computeSession produces with the 5-min grace).
+ *   - No first punch → notify only once now is strictly PAST shift-start + grace
+ *     (deadline). Before the deadline (incl. a shift later today) → do nothing.
+ * @returns {{ notify:boolean, reason:string, lateBy?:number }}
+ */
+function shouldNotifyLateLogin({ isNight, isWorkingDay, onLeave, nowMin, shiftStartMin, grace = LATE_ENTRY_GRACE_MIN, hasPunch, lateEntryMinutes = 0 }) {
+  if (isNight || !isWorkingDay || onLeave) return { notify: false, reason: 'skip' };
+  if (hasPunch) {
+    if ((lateEntryMinutes || 0) > 0) return { notify: true, reason: 'late_punch', lateBy: lateEntryMinutes };
+    return { notify: false, reason: 'on_time' };                       // within grace (e.g. 09:04)
+  }
+  if (nowMin > shiftStartMin + grace) return { notify: true, reason: 'no_punch', lateBy: Math.max(0, nowMin - shiftStartMin) };
+  return { notify: false, reason: 'before_deadline' };                 // future shift / grace not passed yet
+}
+
+/** Employees on an APPROVED leave that covers `date` (skip — respect existing rules). */
+async function approvedLeaveEmployees(date) {
+  const set = new Set();
+  try {
+    const approved = require('./picklist').toValue('hr_leave_status', 'approved');
+    const { data } = await d365.getList(LEAVE, { select: '_hr_hremployee_value,hr_fromdate,hr_todate,hr_status', filter: `hr_status eq ${approved}`, top: 5000 });
+    for (const l of data || []) {
+      const lf = String(l.hr_fromdate || '').slice(0, 10), lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      if (lf && lf <= date && lt >= date) set.add(l._hr_hremployee_value);
+    }
+  } catch (_) { /* best-effort — leave read failure never blocks the sweep */ }
+  return set;
+}
+
+/**
+ * Same-day Late Login sweep. Run frequently (cron every 15 min). For every active employee
+ * whose late-entry deadline (shift start + grace) has passed TODAY, send today's
+ * Late Login notice (deduped). Never touches attendance, never creates records — it
+ * only sends the existing informational notice for the correct attendance date.
+ */
+async function sweepTodayLateLogins() {
+  if (!ecfg.notify.lateLoginNotice) return { skipped: 'disabled' };
+  const date = time.istDateStr();                 // company/IST civil date — never UTC
+  if (!isWorkingDayFor(date)) return { skipped: 'non_working_day', date };
+  const nowMin = istNowMin();
+  let emps = [], recs = [], onLeave = new Set();
+  try {
+    const activeVal = require('./picklist').toValue('hr_employee_status', 'active');
+    const [e, r, lv] = await Promise.all([
+      d365.getListOptional(EMP, { select: 'hr_hremployeeid,hr_hremployee1,hr_email', optionalSelect: SHIFT_COLS, filter: `hr_status eq ${activeVal}`, top: 5000 }),
+      d365.getList(ATT, { select: PUNCH_SELECT, filter: `hr_date eq ${date}`, top: 5000 }),   // TODAY only
+      approvedLeaveEmployees(date),
+    ]);
+    emps = e.data || []; recs = r.data || []; onLeave = lv;
+  } catch (err) { global.logger?.error(`[late-login-sweep] read failed: ${err.message}`); return { scanned: 0, notified: 0, date }; }
+
+  const recByEmp = new Map();
+  for (const rec of recs) recByEmp.set(rec._hr_hremployee_value, rec);   // one attendance row per employee/day
+
+  let scanned = 0, notified = 0;
+  for (const emp of emps) {
+    scanned++;
+    const shift = shiftOf(emp);
+    const rec = recByEmp.get(emp.hr_hremployeeid);
+    const c = rec ? computeSession(punchesFromRecord(rec), shift) : null;
+    const decision = shouldNotifyLateLogin({
+      isNight: !!shift.isNight, isWorkingDay: true, onLeave: onLeave.has(emp.hr_hremployeeid),
+      nowMin, shiftStartMin: hhmmToMin(shift.start), grace: LATE_ENTRY_GRACE_MIN,
+      hasPunch: !!(c && c.count > 0), lateEntryMinutes: c ? c.lateEntryMinutes : 0,
+    });
+    if (!decision.notify) continue;
+    const shiftLabel = emp.hr_shiftname || `${shift.start}–${shift.end}`;
+    const res = await sendLateLoginNotice(emp, {
+      date, shift: shiftLabel, expectedTime: shift.start,
+      actualTime: c && c.firstPunch ? time.to12h(c.firstPunch) : '',
+      lateBy: decision.lateBy, grace: LATE_ENTRY_GRACE_MIN,
+    });
+    if (!res?.skipped) notified++;
+  }
+  global.logger?.info?.(`[late-login-sweep] ${date}: scanned ${scanned}, notified ${notified}`);
+  return { scanned, notified, date };
+}
+
 /** Reporting manager + HR emails for escalation CC. */
 async function escalationCc(emp, ageDays) {
   const cc = [];
@@ -176,4 +278,4 @@ async function runScan({ days = 3, reminder = false } = {}) {
   return { scanned: recs.length, notified };
 }
 
-module.exports = { openExceptionsForEmployee, runScan, notifyException, sendLateLoginNotice };
+module.exports = { openExceptionsForEmployee, runScan, notifyException, sendLateLoginNotice, sweepTodayLateLogins, shouldNotifyLateLogin };

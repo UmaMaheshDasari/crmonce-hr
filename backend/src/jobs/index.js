@@ -34,6 +34,14 @@ function initJobs() {
     const opts = { timezone: 'Asia/Kolkata' };
     cron.schedule('30 21 * * *', () => exceptions.runScan({ days: 1 }).catch(e => global.logger?.error(`[exception-scan nightly] ${e.message}`)), opts);
     cron.schedule('0 9 * * *', () => exceptions.runScan({ days: 3, reminder: true }).catch(e => global.logger?.error(`[exception-scan morning] ${e.message}`)), opts);
+    // SAME-DAY Late Login: every 15 min, notify (once, deduped) any employee whose
+    // shift-start + late-entry grace has passed TODAY with a late first punch (web or
+    // eTime) or no punch yet — so the Late Login email lands the SAME day, not next
+    // day. Disable with LATE_LOGIN_SAMEDAY_SWEEP=false.
+    if (process.env.LATE_LOGIN_SAMEDAY_SWEEP !== 'false') {
+      cron.schedule('*/15 * * * *', () => exceptions.sweepTodayLateLogins().catch(e => global.logger?.error(`[late-login-sweep] ${e.message}`)), opts);
+      global.logger?.info('Same-day Late Login sweep scheduled (every 15 min, IST)');
+    }
     global.logger?.info('Attendance exception scans scheduled (21:30 nightly, 09:00 reminders, IST)');
   }
 
