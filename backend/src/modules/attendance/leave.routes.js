@@ -25,6 +25,7 @@ const payrollSettings = require('../../services/payroll-settings.service');
 const { validateLeaveReason } = require('../../services/leave-reason.util');
 const { ensureReasonLength } = require('../../services/provision-leave-columns');
 const sickRun = require('../../services/sick-run.service');
+const { validateSickLeaveDocumentRequirement } = require('../../services/sick-leave-week.util');
 const compOffSvc = require('../../services/comp-off.service');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
 const audit = (payload) => { try { activity?.record?.(payload); } catch (_) {} };
@@ -497,8 +498,17 @@ router.post('/', async (req, res, next) => {
       ? await sickRun.sickLeaveRunDays(req.user.id, fromDate, toDate)
       : leaveDays;
     const certPolicy = await medCertPolicy(typeLabel, runDays);
-    if (certPolicy.required && !medCertDocId) {
-      return res.status(400).json({ error: certPolicy.message });
+    // A supporting document is required when EITHER (a) the consecutive-day Medical
+    // Certificate rule applies, OR (b) this is the 2nd+ valid Sick Leave in the same
+    // calendar week (new rule). Both reuse the SAME hr_medcertdocid attachment.
+    let docRequired = certPolicy.required;
+    let docMessage = certPolicy.message;
+    if (typeLabel === 'Sick Leave' && !docRequired) {
+      const weekly = await validateSickLeaveDocumentRequirement(req.user.id, fromDate, toDate);
+      if (weekly.required) { docRequired = true; docMessage = weekly.apiError; }
+    }
+    if (docRequired && !medCertDocId) {
+      return res.status(400).json({ error: docMessage });
     }
     if (medCertDocId) {
       // Validate the referenced document belongs to the applicant (never trust the client).
@@ -507,9 +517,9 @@ router.post('/', async (req, res, next) => {
         if (cd?.hr_hrdocumentid && cd._hr_hremployee_value === req.user.id) {
           body.hr_medcertdocid = medCertDocId;
         }
-      } catch (_) { /* invalid id — ignore, cert simply not linked */ }
-      if (certPolicy.required && !body.hr_medcertdocid) {
-        return res.status(400).json({ error: certPolicy.message });
+      } catch (_) { /* invalid id — ignore, doc simply not linked */ }
+      if (docRequired && !body.hr_medcertdocid) {
+        return res.status(400).json({ error: docMessage });
       }
     }
 
@@ -939,10 +949,17 @@ router.get('/medcert-check', async (req, res, next) => {
   try {
     const from = String(req.query.from || '').slice(0, 10);
     const to = String(req.query.to || from).slice(0, 10);
+    const excludeLeaveId = req.query.excludeLeaveId || undefined;   // set while EDITING (don't count self)
     if (!from) return res.json({ required: false, runDays: 0, threshold: 2 });
-    const runDays = await sickRun.sickLeaveRunDays(req.user.id, from, to);
+    const runDays = await sickRun.sickLeaveRunDays(req.user.id, from, to, { excludeLeaveId });
     const policy = await medCertPolicy('Sick Leave', runDays);
-    res.json({ required: policy.required, runDays, threshold: policy.threshold, message: policy.message });
+    // Consecutive-day Medical Certificate rule OR the new weekly-repeat rule.
+    let required = policy.required, message = policy.message, reason = policy.required ? 'consecutive_days' : null;
+    if (!required) {
+      const weekly = await validateSickLeaveDocumentRequirement(req.user.id, from, to, { excludeLeaveId });
+      if (weekly.required) { required = true; message = weekly.message; reason = 'weekly_repeat'; }
+    }
+    res.json({ required, runDays, threshold: policy.threshold, message, reason });
   } catch (_) {
     res.json({ required: false, runDays: 0, threshold: 2 });
   }

@@ -542,9 +542,11 @@ function ApplyLeaveModal({ onClose, editLeave }) {
 
   // Medical Certificate — dynamic per-request check based on the employee's
   // consecutive Sick-Leave working-day run (req 1; ignores weekly-offs/holidays).
+  // Also detects the weekly-repeat rule (2nd Sick Leave in the same week → document
+  // required). While editing, exclude THIS leave so it never counts itself.
   const { data: certChk } = useQuery({
-    queryKey: ['medcert-check', form.from, form.to, form.type],
-    queryFn: () => leaveApi.medCertCheck({ from: form.from, to: form.to }).then(r => r.data),
+    queryKey: ['medcert-check', form.from, form.to, form.type, editLeave?.hr_hrleaveid],
+    queryFn: () => leaveApi.medCertCheck({ from: form.from, to: form.to, excludeLeaveId: editLeave?.hr_hrleaveid }).then(r => r.data),
     enabled: form.type === 'Sick Leave' && !!form.from && !!form.to,
   });
   const certRequired = form.type === 'Sick Leave' && !!certChk?.required;
@@ -682,7 +684,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
               {certMissing && (
                 <div className="mt-2 flex items-center gap-2 text-xs font-medium text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
                   <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" />
-                  Medical Certificate is mandatory for Sick Leave of {certThreshold} or more consecutive days.
+                  {certChk?.message || `Medical Certificate is mandatory for Sick Leave of ${certThreshold} or more consecutive days.`}
                 </div>
               )}
             </div>
