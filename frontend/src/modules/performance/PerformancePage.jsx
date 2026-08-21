@@ -74,8 +74,11 @@ function ReviewModal({ review, onClose }) {
           hr_cycle: form.cycle, hr_rating: form.rating, hr_goals: form.goals, hr_kpis: form.kpis,
           hr_reviewernotes: form.notes, hr_status: form.status,
         })
-      // CREATE — identical body to the original: the backend attaches the hr_hremployee lookup.
+      // CREATE — send the selected employee so the review is attributed to that person
+      // (the backend binds hr_hremployee to this employeeId). Button stays disabled until
+      // an employee is chosen, so employeeId is always present here.
       : performanceApi.create({
+          employeeId: form.employeeId,
           hr_cycle: form.cycle, hr_rating: form.rating,
           hr_goals: form.goals, hr_kpis: form.kpis, hr_reviewernotes: form.notes,
           hr_status: 'draft',

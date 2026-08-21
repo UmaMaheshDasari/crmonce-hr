@@ -39,7 +39,9 @@ perfRouter.get('/', requirePermission('performance:read'), async (req, res, next
     if (targetId) filters.push(`_hr_hremployee_value eq '${targetId}'`);
     if (cycle) filters.push(`hr_cycle eq '${cycle}'`);
     const result = await d365.getList(d365.constructor.entities.performance, {
-      select: 'hr_hrperformanceid,hr_cycle,hr_rating,hr_kpis,hr_goals,hr_reviewernotes,hr_status',
+      // Include the employee lookup so the review card can show the employee NAME
+      // (labelsForList adds its OData formatted value). Additive — no contract break.
+      select: 'hr_hrperformanceid,hr_cycle,hr_rating,hr_kpis,hr_goals,hr_reviewernotes,hr_status,_hr_hremployee_value',
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
     });
@@ -49,9 +51,15 @@ perfRouter.get('/', requirePermission('performance:read'), async (req, res, next
 
 perfRouter.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
   try {
+    // Bind the review to the SELECTED employee (employeeId from the form) so the review
+    // is attributed to the person being reviewed — not the creator. `employeeId` is a
+    // control field, never a Dataverse column, so it is stripped from the body. Falls
+    // back to the creator only when none is provided (backward compatible).
+    const { employeeId, ...body } = req.body || {};
+    const target = employeeId || req.user.id;
     const perf = await d365.create(d365.constructor.entities.performance, {
-      ...req.body,
-      'hr_hremployee@odata.bind': `/hr_hremployees(${req.user.id})`,
+      ...body,
+      'hr_hremployee@odata.bind': `/hr_hremployees(${target})`,
       hr_status: toValue('hr_performance_status', 'draft'),
     });
     res.status(201).json(labelsForEntity('hr_hrperformances', perf));
