@@ -55,12 +55,13 @@ router.post('/', requireRole(...HR), async (req, res, next) => {
       oldShift: { shiftName: emp?.hr_shiftname, shiftStart: emp?.hr_shiftstarttime, shiftEnd: emp?.hr_shiftendtime },
     }));
 
-    // Keep the employee's CURRENT shift fields in sync ONLY when the change is effective
-    // on/before today — a future-dated change must not alter today's attendance shift.
-    if (String(b.effectiveFrom || today()).slice(0, 10) <= today()) {
-      try { await d365.update(EMP, b.employeeId, { hr_shiftname: b.shiftName || '', hr_shiftstarttime: b.shiftStart, hr_shiftendtime: b.shiftEnd || '' }); }
-      catch (_) { /* optional shift columns — best-effort mirror */ }
-    }
+    // Keep the employee's CURRENT shift fields in sync with whatever is effective TODAY
+    // (a backdated insert may not be the current one; a future-dated change leaves today
+    // unchanged). resolveShiftForDate returns the assignment effective on the given date.
+    try {
+      const eff = await shiftHistory.resolveShiftForDate(b.employeeId, today());
+      if (eff?.start) await d365.update(EMP, b.employeeId, { hr_shiftname: eff.name || '', hr_shiftstarttime: eff.start, hr_shiftendtime: eff.end || '' });
+    } catch (_) { /* optional shift columns — best-effort mirror */ }
     res.status(201).json(rec);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });

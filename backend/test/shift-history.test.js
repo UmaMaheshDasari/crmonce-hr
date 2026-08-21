@@ -140,13 +140,19 @@ test('resolveShiftForDate falls back to the passed employee record when there is
   } finally { s.restore(); }
 });
 
-test('14 — backdating on/before an existing effective date is rejected (overlap)', async () => {
-  const s = stubStore([MORNING, NIGHT]);   // latest effective = 2026-08-21
+test('14 — backdating inserts a historical assignment and resequences boundaries (no overlap)', async () => {
+  const s = stubStore([MORNING, NIGHT]);   // Morning 08-01..08-20, Night 08-21..open
   try {
-    await assert.rejects(
-      () => sh.changeShift({ employeeId: 'E1', employeeName: 'Vishwesh', shiftName: 'Day', shiftStart: '08:00', shiftEnd: '17:00', effectiveFrom: '2026-08-15', changedBy: 'HR' }),
-      (e) => e.status === 409,
-    );
+    await sh.changeShift({ employeeId: 'E1', employeeName: 'Vishwesh', shiftName: 'Day', shiftStart: '08:00', shiftEnd: '17:00', effectiveFrom: '2026-08-10', changedBy: 'HR' });
+    assert.strictEqual(s.rows.length, 3);
+    const byFrom = Object.fromEntries(s.rows.map((r) => [r.hr_effectivefrom, r]));
+    assert.strictEqual(byFrom['2026-08-01'].hr_effectiveto, '2026-08-09');   // Morning re-closed the day before Day
+    assert.strictEqual(byFrom['2026-08-10'].hr_shiftname, 'Day');
+    assert.strictEqual(byFrom['2026-08-10'].hr_effectiveto, '2026-08-20');   // Day runs until the day before Night
+    assert.strictEqual(byFrom['2026-08-21'].hr_effectiveto, '');             // Night still open-ended
+    assert.strictEqual((await sh.resolveShiftForDate('E1', '2026-08-05')).start, '09:00');  // Morning
+    assert.strictEqual((await sh.resolveShiftForDate('E1', '2026-08-15')).start, '08:00');  // Day
+    assert.strictEqual((await sh.resolveShiftForDate('E1', '2026-08-25')).start, '21:00');  // Night
   } finally { s.restore(); }
 });
 

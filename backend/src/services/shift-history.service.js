@@ -149,13 +149,41 @@ async function createRow({ employeeId, employeeName, shiftName, shiftStart, shif
 }
 
 /**
- * Record an employee's shift change WITHOUT overwriting history.
- *  - Same effective date as the current open row → in-place correction (test #13).
- *  - Backdating on/before an existing effective date → 409 (overlap; test #14).
- *  - First ever change → seed the prior/current shift as a closed row from joiningDate
- *    (so past days resolve to the old shift), then append the new open row.
- *  - Subsequent changes → close the open row (effectiveTo = newFrom−1), append the new row.
- * `oldShift` = the employee's CURRENT fields BEFORE this change (for the seed).
+ * Recompute every row's effective_to boundary + status so the timeline is CONTIGUOUS and
+ * NON-OVERLAPPING: sorted by effective_from, each assignment runs until the day before the
+ * next one, and the newest starts open-ended. The row effective as of today is 'active';
+ * earlier rows are 'superseded'; future-dated rows are 'scheduled'. Because each calendar
+ * date maps to exactly one row (latest effective_from ≤ date), an overlap is impossible —
+ * which is why backdating an assignment is always safe.
+ */
+async function resequence(employeeId) {
+  const rows = (await loadHistory(employeeId)).slice().sort((a, b) =>
+    a.hr_effectivefrom < b.hr_effectivefrom ? -1
+      : a.hr_effectivefrom > b.hr_effectivefrom ? 1
+      : (String(a.createdon || '') < String(b.createdon || '') ? -1 : 1));
+  const t = today();
+  let activeIdx = -1;
+  rows.forEach((r, i) => { if (r.hr_effectivefrom && r.hr_effectivefrom <= t) activeIdx = i; });
+  for (let i = 0; i < rows.length; i++) {
+    const to = i < rows.length - 1 ? addDays(rows[i + 1].hr_effectivefrom, -1) : '';
+    const status = i === activeIdx ? 'active' : (rows[i].hr_effectivefrom > t ? 'scheduled' : 'superseded');
+    const patch = {};
+    if ((rows[i].hr_effectiveto || '') !== (to || '')) patch.hr_effectiveto = to;
+    if ((rows[i].hr_status || '') !== status) patch.hr_status = status;
+    if (Object.keys(patch).length) await d365.update(SH, rows[i].hr_shifthistoryid, patch);
+  }
+}
+
+/**
+ * Record an employee's shift change WITHOUT overwriting history. Any effective date is
+ * allowed — including BACKDATING a historical assignment — because boundaries and statuses
+ * are derived by resequence() (each date maps to exactly one assignment, so there is never
+ * an overlap):
+ *  - A row already begins on this exact date → in-place correction (test #13).
+ *  - First ever change → seed the prior/current shift from the joining date so dates before
+ *    this assignment still resolve to the old shift, then insert the new one.
+ *  - Otherwise → insert the new row anywhere in the timeline; resequence fixes the ranges.
+ * `oldShift` = the employee's CURRENT fields BEFORE this change (for the first-change seed).
  */
 async function changeShift({ employeeId, employeeName, shiftName, shiftStart, shiftEnd, graceMins = DEFAULT_GRACE, effectiveFrom, reason = '', changedBy = 'HR', joiningDate, oldShift }) {
   if (!employeeId) { const e = new Error('employeeId is required.'); e.status = 400; throw e; }
@@ -165,48 +193,42 @@ async function changeShift({ employeeId, employeeName, shiftName, shiftStart, sh
   const end = cfg.normalizeTime(shiftEnd) || '';
 
   const rows = await loadHistory(employeeId);
-  const openRow = rows.find((r) => !r.hr_effectiveto);      // the current, open-ended assignment
-  const latestFrom = rows.length ? rows[0].hr_effectivefrom : null;
 
-  // Same-day correction — replace the open row's shift in place, do not stack a new row.
-  if (openRow && openRow.hr_effectivefrom === from) {
-    await d365.update(SH, openRow.hr_shifthistoryid, {
+  // Exact-date correction — a row already begins on this date → update it in place.
+  const same = rows.find((r) => r.hr_effectivefrom === from);
+  if (same) {
+    await d365.update(SH, same.hr_shifthistoryid, {
       hr_shiftname: shiftName || '', hr_shiftstarttime: start, hr_shiftendtime: end,
       hr_gracemins: String(num(graceMins, DEFAULT_GRACE)), hr_changedby: changedBy, hr_changedon: new Date().toISOString(), hr_reason: reason || '',
     });
-    return shape((await d365.getById(SH, openRow.hr_shifthistoryid, { select: SELECT })));
+    await resequence(employeeId);
+    return shape(await d365.getById(SH, same.hr_shifthistoryid, { select: SELECT }));
   }
 
-  // Overlap guard — a new assignment must start strictly AFTER the latest one.
-  if (latestFrom && from <= latestFrom) {
-    const e = new Error(`Effective From (${from}) must be after the current assignment's effective date (${latestFrom}). Overlapping shift assignments are not allowed.`);
-    e.status = 409; throw e;
-  }
-
+  // First change ever → seed the prior (current) shift from the joining date so dates
+  // BEFORE this assignment still resolve to the old shift.
   if (rows.length === 0) {
-    // First change ever → seed the prior (current) shift as a closed row so PAST dates
-    // resolve to it. Seed from the joining date (per configuration) up to the day before
-    // the new assignment. Only seed if we actually know the old shift's start.
     const os = oldShift || {};
     const oldStart = cfg.normalizeTime(os.shiftStart || os.start);
     if (oldStart) {
       const seedFrom = isDate(joiningDate) ? String(joiningDate).slice(0, 10) : '2000-01-01';
-      await createRow({
-        employeeId, employeeName, shiftName: os.shiftName || os.name || '', shiftStart: oldStart, shiftEnd: cfg.normalizeTime(os.shiftEnd || os.end) || '',
-        graceMins: DEFAULT_GRACE, effectiveFrom: seedFrom <= from ? seedFrom : from, effectiveTo: addDays(from, -1),
-        status: 'superseded', changedBy: 'System (migration)', reason: 'Initial shift assignment (seeded from the employee current shift).',
-      });
+      if (seedFrom < from) {
+        await createRow({
+          employeeId, employeeName, shiftName: os.shiftName || os.name || '', shiftStart: oldStart, shiftEnd: cfg.normalizeTime(os.shiftEnd || os.end) || '',
+          graceMins: DEFAULT_GRACE, effectiveFrom: seedFrom, effectiveTo: '', status: 'superseded',
+          changedBy: 'System (migration)', reason: 'Initial shift assignment (seeded from the employee current shift).',
+        });
+      }
     }
-  } else if (openRow) {
-    // Close the current open assignment at the day before the new one.
-    await d365.update(SH, openRow.hr_shifthistoryid, { hr_effectiveto: addDays(from, -1), hr_status: 'superseded' });
   }
 
+  // Insert the new assignment anywhere in the timeline; resequence fixes ranges + statuses.
   const rec = await createRow({
     employeeId, employeeName, shiftName, shiftStart: start, shiftEnd: end, graceMins,
     effectiveFrom: from, effectiveTo: '', status: 'active', changedBy, reason,
   });
-  return shape(rec);
+  await resequence(employeeId);
+  return shape(await d365.getById(SH, rec.hr_shifthistoryid, { select: SELECT }));
 }
 
 /** Explicit initial seed (e.g. on employee create) — one open row from `effectiveFrom`. */

@@ -112,7 +112,7 @@ export default function ShiftHistoryPage() {
                 className="w-full py-2.5 rounded-lg text-sm font-semibold text-white bg-[#1B4F72] hover:bg-[#154360] disabled:opacity-50 transition-colors">
                 {changeMut.isPending ? 'Saving…' : 'Save Shift Change'}
               </button>
-              <p className="text-[11px] text-gray-400 leading-relaxed">The previous assignment is kept (closed the day before this date) — history is never overwritten. A date on or before an existing assignment is rejected.</p>
+              <p className="text-[11px] text-gray-400 leading-relaxed">History is never overwritten — each assignment runs until the day before the next. You can backdate an assignment; the timeline adjusts automatically. Using the same date as an existing assignment edits it.</p>
             </form>
           </div>
 
