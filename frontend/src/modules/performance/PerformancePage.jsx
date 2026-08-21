@@ -21,8 +21,11 @@ const statusOf = (s) => STATUS[s] || { label: s || '—', badge: 'bg-gray-100 te
 const STATUS_OPTIONS = [['', 'All Statuses'], ['draft', 'Draft'], ['in-review', 'In Review'], ['completed', 'Completed']];
 
 const initials = (name) =>
-  String(name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('') || 'E';
-const empName = (r) => r['_hr_employee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee';
+  String(name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('');
+// The employee is the `hr_hremployee` lookup on the performance record; its display name
+// arrives as the OData formatted value. Returns '' when the record has no linked employee
+// (the caller shows a neutral "Unknown employee" — never a fake "Employee").
+const empName = (r) => r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '';
 
 function StarRating({ value, onChange, readOnly, size = 'md' }) {
   const sizeClasses = size === 'lg' ? 'w-7 h-7' : size === 'md' ? 'w-5 h-5' : 'w-4 h-4';
@@ -88,7 +91,7 @@ function ReviewModal({ review, onClose }) {
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div>
             <h2 className="text-lg font-semibold text-gray-900 tracking-tight">{isEdit ? 'Edit Performance Review' : 'New Performance Review'}</h2>
-            <p className="text-sm text-gray-400 mt-0.5">{isEdit ? empName(review) : 'Evaluate employee performance'}</p>
+            <p className="text-sm text-gray-400 mt-0.5">{isEdit ? (empName(review) || 'Unknown employee') : 'Evaluate employee performance'}</p>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
             <XMarkIcon className="w-5 h-5" />
@@ -268,7 +271,7 @@ export default function PerformancePage() {
       ) : (
         <div className="bg-white rounded-2xl border border-gray-200/70 p-3 sm:p-4 shadow-sm">
           <div className="flex flex-col lg:flex-row gap-3 lg:items-center">
-            <div className="relative flex-1 min-w-0">
+            <div className="relative flex-1 min-w-0 lg:max-w-md">
               <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input aria-label="Search reviews" className="input !pl-9" placeholder="Search employee, cycle or feedback…"
                 value={search} onChange={e => setSearch(e.target.value)} />
@@ -294,8 +297,8 @@ export default function PerformancePage() {
         </div>
       )}
 
-      {/* 4. Reviews grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
+      {/* 4. Reviews grid — items-start so cards take their natural (content-based) height */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5 items-start">
         {isLoading ? (
           Array(6).fill(0).map((_, i) => (
             <div key={i} className="bg-white rounded-2xl border border-gray-200/70 shadow-sm animate-pulse">
@@ -331,18 +334,20 @@ export default function PerformancePage() {
         ) : (
           filtered.map(r => {
             const st = statusOf(r.hr_status);
-            const name = empName(r);
+            const raw = empName(r);
+            const name = raw || 'Unknown employee';               // never a fake "Employee"
+            const hasRating = r.hr_rating != null && r.hr_rating !== '' && Number(r.hr_rating) > 0;
             return (
               <div key={r.hr_hrperformanceid}
-                className="group bg-white rounded-2xl border border-gray-200/70 shadow-sm hover:shadow-md hover:border-gray-300/70 transition-all duration-200 flex flex-col">
-                <div className="p-5 flex-1">
-                  {/* Employee + cycle + status */}
+                className="group bg-white rounded-2xl border border-gray-200/70 shadow-sm hover:shadow-md hover:border-gray-300/70 transition-all duration-200">
+                <div className="p-4 sm:p-5">
+                  {/* Employee (strongest) + cycle + status */}
                   <div className="flex items-start gap-3">
-                    <div className="w-11 h-11 rounded-xl grid place-items-center text-white font-semibold text-sm flex-shrink-0 bg-gradient-to-br from-[#EC4899] to-[#8b5cf6]" aria-hidden="true">
-                      {initials(name)}
+                    <div className={`w-11 h-11 rounded-xl grid place-items-center text-white font-semibold text-sm flex-shrink-0 ${raw ? 'bg-gradient-to-br from-[#EC4899] to-[#8b5cf6]' : 'bg-gray-300'}`} aria-hidden="true">
+                      {raw ? initials(raw) : '?'}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-[#17223B] truncate leading-tight">{name}</p>
+                      <p className={`font-semibold text-[15px] leading-tight truncate ${raw ? 'text-[#17223B]' : 'text-gray-400 italic'}`}>{name}</p>
                       {r.hr_cycle && <p className="text-xs text-gray-500 mt-0.5">{r.hr_cycle}</p>}
                     </div>
                     <span className={`flex-shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold ring-1 ring-inset ${st.badge}`}>
@@ -350,23 +355,23 @@ export default function PerformancePage() {
                     </span>
                   </div>
 
-                  {/* Rating */}
-                  <div className="flex items-center gap-2 mt-4">
-                    <StarRating value={r.hr_rating || 0} readOnly size="sm" />
-                    {r.hr_rating != null && r.hr_rating !== '' && (
+                  {/* Rating — grouped stars + numeric; shown only when a real rating exists */}
+                  {hasRating && (
+                    <div className="flex items-center gap-2.5 mt-3.5">
+                      <StarRating value={Number(r.hr_rating)} readOnly size="sm" />
                       <span className="text-sm font-semibold text-[#17223B]">{Number(r.hr_rating).toFixed(1)}<span className="text-gray-400 font-normal"> / 5</span></span>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
-                  {/* Goals (hidden when empty — never invented) */}
+                  {/* Goals — real value only, hidden when empty */}
                   {r.hr_goals && (
-                    <div className="mt-4">
+                    <div className="mt-3.5">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Goals</p>
                       <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">{r.hr_goals}</p>
                     </div>
                   )}
 
-                  {/* Feedback / reviewer notes */}
+                  {/* Reviewer notes — subtle quote box, hidden when empty */}
                   {r.hr_reviewernotes && (
                     <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2">
                       <p className="text-xs text-gray-500 italic line-clamp-2">&ldquo;{r.hr_reviewernotes}&rdquo;</p>
@@ -374,9 +379,9 @@ export default function PerformancePage() {
                   )}
                 </div>
 
-                {/* 5. Footer action (HR only — uses the existing update endpoint) */}
+                {/* 5. Footer action (HR only — existing update endpoint, handlers unchanged) */}
                 {isHR() && (
-                  <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+                  <div className="px-4 sm:px-5 py-2.5 border-t border-gray-100 flex justify-end">
                     <button onClick={() => setEditReview(r)} aria-label={`Edit performance review for ${name}`}
                       className="inline-flex items-center gap-1.5 text-sm font-medium text-[#EC4899] hover:text-[#D81B60] px-2.5 py-1 rounded-lg hover:bg-pink-50 transition-colors">
                       <PencilSquareIcon className="w-4 h-4" />
