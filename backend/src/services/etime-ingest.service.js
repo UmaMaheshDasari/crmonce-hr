@@ -82,6 +82,7 @@ async function ingestPunches(punches, { deviceId } = {}) {
   if (!Array.isArray(punches)) { stats.received = 0; return stats; }
 
   const empCache = new Map();   // etimeCode → employee|null (per-batch cache)
+  const shiftCache = new Map(); // etimeCode → date-aware shift resolver (per-batch cache)
   for (const p of punches) {
     const v = validatePunch(p);
     if (!v.ok) { stats.failed++; stats.errors.push({ etimeCode: p?.etimeCode ?? null, reason: v.reason }); continue; }
@@ -91,7 +92,10 @@ async function ingestPunches(punches, { deviceId } = {}) {
       const emp = empCache.get(code);
       if (!emp) { stats.unmapped++; continue; }   // unknown device user — not an error, just unmapped
 
-      const shift = attnCfg.resolveEmployeeShift(emp.hr_shiftname, emp.hr_shiftstarttime, emp.hr_shiftendtime);
+      // Resolve the shift EFFECTIVE on the PUNCH date (history-aware) — a backfilled /
+      // late-synced punch for a prior date must never use the employee's current shift.
+      if (!shiftCache.has(code)) shiftCache.set(code, await require('./shift-history.service').shiftResolverFor(emp.hr_hremployeeid, emp));
+      const shift = shiftCache.get(code).forDate(String(p.date).slice(0, 10));
       const { data: existing } = await d365.getList(ATT, {
         filter: `_hr_hremployee_value eq '${emp.hr_hremployeeid}' and hr_date eq ${p.date}`,
         select: 'hr_hrattendanceid,hr_allpunches',
@@ -102,11 +106,11 @@ async function ingestPunches(punches, { deviceId } = {}) {
         try { cur = JSON.parse(existing[0].hr_allpunches || '[]'); } catch { cur = []; }
         const { punches: merged, added } = mergePunch(cur, p.time);
         if (!added) { stats.duplicates++; continue; }     // IDEMPOTENT: same punch synced twice → one record
-        const c = computeSession(merged, shift);
+        const c = computeSession(merged, shift, { graceMinutes: shift.grace });
         await d365.update(ATT, existing[0].hr_hrattendanceid, payloadFromSession(c));
         stats.updated++;
       } else {
-        const c = computeSession([p.time], shift);
+        const c = computeSession([p.time], shift, { graceMinutes: shift.grace });
         await d365.create(ATT, {
           'hr_hremployee@odata.bind': `/hr_hremployees(${emp.hr_hremployeeid})`,
           hr_date: p.date,

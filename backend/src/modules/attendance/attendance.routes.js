@@ -81,9 +81,10 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
     }
 
     // Recompute the session per record (status + late + missing-punch flags).
-    const shiftMap = await buildShiftMap();
+    const shiftFor = await buildShiftResolver();
     for (const r of recs) {
-      const c = computeSession(punchesFromRecord(r), shiftMap.get(r._hr_hremployee_value) || resolveShift());
+      const s = shiftFor(r._hr_hremployee_value, r.hr_date);
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
       r.hr_status = c.status;
       r._late = (c.lateArrivalMin || 0) > 0;
       r._incomplete = c.state === 'in' || (c.count % 2 !== 0);
@@ -269,6 +270,13 @@ async function getEmployeeShift(employeeId) {
     return shiftOf(e);
   } catch (_) { return resolveShift(); }
 }
+// Shift EFFECTIVE on a specific attendance DATE (history-aware; falls back to the
+// employee's current shift). Use for any PAST-dated recompute (edit / correction /
+// historical entry) so a later shift change never re-judges an old day.
+async function getEmployeeShiftForDate(employeeId, date) {
+  try { return await require('../../services/shift-history.service').resolveShiftForDate(employeeId, String(date).slice(0, 10)); }
+  catch (_) { return getEmployeeShift(employeeId); }
+}
 // Real-time Late Entry email (employee only). Runs detached so it can NEVER delay or
 // fail a check-in; the ledger guarantees ONE email per employee+date even with the
 // nightly scan also running. No-op when disabled or the check-in is within grace.
@@ -296,6 +304,17 @@ async function buildShiftMap() {
     (data || []).forEach(e => map.set(e.hr_hremployeeid, shiftOf(e)));
   } catch (_) { /* fall back to default per record */ }
   return map;
+}
+
+/** Date-aware shift resolver for multi-employee reports: (employeeId, date) → the shift
+ *  EFFECTIVE on that date (history-aware; falls back to the employee's current shift).
+ *  One shift-history query for the whole report, not one per employee. */
+async function buildShiftResolver() {
+  const sh = require('../../services/shift-history.service');
+  const empMap = new Map();
+  try { const { data } = await d365.getListOptional(EMP_ENTITY, { select: 'hr_hremployeeid', optionalSelect: SHIFT_COLS, top: 5000 }); (data || []).forEach(e => empMap.set(e.hr_hremployeeid, e)); } catch (_) {}
+  const histMap = await sh.loadHistoryMap();
+  return (employeeId, date) => sh.shiftForDateFromMap(histMap, employeeId, date, empMap.get(employeeId));
 }
 
 // An employee's FIRST attendance date (device or web). Attendance history — and
@@ -419,8 +438,8 @@ router.post('/correction', requireRole('super_admin', 'hr_manager'), async (req,
     if (punches.length % 2 === 0) {
       return res.status(400).json({ error: 'This attendance is already complete' });
     }
-    const shift = await getEmployeeShift(rec._hr_hremployee_value);
-    const c = computeSession([...punches, { t: actualCheckout, d: 'out' }], shift);
+    const shift = await getEmployeeShiftForDate(rec._hr_hremployee_value, rec.hr_date);
+    const c = computeSession([...punches, { t: actualCheckout, d: 'out' }], shift, { graceMinutes: shift.grace });
     const updated = await d365.update(ENTITY, attendanceId, {
       ...punchPayload(c),
       hr_source: toValue('hr_attendance_source', 'manual_correction'),
@@ -475,10 +494,11 @@ router.put('/:id/edit', requireRole('super_admin', 'hr_manager'), async (req, re
     const { inTime, outTime, breakHours, workedHours, overtime, status, lateMinutes, reason } = req.body;
     const rec = await d365.getById(ENTITY, req.params.id, { select: PUNCH_SELECT });
     const empId = rec._hr_hremployee_value;
-    const shift = await getEmployeeShift(empId);
-    // Rebuild the day from the edited in/out (blanks dropped) and recompute.
+    const shift = await getEmployeeShiftForDate(empId, rec.hr_date);
+    // Rebuild the day from the edited in/out (blanks dropped) and recompute under the
+    // shift EFFECTIVE on this record's date.
     const times = [inTime, outTime].map(t => String(t ?? '').trim()).filter(Boolean);
-    const c = computeSession(times, shift);
+    const c = computeSession(times, shift, { graceMinutes: shift.grace });
     const payload = { ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'manual_correction') };
     // Explicit HR overrides win over the recomputed values.
     const st = normalizeAttStatus(status);
@@ -515,9 +535,9 @@ router.post('/historical', requireRole('super_admin', 'hr_manager'), async (req,
     if (dup && !overwrite) {
       return res.status(409).json({ error: `Attendance already exists for this employee on ${ds}. Enable overwrite to replace it.`, duplicate: true, existing: labelsForEntity('hr_hrattendances', dup) });
     }
-    const shift = await getEmployeeShift(employeeId);
+    const shift = await getEmployeeShiftForDate(employeeId, ds);
     const times = [inTime, outTime].map(t => String(t ?? '').trim()).filter(Boolean);
-    const c = computeSession(times, shift);
+    const c = computeSession(times, shift, { graceMinutes: shift.grace });
     const payload = { ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'manual_correction') };
     const st = normalizeAttStatus(status);
     if (status && st) payload.hr_status = toValue('hr_attendance_status', st);
@@ -643,10 +663,12 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
       filter: `_hr_hremployee_value eq '${targetId}' and hr_date ge ${from} and hr_date le ${to}`,
       orderby: 'hr_date asc',
     });
-    const shift = await getEmployeeShift(targetId);
+    // Resolve the shift EFFECTIVE on each day (history-aware) — one history load, reused.
+    const shiftResolver = await require('../../services/shift-history.service').shiftResolverFor(targetId);
     let present = 0, halfDay = 0, incomplete = 0, attended = 0, lateCount = 0, earlyCount = 0, overtimeHours = 0;
     for (const r of (recs || [])) {
-      const c = computeSession(punchesFromRecord(r), shift);
+      const s = shiftResolver.forDate(String(r.hr_date).slice(0, 10));
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
       if ((c.count || 0) > 0) attended++;             // any punch → NOT absent
       if (c.status === 'present') present++;
       else if (c.status === 'half_day') halfDay++;
@@ -696,10 +718,11 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
     const { data: recs } = await d365.getList(ENTITY, {
       select: PUNCH_SELECT, filter: `hr_date eq ${today}`,
     });
-    const shiftMap = await buildShiftMap();
+    const shiftFor = await buildShiftResolver();
     let inside = 0, outside = 0, incomplete = 0, late = 0, early = 0, overtime = 0;
     for (const r of (recs || [])) {
-      const c = computeSession(punchesFromRecord(r), shiftMap.get(r._hr_hremployee_value) || resolveShift());
+      const s = shiftFor(r._hr_hremployee_value, r.hr_date);
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
       if (c.state === 'in') inside++;
       else if (c.state === 'out') outside++;
       if (c.status === 'incomplete') incomplete++;
@@ -788,10 +811,14 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   // without it a failed map would clamp working days to 0 and zero every Absent).
   const byEmp = {};
   const firstInRange = {};
+  // Resolve each record under the shift EFFECTIVE on ITS date (history-aware) — one load.
+  const shiftSvc = require('../../services/shift-history.service');
+  const histMap = await shiftSvc.loadHistoryMap();
   const computed = (recs || []).map(r => {
     const emp = empMap.get(r._hr_hremployee_value) || {};
-    const c = computeSession(punchesFromRecord(r), shiftOf(emp));
     const ds = String(r.hr_date).slice(0, 10);
+    const s = shiftSvc.shiftForDateFromMap(histMap, r._hr_hremployee_value, ds, emp);
+    const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
     (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
     if (!firstInRange[r._hr_hremployee_value] || ds < firstInRange[r._hr_hremployee_value]) {
       firstInRange[r._hr_hremployee_value] = ds;

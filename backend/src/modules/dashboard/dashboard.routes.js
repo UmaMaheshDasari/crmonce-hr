@@ -90,13 +90,16 @@ router.get('/summary', async (req, res, next) => {
       attendanceExceptions.openExceptionsForEmployee(empId).catch(() => []),
     ]);
 
-    const shift = attnCfg.resolveEmployeeShift(emp.hr_shiftname, emp.hr_shiftstarttime, emp.hr_shiftendtime);
+    // Shift resolver for THIS employee (history-aware): today's session uses today's
+    // shift; each past month-day uses the shift that was effective on that day.
+    const shiftResolver = await require('../../services/shift-history.service').shiftResolverFor(empId, emp);
+    const shift = shiftResolver.forDate(today);
     const monthRecs = monthRecsRes.data || [];
     const allLeaves = allLeavesRes.data || [];
 
     // ── Today's session (attendance widget) ───────────────────────────────────
     const todayRec = monthRecs.find(r => String(r.hr_date).slice(0, 10) === today) || null;
-    const ct = computeSession(todayRec ? punchesFromRecord(todayRec) : [], shift);
+    const ct = computeSession(todayRec ? punchesFromRecord(todayRec) : [], shift, { graceMinutes: shift.grace });
     const todayView = {
       date: today,
       status: ct.status,                         // present | half_day | incomplete | absent
@@ -123,7 +126,8 @@ router.get('/summary', async (req, res, next) => {
     let present = 0, half = 0, incomplete = 0, attended = 0, lateDays = 0, workedEff = 0, overtime = 0;
     const earliestRec = earliestAttendanceDate(monthRecs);   // fallback Attendance Start Date
     for (const r of monthRecs) {
-      const c = computeSession(punchesFromRecord(r), shift);
+      const s = shiftResolver.forDate(String(r.hr_date).slice(0, 10));
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
       if ((c.count || 0) > 0) { attended++; workedEff += c.effectiveHours || 0; overtime += c.overtimeHours || 0; }
       if (c.status === 'present') present++;
       else if (c.status === 'half_day') half++;
@@ -267,6 +271,11 @@ router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (re
     const weekAtt = weekAttRes.data || [];
     const allLeaves = leavesRes.data || [];
     const shiftByEmp = new Map(emps.map(e => [e.hr_hremployeeid, SHIFT_MAP(e)]));
+    // Date-aware shift resolution for the week (history-aware; a mid-week shift change
+    // must not re-judge the earlier days — falls back to the current shift when no history).
+    const shiftHist = require('../../services/shift-history.service');
+    const empById = new Map(emps.map(e => [e.hr_hremployeeid, e]));
+    const histMap = await shiftHist.loadHistoryMap();
 
     // ── KPI cards ─────────────────────────────────────────────────────────────
     const totalEmployees = emps.length;
@@ -302,7 +311,8 @@ router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (re
       const ds = String(r.hr_date).slice(0, 10);
       if (!byDate[ds] || punchesFromRecord(r).length === 0) return;
       byDate[ds].present.add(r._hr_hremployee_value);
-      const c = computeSession(punchesFromRecord(r), shiftByEmp.get(r._hr_hremployee_value));
+      const s = shiftHist.shiftForDateFromMap(histMap, r._hr_hremployee_value, ds, empById.get(r._hr_hremployee_value));
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
       if (c.lateArrivalMin > 0) byDate[ds].late.add(r._hr_hremployee_value);
     });
     const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

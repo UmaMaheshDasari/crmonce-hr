@@ -128,6 +128,7 @@ app.use('/api/dashboard',   authenticateToken, dashboardRoutes);
 app.use('/api/attendance-requests', authenticateToken, attendanceRequestRoutes);
 app.use('/api/holidays',    authenticateToken, holidayRoutes);
 app.use('/api/leave-opening', authenticateToken, require('./modules/attendance/leave-opening.routes'));
+app.use('/api/shift-history', authenticateToken, require('./modules/attendance/shift-history.routes'));
 app.use('/api/company',     authenticateToken, require('./modules/company/company.routes'));
 app.use('/api/import-export', authenticateToken, require('./modules/shared/import-export.routes'));
 app.use('/api/celebrations', authenticateToken, require('./modules/celebrations/celebrations.routes'));
@@ -211,6 +212,9 @@ server.listen(PORT, () => {
     require('./services/provision-comp-off')
       .ensureCompOffTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] comp-off table skipped: ${err.message}`));
+    require('./services/provision-shift-history')
+      .ensureShiftHistoryTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] shift-history table skipped: ${err.message}`));
     require('./services/provision-leave-opening')
       .ensureLeaveOpeningTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] leave-opening tables skipped: ${err.message}`));

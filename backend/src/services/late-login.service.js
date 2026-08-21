@@ -100,9 +100,16 @@ async function getEmployee(id) { try { return await d365.getByIdOptional(EMP, id
 /** The employee's SHIFT START ("HH:MM") — the SAME source of truth Attendance uses
  *  (attendance.config.resolveEmployeeShift). Never a hardcoded 09:00; when no shift is
  *  configured it falls back to the configured default shift. '' only on a lookup error. */
-async function resolveShiftStart(employeeId) {
+async function resolveShiftStart(employeeId, date) {
   try {
     const emp = await d365.getByIdOptional(EMP, employeeId, { select: 'hr_hremployeeid', optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime' });
+    // When a date is given, use the shift EFFECTIVE on that date (history-aware) so a
+    // backdated Late Login is measured against the shift the employee actually worked;
+    // the just-fetched employee record is the fallback when there is no history.
+    if (date) {
+      const s = await require('./shift-history.service').resolveShiftForDate(employeeId, String(date).slice(0, 10), emp);
+      return s?.start || '';
+    }
     const attnCfg = require('./attendance.config');
     return attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime)?.start || '';
   } catch { return ''; }
@@ -248,7 +255,7 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   // Shift Start Time is AUTHORITATIVE from the shift config (source of truth), not the
   // client — the form shows it read-only, but never trust a submitted value. Fall back
   // to the client value only if the lookup fails.
-  const shiftStart = (await resolveShiftStart(employeeId)) || String(expectedTime || '');
+  const shiftStart = (await resolveShiftStart(employeeId, ds)) || String(expectedTime || '');
   // Late Login Time must be LATER than Shift Start (else Late By is negative / "-"). This
   // also catches an AM/PM mistake (e.g. 11:30 AM entered against a 4:30 PM shift).
   const sMin = toMin(shiftStart), aMin = toMin(actualTime);

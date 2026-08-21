@@ -16,6 +16,7 @@ import LeavePage from './modules/attendance/LeavePage';
 import CompOffPage from './modules/attendance/CompOffPage';
 import LateLoginPage from './modules/attendance/LateLoginPage';
 import LeaveOpeningBalancePage from './modules/attendance/LeaveOpeningBalancePage';
+import ShiftHistoryPage from './modules/attendance/ShiftHistoryPage';
 import HistoricalAttendancePage from './modules/attendance/HistoricalAttendancePage';
 import PayrollPage from './modules/payroll/PayrollPage';
 import RecruitmentPage from './modules/recruitment/RecruitmentPage';
@@ -83,6 +84,8 @@ function AppRoutes() {
         <Route path="comp-off" element={<CompOffPage />} />
         <Route path="late-login" element={<LateLoginPage />} />
         <Route path="leave-opening-balance" element={<ProtectedRoute roles={['super_admin','hr_manager']}><LeaveOpeningBalancePage /></ProtectedRoute>} />
+        {/* Shift History = HR/Admin only. Effective-dated shift assignments per employee. */}
+        <Route path="shift-history" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ShiftHistoryPage /></ProtectedRoute>} />
         <Route path="payroll" element={<PayrollPage />} />
         <Route path="payroll-dashboard" element={<ProtectedRoute roles={['super_admin','hr_manager']}><PayrollDashboardPage /></ProtectedRoute>} />
         <Route path="payroll-automation" element={<ProtectedRoute roles={['super_admin','hr_manager']}><AutomationPage /></ProtectedRoute>} />

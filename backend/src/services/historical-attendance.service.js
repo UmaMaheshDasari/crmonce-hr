@@ -190,11 +190,12 @@ async function decide(id, action, approver, comment) {
 
   if (action === 'approved') {
     const emp = await getEmployee(empId);
-    const shift = shiftOf(emp);
+    // Shift EFFECTIVE on the historical date (history-aware; falls back to current fields).
+    const shift = await require('./shift-history.service').resolveShiftForDate(empId, ds, emp);
     const existing = await findAttendance(empId, ds);
     const oldStatus = existing ? (toLabel('hr_attendance_status', existing.hr_status) || 'absent') : 'absent';
     const times = [row.hr_intime, row.hr_outtime].map(t => String(t ?? '').trim()).filter(Boolean);
-    const c = computeSession(times, shift);
+    const c = computeSession(times, shift, { graceMinutes: shift.grace });
     const body = punchPayload(c);
     let attendanceId;
     if (existing) {

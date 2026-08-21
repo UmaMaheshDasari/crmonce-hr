@@ -12,6 +12,7 @@ const d365 = require('./d365.service');
 const attnCfg = require('./attendance.config');
 const time = require('./time.util');
 const { computeSession, punchesFromRecord, LATE_ENTRY_GRACE_MIN } = require('./attendance.util');
+const shiftHistory = require('./shift-history.service');   // resolve the shift EFFECTIVE on the attendance date
 const { detectExceptions } = require('./attendance-exception.util');
 const templates = require('./email/templates');
 const notification = require('./notification.service');
@@ -50,10 +51,13 @@ async function openExceptionsForEmployee(employeeId, { days = 14 } = {}) {
       d365.getByIdOptional(EMP, employeeId, { select: 'hr_hremployeeid', optionalSelect: SHIFT_COLS }).catch(() => ({})),
       d365.getList(ATT, { select: PUNCH_SELECT, filter: `_hr_hremployee_value eq '${employeeId}' and hr_date ge ${from} and hr_date lt ${today}`, orderby: 'hr_date desc', top: 60 }).catch(() => ({ data: [] })),
     ]);
-    const shift = shiftOf(emp);
+    // Resolve the shift EFFECTIVE on each record's date (history-aware; falls back to
+    // the employee's current shift when there is no history).
+    const resolver = await shiftHistory.shiftResolverFor(employeeId, emp);
     const alerts = [];
     for (const r of (recRes.data || [])) {
-      const c = computeSession(punchesFromRecord(r), shift);
+      const shift = resolver.forDate(String(r.hr_date).slice(0, 10));
+      const c = computeSession(punchesFromRecord(r), shift, { graceMinutes: shift.grace });
       const [ex] = detectExceptions(c);
       if (ex) alerts.push({ date: String(r.hr_date).slice(0, 10), code: ex.code, label: ex.label, priority: ex.priority, punches: c.punches.map(p => p.t) });
     }
@@ -210,18 +214,21 @@ async function sweepTodayLateLogins() {
 
   const recByEmp = new Map();
   for (const rec of recs) recByEmp.set(rec._hr_hremployee_value, rec);   // one attendance row per employee/day
+  // Shift EFFECTIVE today (history-aware) — a shift scheduled to start on a FUTURE date
+  // must NOT change today's Late-Login deadline; only rows with effective_from ≤ today win.
+  const histMap = await shiftHistory.loadHistoryMap();
 
   let scanned = 0, notified = 0;
   for (const emp of emps) {
     scanned++;
-    const shift = shiftOf(emp);
+    const shift = shiftHistory.shiftForDateFromMap(histMap, emp.hr_hremployeeid, date, emp);
     const rec = recByEmp.get(emp.hr_hremployeeid);
-    const c = rec ? computeSession(punchesFromRecord(rec), shift) : null;
+    const c = rec ? computeSession(punchesFromRecord(rec), shift, { graceMinutes: shift.grace }) : null;
     // Deadline = the employee's OWN shift start + grace (never a fixed clock time).
     const decision = shouldNotifyLateLogin({
       isNight: !!shift.isNight, isWorkingDay: true,
       onLeave: onLeave.has(emp.hr_hremployeeid), alreadySubmitted: submitted.has(emp.hr_hremployeeid),
-      nowMin, shiftStartMin: hhmmToMin(shift.start), grace: LATE_ENTRY_GRACE_MIN,
+      nowMin, shiftStartMin: hhmmToMin(shift.start), grace: shift.grace,
       hasPunch: !!(c && c.count > 0), lateEntryMinutes: c ? c.lateEntryMinutes : 0,
     });
     if (!decision.notify) continue;
@@ -229,11 +236,11 @@ async function sweepTodayLateLogins() {
     // No punch by the deadline → "Please apply for Late Login"; a late punch → "You
     // logged in late". Both share ONE ledger key → exactly one email per employee/day.
     const res = decision.reason === 'no_punch'
-      ? await sendLateLoginApplyPrompt(emp, { date, shift: shiftLabel, expectedTime: shift.start, grace: LATE_ENTRY_GRACE_MIN })
+      ? await sendLateLoginApplyPrompt(emp, { date, shift: shiftLabel, expectedTime: shift.start, grace: shift.grace })
       : await sendLateLoginNotice(emp, {
           date, shift: shiftLabel, expectedTime: shift.start,
           actualTime: c && c.firstPunch ? time.to12h(c.firstPunch) : '',
-          lateBy: decision.lateBy, grace: LATE_ENTRY_GRACE_MIN,
+          lateBy: decision.lateBy, grace: shift.grace,
         });
     if (!res?.skipped) notified++;
   }
@@ -277,20 +284,23 @@ async function runScan({ days = 3, reminder = false } = {}) {
   } catch (err) { global.logger?.error(`[exception-scan] read failed: ${err.message}`); return { scanned: 0, notified: 0 }; }
 
   const empMap = new Map(emps.map(e => [e.hr_hremployeeid, e]));
+  // Shift EFFECTIVE on each past date (history-aware) — a later shift change must NEVER
+  // re-judge a past day. One query; employees with no history fall back to current shift.
+  const histMap = await shiftHistory.loadHistoryMap();
   const seen = new Set();
   let notified = 0;
   for (const rec of recs) {
     const emp = empMap.get(rec._hr_hremployee_value);
     if (!emp) continue;
-    const shift = shiftOf(emp);
-    const c = computeSession(punchesFromRecord(rec), shift);
     const date = String(rec.hr_date).slice(0, 10);
+    const shift = shiftHistory.shiftForDateFromMap(histMap, emp.hr_hremployeeid, date, emp);
+    const c = computeSession(punchesFromRecord(rec), shift, { graceMinutes: shift.grace });
     const shiftLabel = emp.hr_shiftname || `${shift.start}–${shift.end}`;
 
     // Late-login informational notice (opt-in) — ONE per employee/day via the
     // ledger, so recalc / dashboard / payroll never re-send it (§9).
     if (ecfg.notify.lateLoginNotice && (c.lateEntryMinutes || 0) > 0) {
-      await sendLateLoginNotice(emp, { date, shift: shiftLabel, expectedTime: shift.start, actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '', lateBy: c.lateEntryMinutes, grace: LATE_ENTRY_GRACE_MIN });
+      await sendLateLoginNotice(emp, { date, shift: shiftLabel, expectedTime: shift.start, actualTime: c.firstPunch ? time.to12h(c.firstPunch) : '', lateBy: c.lateEntryMinutes, grace: shift.grace });
     }
 
     const [ex] = detectExceptions(c);

@@ -198,6 +198,12 @@ export const salaryStructureApi = {
   delete: (id) => api.delete(`/payroll/salary-structures/${id}`),
 };
 
+// ── Shift History (effective-dated shift assignments per employee) ──
+export const shiftHistoryApi = {
+  history: (employeeId) => api.get(`/shift-history/employee/${employeeId}`),
+  change: (data) => api.post('/shift-history', data),
+};
+
 // ── Recruitment ──────────────────────────────────────────────────
 export const recruitmentApi = {
   jobs: (params) => api.get('/recruitment/jobs', { params }),

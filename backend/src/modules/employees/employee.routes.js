@@ -337,6 +337,17 @@ router.patch('/:id', async (req, res, next) => {
     try { current = await d365.getByIdResilient(ENTITY, req.params.id, { select: 'hr_hremployee1', optionalSelect: ESS_OPTIONAL_SELECT }); } catch { /* best-effort */ }
     const changes = profile.diffChanges(current, raw);
 
+    // Shift change (HR-only) → capture the PRIOR shift + joining date now, so we can
+    // append an effective-dated Shift History row after the save (past attendance keeps
+    // using the shift that was effective then — never the new one). Best-effort.
+    const shiftKeys = ['hr_shiftname', 'hr_shiftstarttime', 'hr_shiftendtime'];
+    const shiftChanging = isHRWrite && shiftKeys.some(k => raw[k] !== undefined);
+    let shiftPrev = null;
+    if (shiftChanging) {
+      try { shiftPrev = await d365.getByIdOptional(ENTITY, req.params.id, { select: 'hr_hremployeeid', optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_joiningdate' }); }
+      catch { shiftPrev = null; }
+    }
+
     // A self-service change to PAN / Aadhaar / Bank / Address requires HR re-verification.
     const needsVerify = !isHRWrite && profile.requiresVerification(changes);
     if (needsVerify) {
@@ -356,6 +367,27 @@ router.patch('/:id', async (req, res, next) => {
     }
     profile.notifyUser(req.params.id, 'profile:updated', { verification: needsVerify });
     if (needsVerify) profile.notifyHRVerification({ id: req.params.id, name: empName }).catch(() => {});
+
+    // Append an effective-dated Shift History row when the shift actually changed. The
+    // employee's flat shift fields (updated above) remain the "current" mirror; the
+    // history table makes past attendance date-correct. Best-effort — never fails the save.
+    if (shiftChanging) {
+      const newName = raw.hr_shiftname !== undefined ? raw.hr_shiftname : shiftPrev?.hr_shiftname;
+      const newStart = raw.hr_shiftstarttime !== undefined ? raw.hr_shiftstarttime : shiftPrev?.hr_shiftstarttime;
+      const newEnd = raw.hr_shiftendtime !== undefined ? raw.hr_shiftendtime : shiftPrev?.hr_shiftendtime;
+      const actuallyChanged = newName !== shiftPrev?.hr_shiftname || newStart !== shiftPrev?.hr_shiftstarttime || newEnd !== shiftPrev?.hr_shiftendtime;
+      if (actuallyChanged) {
+        require('../../services/shift-history.service').changeShift({
+          employeeId: req.params.id, employeeName: empName,
+          shiftName: newName, shiftStart: newStart, shiftEnd: newEnd,
+          effectiveFrom: req.body.shiftEffectiveFrom || undefined,   // default = today
+          reason: req.body.shiftChangeReason || '',
+          changedBy: req.user.name || req.user.email || 'HR',
+          joiningDate: shiftPrev?.hr_joiningdate,
+          oldShift: { shiftName: shiftPrev?.hr_shiftname, shiftStart: shiftPrev?.hr_shiftstarttime, shiftEnd: shiftPrev?.hr_shiftendtime },
+        }).catch((e) => global.logger?.warn?.(`[shift-history] change not recorded for ${req.params.id}: ${e.message}`));
+      }
+    }
 
     res.json({ ...emp, _verifystatus: needsVerify ? 'pending' : (raw.hr_verifystatus || current.hr_verifystatus || 'verified'), _pendingVerification: needsVerify });
   } catch (err) { next(err); }
