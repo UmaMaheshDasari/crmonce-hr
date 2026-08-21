@@ -75,6 +75,14 @@ perfRouter.patch('/:id', requirePermission('performance:write'), async (req, res
   } catch (err) { next(err); }
 });
 
+// DELETE a performance review — HR / Super Admin only (same authority as create).
+perfRouter.delete('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    await d365.delete(d365.constructor.entities.performance, req.params.id);
+    res.json({ deleted: true, id: req.params.id });
+  } catch (err) { next(err); }
+});
+
 // ── DOCUMENTS ─────────────────────────────────────────────────────
 // Multer writes to disk here. A CUSTOM UPLOAD_DIR is not created anywhere else
 // (server.js only ensures the default ./uploads), so on a fresh/custom path the

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { performanceApi, employeeApi } from '../../api/endpoints';
 import {
-  PlusIcon, XMarkIcon, StarIcon, MagnifyingGlassIcon, PencilSquareIcon,
+  PlusIcon, XMarkIcon, StarIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon,
   ClipboardDocumentListIcon, DocumentTextIcon, ClockIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid';
@@ -190,8 +190,10 @@ const RATINGS = [['', 'Any rating'], ['5', '5 ★'], ['4', '4 ★ & up'], ['3', 
 
 export default function PerformancePage() {
   const { isHR } = useAuth();
+  const qc = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [editReview, setEditReview] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [search, setSearch] = useState('');
   const [cycle, setCycle] = useState('');
   const [status, setStatus] = useState('');
@@ -203,6 +205,12 @@ export default function PerformancePage() {
     queryFn: () => performanceApi.list(),
   });
   const reviews = data?.data?.data || [];
+
+  const deleteMut = useMutation({
+    mutationFn: (id) => performanceApi.delete(id),
+    onSuccess: () => { toast.success('Review deleted'); qc.invalidateQueries({ queryKey: ['performance'] }); setDeleteTarget(null); },
+    onError: () => toast.error('Failed to delete review'),
+  });
 
   const counts = useMemo(() => ({
     total: reviews.length,
@@ -384,7 +392,11 @@ export default function PerformancePage() {
 
                 {/* 5. Footer action (HR only — existing update endpoint, handlers unchanged) */}
                 {isHR() && (
-                  <div className="px-4 sm:px-5 py-2.5 border-t border-gray-100 flex justify-end">
+                  <div className="px-4 sm:px-5 py-2.5 border-t border-gray-100 flex items-center justify-between">
+                    <button onClick={() => setDeleteTarget(r)} aria-label={`Delete performance review for ${name}`}
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-red-500 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors">
+                      <TrashIcon className="w-4 h-4" /> Delete
+                    </button>
                     <button onClick={() => setEditReview(r)} aria-label={`Edit performance review for ${name}`}
                       className="inline-flex items-center gap-1.5 text-sm font-medium text-[#EC4899] hover:text-[#D81B60] px-2.5 py-1 rounded-lg hover:bg-pink-50 transition-colors">
                       <PencilSquareIcon className="w-4 h-4" />
@@ -400,6 +412,28 @@ export default function PerformancePage() {
 
       {showModal && <ReviewModal onClose={() => setShowModal(false)} />}
       {editReview && <ReviewModal review={editReview} onClose={() => setEditReview(null)} />}
+
+      {/* Delete confirmation (HR only — uses the existing delete endpoint) */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-label="Delete performance review">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-in fade-in duration-200">
+            <div className="w-12 h-12 rounded-xl bg-red-50 grid place-items-center mb-4"><TrashIcon className="w-6 h-6 text-red-500" /></div>
+            <h3 className="text-lg font-semibold text-[#17223B]">Delete review?</h3>
+            <p className="text-sm text-gray-500 mt-1.5">
+              This permanently deletes the{deleteTarget.hr_cycle ? ` ${deleteTarget.hr_cycle}` : ''} review for{' '}
+              <span className="font-medium text-gray-700">{empName(deleteTarget) || 'this employee'}</span>. This action cannot be undone.
+            </p>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setDeleteTarget(null)} className="btn-secondary flex-1">Cancel</button>
+              <button onClick={() => deleteMut.mutate(deleteTarget.hr_hrperformanceid)} disabled={deleteMut.isPending}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-60 flex items-center justify-center gap-2">
+                {deleteMut.isPending && <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

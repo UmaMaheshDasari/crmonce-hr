@@ -217,6 +217,7 @@ export const performanceApi = {
   list: (params) => api.get('/performance', { params }),
   create: (data) => api.post('/performance', data),
   update: (id, data) => api.patch(`/performance/${id}`, data),
+  delete: (id) => api.delete(`/performance/${id}`),
 };
 
 // ── Tax Declarations ────────────────────────────────────────────
