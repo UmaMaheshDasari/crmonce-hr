@@ -46,6 +46,7 @@ export const attendanceApi = {
   correction: (attendanceId, actualCheckout, reason) =>
     api.post('/attendance/correction', { attendanceId, actualCheckout, reason }),
   summaryMonthly: (params) => api.get('/attendance/summary/monthly', { params }),
+  monthlyBalance: (params) => api.get('/attendance/monthly-balance', { params }),   // cumulative monthly hour balance
   stats: (params) => api.get('/attendance/stats', { params }),
   absentees: (params) => api.get('/attendance/absentees', { params }),
   weekly: () => api.get('/attendance/weekly'),

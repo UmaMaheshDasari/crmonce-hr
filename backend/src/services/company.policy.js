@@ -15,7 +15,14 @@ const round2 = (n) => Math.round(n * 100) / 100;
 const DEFAULTS = {
   monthlyPaidLeave:      1,      // paid leave RECORDS per calendar month (rest = LOP)
   requiredShiftHours:    null,   // null → use the shift's own duration
-  halfDayThreshold:      null,   // null → shift duration / 2
+  halfDayThreshold:      null,   // null → shift duration / 2 (legacy; superseded by fullDay/halfDayMinHours)
+  // Daily attendance classification (fixed worked-hour rules — NOT office timings;
+  // the employee shift still governs late/early/overtime). Effective hours decide:
+  //   >= fullDayMinHours → Full Day (present) ; >= halfDayMinHours and below full → Half Day.
+  fullDayMinHours:       7,      // effective hours >= this → Full Day
+  halfDayMinHours:       5,      // effective hours in [this, fullDay) → Half Day; below → existing handling
+  fullDayExpectedHours:  9,      // hours a Full Day is expected to have contributed (monthly prep)
+  halfDayExpectedHours:  5,      // hours a Half Day is expected to have contributed (monthly prep)
   overtimeAfterHours:    9,      // overtime accrues on EFFECTIVE hours beyond this (company standard)
   graceMinutes:          5,      // late is counted only AFTER this many minutes past shift start
   compensationEnabled:   true,
@@ -35,6 +42,10 @@ const envProvider = {
       monthlyPaidLeave:      num(process.env.POLICY_MONTHLY_PAID_LEAVE, DEFAULTS.monthlyPaidLeave),
       requiredShiftHours:    numOrNull(process.env.POLICY_REQUIRED_HOURS),
       halfDayThreshold:      numOrNull(process.env.POLICY_HALFDAY_HOURS),
+      fullDayMinHours:       num(process.env.POLICY_FULLDAY_MIN_HOURS, DEFAULTS.fullDayMinHours),
+      halfDayMinHours:       num(process.env.POLICY_HALFDAY_MIN_HOURS, DEFAULTS.halfDayMinHours),
+      fullDayExpectedHours:  num(process.env.POLICY_FULLDAY_EXPECTED_HOURS, DEFAULTS.fullDayExpectedHours),
+      halfDayExpectedHours:  num(process.env.POLICY_HALFDAY_EXPECTED_HOURS, DEFAULTS.halfDayExpectedHours),
       overtimeAfterHours:    num(process.env.POLICY_OVERTIME_AFTER_HOURS, DEFAULTS.overtimeAfterHours),
       graceMinutes:          num(process.env.POLICY_GRACE_MINUTES, DEFAULTS.graceMinutes),
       compensationEnabled:   bool(process.env.POLICY_COMPENSATION_ENABLED, DEFAULTS.compensationEnabled),
@@ -59,6 +70,11 @@ module.exports = {
   attendance: {
     requiredShiftHours: (shiftDuration) => settings().requiredShiftHours ?? shiftDuration,
     halfDayThreshold:   (shiftDuration) => settings().halfDayThreshold ?? round2(shiftDuration / 2),
+    // Fixed daily worked-hour rules (Full / Half classification + expected hours).
+    fullDayMinHours:      () => settings().fullDayMinHours,
+    halfDayMinHours:      () => settings().halfDayMinHours,
+    fullDayExpectedHours: () => settings().fullDayExpectedHours,
+    halfDayExpectedHours: () => settings().halfDayExpectedHours,
     // Overtime accrues on effective hours beyond this many hours (default 9).
     overtimeAfterHours: () => settings().overtimeAfterHours,
     // Grace window (minutes) after shift start within which a check-in is On Time.

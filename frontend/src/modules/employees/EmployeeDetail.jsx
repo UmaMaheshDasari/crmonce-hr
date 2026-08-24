@@ -5,6 +5,7 @@ import { PencilIcon, ChevronRightIcon, EnvelopeIcon, PhoneIcon, MapPinIcon, Cale
 import { useAuth } from '../../context/AuthContext';
 import { useDocumentViewer } from '../../components/DocumentViewer';
 import LeaveBalance from '../attendance/LeaveBalance';
+import MonthlyBalanceCard from '../attendance/MonthlyBalanceCard';
 import { formatDuration } from '../../utils/formatDuration';
 import { fmtTime, fmtVal, fmtDate } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
@@ -307,6 +308,9 @@ export default function EmployeeDetail() {
           </table>
         </div>
       </div>
+
+      {/* Monthly cumulative hour balance (Phase 2) */}
+      <MonthlyBalanceCard employeeId={id} />
 
       {/* Leave Balance summary (auto-calculated from approved leave) */}
       <LeaveBalance employeeId={id} employeeName={emp.hr_hremployee1} />

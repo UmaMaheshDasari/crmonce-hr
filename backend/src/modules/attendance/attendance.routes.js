@@ -16,6 +16,7 @@ const exceptionSvc = require('../../services/attendance-exception.service');
 const ecfg = require('../../services/email/config');
 const time = require('../../services/time.util');
 const webCheckin = require('../../services/web-checkin.service');
+const monthlyBalance = require('../../services/monthly-balance.service');
 const { ensureAttendanceAuditTable, ENTITY_SET: ATT_AUDIT_SET } = require('../../services/provision-attendance-audit');
 
 // Web Check-In must be explicitly enabled by an Admin for THIS employee (default
@@ -721,6 +722,39 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
       lateCount, earlyExitCount: earlyCount,
       overtimeHours: Math.round(overtimeHours * 100) / 100,
     });
+  } catch (err) { next(err); }
+});
+
+// GET /api/attendance/monthly-balance — cumulative monthly hour balance (Phase 2).
+// Employee sees their own; HR may pass ?employeeId=. Previous Carry Forward is the
+// prior month's ending balance (single-level look-back; month-end conversion is a
+// later phase). Reuses the Phase-1 daily engine + shift history + approved leave.
+router.get('/monthly-balance', requirePermission('attendance:read'), async (req, res, next) => {
+  try {
+    const now = new Date();
+    const y = parseInt(req.query.year) || now.getFullYear();
+    const m = parseInt(req.query.month) || (now.getMonth() + 1);
+    const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
+
+    // Previous month's CARRY-FORWARD (post month-end LOP: a shortage >= 5h is cleared
+    // to LOP and carries 0; a shortage < 5h or a surplus carries forward) → this
+    // month's carry-in. Single-level look-back (deeper chaining needs persistence).
+    const pm = m === 1 ? 12 : m - 1;
+    const py = m === 1 ? y - 1 : y;
+    let previousCarryForward = 0;
+    try { previousCarryForward = (await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: py, month: pm })).carryForward; }
+    catch { previousCarryForward = 0; }
+
+    const report = await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: y, month: m, previousCarryForward });
+    // Estimated LOP deduction via the EXISTING payroll rate (read-only). Payroll still
+    // owns and computes the authoritative deduction during a run — unchanged here.
+    const estimatedSalaryDeduction = await monthlyBalance.estimateLopDeduction({ employeeId: targetId, year: y, month: m, lopDays: report.lopDays });
+
+    let employeeName = req.user.name || 'Employee';
+    if (targetId !== req.user.id) {
+      try { const e = await d365.getByIdOptional(EMP_ENTITY, targetId, { select: 'hr_hremployeeid', optionalSelect: 'hr_hremployee1' }); employeeName = e?.hr_hremployee1 || employeeName; } catch { /* keep default */ }
+    }
+    res.json({ employeeId: targetId, employeeName, ...report, estimatedSalaryDeduction });
   } catch (err) { next(err); }
 });
 

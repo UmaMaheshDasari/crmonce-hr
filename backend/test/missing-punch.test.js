@@ -55,7 +55,9 @@ test('insertPunchTime drops the punch into the right chronological slot', () => 
 test('Missing Lunch OUT approved → Break becomes 45m and Effective recalculates', () => {
   // Before: 09:00 IN, 14:15 IN, 19:00 OUT (forgot lunch-out) → 3 punches, wrong.
   const before = computeSession(['09:00', '14:15', '19:00']);
-  assert.strictEqual(before.status, 'incomplete');
+  // Odd/missing punch is a data-quality flag (attendanceIssue), no longer an 'incomplete' status.
+  assert.strictEqual(before.attendanceIssue, 'Missing Check Out');
+  assert.notStrictEqual(before.status, 'incomplete');
 
   // Admin approves inserting 13:30 (the missed Lunch OUT).
   const corrected = insertPunchTime(['09:00', '14:15', '19:00'], '13:30');

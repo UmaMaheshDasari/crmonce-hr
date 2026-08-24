@@ -48,9 +48,13 @@ function summarizeEmployee(sessions = [], { working = 0, leaveDays = 0 } = {}) {
     if ((c.count || 0) > 0) attended++;                 // any punch → not absent (rule 8)
     if (c.status === 'present') present++;
     else if (c.status === 'half_day') half++;
-    else if (c.status === 'incomplete') {
-      incomplete++;
-      if (c.date) missingPunchDetails.push(`${fmtDate(c.date)} – ${c.attendanceIssue || 'Missing Check Out'}`);
+    else if (c.status === 'incomplete') incomplete++;   // legacy stored rows read raw
+    // Missing-punch details are keyed off punch PARITY / attendanceIssue (independent
+    // of status), so the "Missing Punch Details" export survives the removal of the
+    // 'incomplete' status. A missing-punch day still classifies (as half_day) above;
+    // this list is a separate reporting detail and does not double-count any bucket.
+    if (c.date && ((c.count || 0) % 2 === 1)) {
+      missingPunchDetails.push(`${fmtDate(c.date)} – ${c.attendanceIssue || 'Missing Check Out'}`);
     }
     eff += c.effectiveHours || 0;
     brk += c.breakHours || 0;

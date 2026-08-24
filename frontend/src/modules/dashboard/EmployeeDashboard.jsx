@@ -12,6 +12,7 @@ import { dashboardApi, attendanceApi, employeeApi, documentApi, leaveApi, lateLo
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import MissingPunchModal from '../attendance/MissingPunchModal';
+import MonthlyBalanceCard from '../attendance/MonthlyBalanceCard';
 import ActivityFeed from '../../components/ActivityFeed';
 import TodaysCelebrations from './TodaysCelebrations';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
@@ -298,6 +299,9 @@ export default function EmployeeDashboard() {
           </div>
           )}
         </div>
+
+        {/* Monthly cumulative hour balance */}
+        <MonthlyBalanceCard />
 
         {/* Leave Summary */}
         <div className="bg-white rounded-xl border border-gray-100 p-5">

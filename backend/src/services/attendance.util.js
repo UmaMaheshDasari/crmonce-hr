@@ -45,6 +45,30 @@ function punchesFromRecord(record) {
   return p;
 }
 
+/**
+ * DAILY worked-hours classification (fixed rules). The employee shift still governs
+ * late/early/overtime; these thresholds are worked-hour rules, not office timings.
+ *   effective >= fullDayMinHours (7)  → 'present'  (Full Day)
+ *   0 punches                         → 'absent'
+ *   otherwise (punched, < full)       → 'half_day' (Half Day for 5–7h; below 5h uses
+ *                                        the same below-half handling — never Absent
+ *                                        when a punch exists; monthly LOP is a later phase)
+ * 'incomplete' is intentionally NOT produced: a missing/odd punch is a data-quality
+ * flag carried by `attendanceIssue`, not an attendance status.
+ */
+function classifyStatus(effectiveHours, punchCount, { fullDayMinHours = 7 } = {}) {
+  if (!punchCount) return 'absent';
+  if (effectiveHours >= fullDayMinHours) return 'present';
+  return 'half_day';
+}
+
+/** Expected credited hours for a day's status (monthly-balance preparation). */
+function expectedHoursFor(status, { fullDayExpectedHours = 9, halfDayExpectedHours = 5 } = {}) {
+  if (status === 'present') return fullDayExpectedHours;
+  if (status === 'half_day') return halfDayExpectedHours;
+  return 0;   // absent → no expectation
+}
+
 /** Sum of break time: every OUT→IN gap. */
 function breakHours(punches) {
   let total = 0;
@@ -89,8 +113,11 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   // shift span — so working past 9h earns overtime regardless of a longer shift.
   const overtimeAfter = Number.isFinite(opts.overtimeAfterHours) ? opts.overtimeAfterHours : policy.attendance.overtimeAfterHours();
   const overtimeHours = Math.max(0, round2(effectiveHours - overtimeAfter));
-  // Thresholds come from the Company Policy layer (fall back to the shift).
-  const halfDayThreshold = Number.isFinite(opts.halfDayThreshold) ? opts.halfDayThreshold : policy.attendance.halfDayThreshold(shift.durationHours);
+  // Daily classification thresholds come from the Company Policy layer (fixed
+  // worked-hour rules; overridable via opts for tests). requiredHours (shift-based)
+  // stays as the compensation "completed the shift" baseline — unchanged.
+  const fullDayMinHours = Number.isFinite(opts.fullDayMinHours) ? opts.fullDayMinHours : policy.attendance.fullDayMinHours();
+  const halfDayMinHours = Number.isFinite(opts.halfDayMinHours) ? opts.halfDayMinHours : policy.attendance.halfDayMinHours();
   const requiredHours = Number.isFinite(opts.requiredHours) ? opts.requiredHours : policy.attendance.requiredShiftHours(shift.durationHours);
 
   // Late baseline = max(shift start, approved-leave end) — leave offsets late (#4).
@@ -115,17 +142,24 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
     earlyDepartureMin = Math.max(0, (endMin - lastMin) - cfg.earlyGraceMinutes);
   }
 
-  // Status — EFFECTIVE HOURS ONLY (late never reduces attendance; policy #1–3).
-  // A day with ANY punch is NEVER Absent — only a punch-free day can be Absent.
-  // An odd (unmatched) punch count means a punch is missing → Incomplete.
+  // Status — DAILY worked-hours rule on EFFECTIVE HOURS (late never reduces
+  // attendance; policy #1–3). A day with ANY punch is NEVER Absent. There is NO
+  // 'incomplete' status — a missing/odd punch is reported via attendanceIssue below.
+  //   effective >= 7 → present (Full Day) ; punched & < 7 → half_day ; no punch → absent.
   const isOdd = count % 2 === 1;
-  let status;
-  if (count === 0) status = 'absent';
-  else if (isOdd) status = 'incomplete';
-  else if (effectiveHours < halfDayThreshold) status = 'half_day';
-  else status = 'present';
+  const status = classifyStatus(effectiveHours, count, { fullDayMinHours });
+
+  // Expected hours + daily balance — monthly-calculation preparation. COMPUTED only
+  // (never stored): Full Day expects 9h, Half Day expects 5h; balance = worked − expected.
+  const expectedHours = expectedHoursFor(status, {
+    fullDayExpectedHours: Number.isFinite(opts.fullDayExpectedHours) ? opts.fullDayExpectedHours : policy.attendance.fullDayExpectedHours(),
+    halfDayExpectedHours: Number.isFinite(opts.halfDayExpectedHours) ? opts.halfDayExpectedHours : policy.attendance.halfDayExpectedHours(),
+  });
+  const dailyBalanceHours = round2(effectiveHours - expectedHours);
 
   // Attendance issue / type (reporting only): which punch is missing, or Normal.
+  // Missing-punch detection is punch-parity based (independent of status) so the
+  // Missed Punch email + summary keep working without an 'incomplete' status.
   let attendanceIssue = '';
   if (count > 0) {
     if (isOdd) attendanceIssue = punches[0].d === 'out' ? 'Missing Check In' : 'Missing Check Out';
@@ -144,7 +178,9 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   return {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
-    halfDayThreshold, requiredHours, graceMinutes: graceMin, lateArrivalMin, lateEntryMinutes, earlyDepartureMin,
+    fullDayThreshold: fullDayMinHours, halfDayThreshold: halfDayMinHours, requiredHours,
+    expectedHours, dailyBalanceHours,
+    graceMinutes: graceMin, lateArrivalMin, lateEntryMinutes, earlyDepartureMin,
     status, metRequiredHours, compensationStatus, attendanceIssue,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
   };
@@ -161,4 +197,4 @@ function computeFromPunches(rawPunches, shiftCode) {
   };
 }
 
-module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches, LATE_ENTRY_GRACE_MIN };
+module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches, classifyStatus, expectedHoursFor, LATE_ENTRY_GRACE_MIN };

@@ -2,13 +2,16 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { computeSession, computeFromPunches, punchesFromRecord, normalizePunches } = require('../src/services/attendance.util');
 
-// Default shift = GENERAL 09:00–18:00 (9h) → halfDayThreshold 4.5h.
+// Default shift = GENERAL 09:00–18:00 (9h). Daily rule (fixed): >=7h Full Day,
+// >0 & <7h Half Day, no punch Absent. No 'incomplete' status.
 const S = (start, end, dur, night = false) => ({ code: 'X', name: 'X', start, end, durationHours: dur, isNight: night });
 
-test('single punch → currently IN, incomplete', () => {
+test('single punch → currently IN, half_day (missing checkout), never incomplete', () => {
   const c = computeSession(['09:00']);
   assert.strictEqual(c.state, 'in');
-  assert.strictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.status, 'half_day');       // 0 effective, has a punch → Half Day
+  assert.notStrictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
   assert.strictEqual(c.count, 1);
 });
 
@@ -40,22 +43,33 @@ test('multiple breaks summed', () => {
   assert.strictEqual(c.effectiveHours, 7.75);
 });
 
-test('forgot checkout (odd punches) → in + incomplete, re-openable', () => {
-  const c = computeSession(['09:00', '13:00', '14:00']);
+test('forgot checkout (odd punches) → in + half_day, re-openable', () => {
+  const c = computeSession(['09:00', '13:00', '14:00']);  // 5h span − 1h break = 4h effective
   assert.strictEqual(c.state, 'in');
-  assert.strictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.status, 'half_day');               // < 7h → Half Day (not 'incomplete')
+  assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
 });
 
-test('half day: effective < shift/2 (4.5h)', () => {
-  const c = computeSession(['09:00', '13:00']);          // 4h < 4.5
+test('half day: effective < 7h (fixed rule, shift-independent)', () => {
+  const c = computeSession(['09:00', '13:00']);          // 4h effective
   assert.strictEqual(c.effectiveHours, 4);
-  assert.strictEqual(c.halfDayThreshold, 4.5);
+  assert.strictEqual(c.fullDayThreshold, 7);
+  assert.strictEqual(c.halfDayThreshold, 5);
   assert.strictEqual(c.status, 'half_day');
 });
 
-test('present exactly at shift/2 threshold', () => {
-  const c = computeSession(['09:00', '13:30']);          // 4.5h >= 4.5
+test('half_day below the shift/2 mark (4.5h is now Half Day, not Full)', () => {
+  const c = computeSession(['09:00', '13:30']);          // 4.5h < 7
+  assert.strictEqual(c.effectiveHours, 4.5);
+  assert.strictEqual(c.status, 'half_day');
+});
+
+test('present exactly at the 7h Full-Day boundary', () => {
+  const c = computeSession(['09:00', '16:00']);          // 7h effective → Full Day
+  assert.strictEqual(c.effectiveHours, 7);
   assert.strictEqual(c.status, 'present');
+  assert.strictEqual(c.expectedHours, 9);
+  assert.strictEqual(c.dailyBalanceHours, -2);
 });
 
 test('absent: no punches', () => {
@@ -146,10 +160,11 @@ test('policy: approved leave offsets late calculation', () => {
 });
 
 // ── Rule: any punch → never Absent; attendance issue ───────────────────────
-test('single IN → Incomplete, never Absent, Missing Check Out', () => {
+test('single IN → half_day, never Absent, Missing Check Out flag preserved', () => {
   const c = computeSession(['09:00']);
-  assert.strictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.status, 'half_day');
   assert.notStrictEqual(c.status, 'absent');
+  assert.notStrictEqual(c.status, 'incomplete');
   assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
 });
 
@@ -159,9 +174,10 @@ test('IN + OUT → Normal issue, never Absent', () => {
   assert.notStrictEqual(c.status, 'absent');
 });
 
-test('device OUT-first single punch → Missing Check In (incomplete)', () => {
+test('device OUT-first single punch → Missing Check In, half_day', () => {
   const c = computeSession([{ t: '18:00', d: 'out' }]);
-  assert.strictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.status, 'half_day');
+  assert.notStrictEqual(c.status, 'incomplete');
   assert.strictEqual(c.attendanceIssue, 'Missing Check In');
 });
 
