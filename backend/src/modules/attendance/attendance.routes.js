@@ -96,7 +96,7 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
     const shiftFor = await buildShiftResolver();
     for (const r of recs) {
       const s = shiftFor(r._hr_hremployee_value, r.hr_date);
-      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace, date: String(r.hr_date).slice(0, 10) });
       r.hr_status = c.status;
       r._late = (c.lateArrivalMin || 0) > 0;
       r._incomplete = c.state === 'in' || (c.count % 2 !== 0);
@@ -451,7 +451,7 @@ router.post('/correction', requireRole('super_admin', 'hr_manager'), async (req,
       return res.status(400).json({ error: 'This attendance is already complete' });
     }
     const shift = await getEmployeeShiftForDate(rec._hr_hremployee_value, rec.hr_date);
-    const c = computeSession([...punches, { t: actualCheckout, d: 'out' }], shift, { graceMinutes: shift.grace });
+    const c = computeSession([...punches, { t: actualCheckout, d: 'out' }], shift, { graceMinutes: shift.grace, date: String(rec.hr_date).slice(0, 10) });
     const updated = await d365.update(ENTITY, attendanceId, {
       ...punchPayload(c),
       hr_source: toValue('hr_attendance_source', 'manual_correction'),
@@ -510,7 +510,7 @@ router.put('/:id/edit', requireRole('super_admin', 'hr_manager'), async (req, re
     // Rebuild the day from the edited in/out (blanks dropped) and recompute under the
     // shift EFFECTIVE on this record's date.
     const times = [inTime, outTime].map(t => String(t ?? '').trim()).filter(Boolean);
-    const c = computeSession(times, shift, { graceMinutes: shift.grace });
+    const c = computeSession(times, shift, { graceMinutes: shift.grace, date: String(rec.hr_date).slice(0, 10) });
     const payload = { ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'manual_correction') };
     // Explicit HR overrides win over the recomputed values.
     const st = normalizeAttStatus(status);
@@ -549,7 +549,7 @@ router.post('/historical', requireRole('super_admin', 'hr_manager'), async (req,
     }
     const shift = await getEmployeeShiftForDate(employeeId, ds);
     const times = [inTime, outTime].map(t => String(t ?? '').trim()).filter(Boolean);
-    const c = computeSession(times, shift, { graceMinutes: shift.grace });
+    const c = computeSession(times, shift, { graceMinutes: shift.grace, date: ds });
     const payload = { ...punchPayload(c), hr_source: toValue('hr_attendance_source', 'manual_correction') };
     const st = normalizeAttStatus(status);
     if (status && st) payload.hr_status = toValue('hr_attendance_status', st);
@@ -591,7 +591,7 @@ router.get('/audit', requireRole('super_admin', 'hr_manager'), async (req, res, 
 
 // Build the full session view returned to clients (facts computed on read).
 function sessionView(record, shift) {
-  const c = computeSession(record ? punchesFromRecord(record) : [], shift || resolveShift());
+  const c = computeSession(record ? punchesFromRecord(record) : [], shift || resolveShift(), record ? { date: String(record.hr_date).slice(0, 10) } : {});
   return {
     state: c.state,                 // 'none' | 'in' | 'out'
     canCheckIn: c.state !== 'in',   // after any OUT you can check in again
@@ -682,7 +682,7 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
     let present = 0, halfDay = 0, incomplete = 0, attended = 0, lateCount = 0, earlyCount = 0, overtimeHours = 0;
     for (const r of (recs || [])) {
       const s = shiftResolver.forDate(String(r.hr_date).slice(0, 10));
-      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace, date: String(r.hr_date).slice(0, 10) });
       if ((c.count || 0) > 0) attended++;             // any punch → NOT absent
       if (c.status === 'present') present++;
       else if (c.status === 'half_day') halfDay++;
@@ -739,11 +739,17 @@ router.get('/monthly-balance', requirePermission('attendance:read'), async (req,
     // Previous month's CARRY-FORWARD (post month-end LOP: a shortage >= 5h is cleared
     // to LOP and carries 0; a shortage < 5h or a surplus carries forward) → this
     // month's carry-in. Single-level look-back (deeper chaining needs persistence).
+    // EFFECTIVE DATE: never look into a month BEFORE the cutoff — the first new-system
+    // month starts fresh with carry 0 (no July-or-earlier shortage bleeds into August).
+    const cutoff = require('../../services/company.policy').attendance.newRulesFrom();
     const pm = m === 1 ? 12 : m - 1;
     const py = m === 1 ? y - 1 : y;
+    const prevMonthFirst = `${py}-${String(pm).padStart(2, '0')}-01`;
     let previousCarryForward = 0;
-    try { previousCarryForward = (await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: py, month: pm })).carryForward; }
-    catch { previousCarryForward = 0; }
+    if (prevMonthFirst >= cutoff) {
+      try { previousCarryForward = (await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: py, month: pm })).carryForward; }
+      catch { previousCarryForward = 0; }
+    }
 
     const report = await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: y, month: m, previousCarryForward });
     // Estimated LOP deduction via the EXISTING payroll rate (read-only). Payroll still
@@ -769,7 +775,7 @@ router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req,
     let inside = 0, outside = 0, incomplete = 0, late = 0, early = 0, overtime = 0;
     for (const r of (recs || [])) {
       const s = shiftFor(r._hr_hremployee_value, r.hr_date);
-      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace, date: String(r.hr_date).slice(0, 10) });
       if (c.state === 'in') inside++;
       else if (c.state === 'out') outside++;
       if (c.status === 'incomplete') incomplete++;
@@ -865,7 +871,7 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     const emp = empMap.get(r._hr_hremployee_value) || {};
     const ds = String(r.hr_date).slice(0, 10);
     const s = shiftSvc.shiftForDateFromMap(histMap, r._hr_hremployee_value, ds, emp);
-    const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
+    const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace, date: String(r.hr_date).slice(0, 10) });
     (byEmp[r._hr_hremployee_value] = byEmp[r._hr_hremployee_value] || []).push({ ...c, date: r.hr_date });
     if (!firstInRange[r._hr_hremployee_value] || ds < firstInRange[r._hr_hremployee_value]) {
       firstInRange[r._hr_hremployee_value] = ds;

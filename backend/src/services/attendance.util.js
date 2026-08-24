@@ -69,6 +69,19 @@ function expectedHoursFor(status, { fullDayExpectedHours = 9, halfDayExpectedHou
   return 0;   // absent → no expectation
 }
 
+/**
+ * LEGACY daily classification — used ONLY for attendance dates BEFORE the effective
+ * date (company.policy newRulesFrom). Preserved EXACTLY as the system behaved before
+ * the hour-based rules: shift-relative half-day threshold and an 'incomplete' status
+ * for an odd / unmatched punch. Historical data must never change.
+ */
+function classifyStatusLegacy(effectiveHours, punchCount, halfDayThreshold) {
+  if (!punchCount) return 'absent';
+  if (punchCount % 2 === 1) return 'incomplete';
+  if (effectiveHours < halfDayThreshold) return 'half_day';
+  return 'present';
+}
+
 /** Sum of break time: every OUT→IN gap. */
 function breakHours(punches) {
   let total = 0;
@@ -142,20 +155,27 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
     earlyDepartureMin = Math.max(0, (endMin - lastMin) - cfg.earlyGraceMinutes);
   }
 
-  // Status — DAILY worked-hours rule on EFFECTIVE HOURS (late never reduces
-  // attendance; policy #1–3). A day with ANY punch is NEVER Absent. There is NO
-  // 'incomplete' status — a missing/odd punch is reported via attendanceIssue below.
-  //   effective >= 7 → present (Full Day) ; punched & < 7 → half_day ; no punch → absent.
+  // Status — EFFECTIVE-DATE aware. Attendance dates BEFORE company.policy.newRulesFrom
+  // use the LEGACY rule (shift/2 half-day threshold + 'incomplete'); on/after use the new
+  // fixed 7/5 rule (no 'incomplete'). No date supplied → new rules (live punches are current).
+  // Late never reduces attendance; a day with ANY punch is NEVER Absent.
   const isOdd = count % 2 === 1;
-  const status = classifyStatus(effectiveHours, count, { fullDayMinHours });
+  const dateStr = opts.date ? String(opts.date).slice(0, 10) : null;
+  const useNewRules = !dateStr || dateStr >= policy.attendance.newRulesFrom();
+  const legacyHalfThreshold = Number.isFinite(opts.halfDayThreshold) ? opts.halfDayThreshold : policy.attendance.halfDayThreshold(shift.durationHours);
+  const status = useNewRules
+    ? classifyStatus(effectiveHours, count, { fullDayMinHours })
+    : classifyStatusLegacy(effectiveHours, count, legacyHalfThreshold);
 
   // Expected hours + daily balance — monthly-calculation preparation. COMPUTED only
   // (never stored): Full Day expects 9h, Half Day expects 5h; balance = worked − expected.
-  const expectedHours = expectedHoursFor(status, {
+  // Apply ONLY under the new rules; legacy (pre-cutoff) days contribute 0 to the new
+  // monthly balance so historical data can never leak into the new calculation.
+  const expectedHours = useNewRules ? expectedHoursFor(status, {
     fullDayExpectedHours: Number.isFinite(opts.fullDayExpectedHours) ? opts.fullDayExpectedHours : policy.attendance.fullDayExpectedHours(),
     halfDayExpectedHours: Number.isFinite(opts.halfDayExpectedHours) ? opts.halfDayExpectedHours : policy.attendance.halfDayExpectedHours(),
-  });
-  const dailyBalanceHours = round2(effectiveHours - expectedHours);
+  }) : 0;
+  const dailyBalanceHours = useNewRules ? round2(effectiveHours - expectedHours) : 0;
 
   // Attendance issue / type (reporting only): which punch is missing, or Normal.
   // Missing-punch detection is punch-parity based (independent of status) so the
@@ -178,8 +198,8 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   return {
     punches, count, state, firstPunch, lastPunch,
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
-    fullDayThreshold: fullDayMinHours, halfDayThreshold: halfDayMinHours, requiredHours,
-    expectedHours, dailyBalanceHours,
+    fullDayThreshold: useNewRules ? fullDayMinHours : null, halfDayThreshold: useNewRules ? halfDayMinHours : legacyHalfThreshold, requiredHours,
+    newRules: useNewRules, expectedHours, dailyBalanceHours,
     graceMinutes: graceMin, lateArrivalMin, lateEntryMinutes, earlyDepartureMin,
     status, metRequiredHours, compensationStatus, attendanceIssue,
     shift: { code: shift.code, name: shift.name, start: shift.start, end: shift.end, durationHours: shift.durationHours },
@@ -197,4 +217,4 @@ function computeFromPunches(rawPunches, shiftCode) {
   };
 }
 
-module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches, classifyStatus, expectedHoursFor, LATE_ENTRY_GRACE_MIN };
+module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches, classifyStatus, classifyStatusLegacy, expectedHoursFor, LATE_ENTRY_GRACE_MIN };

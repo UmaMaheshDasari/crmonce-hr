@@ -195,7 +195,7 @@ async function decide(id, action, approver, comment) {
     const existing = await findAttendance(empId, ds);
     const oldStatus = existing ? (toLabel('hr_attendance_status', existing.hr_status) || 'absent') : 'absent';
     const times = [row.hr_intime, row.hr_outtime].map(t => String(t ?? '').trim()).filter(Boolean);
-    const c = computeSession(times, shift, { graceMinutes: shift.grace });
+    const c = computeSession(times, shift, { graceMinutes: shift.grace, date: ds });
     const body = punchPayload(c);
     let attendanceId;
     if (existing) {

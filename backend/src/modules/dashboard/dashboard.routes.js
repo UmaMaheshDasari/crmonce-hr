@@ -100,7 +100,7 @@ router.get('/summary', async (req, res, next) => {
 
     // ── Today's session (attendance widget) ───────────────────────────────────
     const todayRec = monthRecs.find(r => String(r.hr_date).slice(0, 10) === today) || null;
-    const ct = computeSession(todayRec ? punchesFromRecord(todayRec) : [], shift, { graceMinutes: shift.grace });
+    const ct = computeSession(todayRec ? punchesFromRecord(todayRec) : [], shift, { graceMinutes: shift.grace, date: today });
     const todayView = {
       date: today,
       status: ct.status,                         // present | half_day | incomplete | absent
@@ -129,7 +129,7 @@ router.get('/summary', async (req, res, next) => {
     const earliestRec = earliestAttendanceDate(monthRecs);   // fallback Attendance Start Date
     for (const r of monthRecs) {
       const s = shiftResolver.forDate(String(r.hr_date).slice(0, 10));
-      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace, date: String(r.hr_date).slice(0, 10) });
       if ((c.count || 0) > 0) { attended++; workedEff += c.effectiveHours || 0; overtime += c.overtimeHours || 0; }
       if (c.status === 'present') present++;
       else if (c.status === 'half_day') half++;
@@ -314,7 +314,7 @@ router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (re
       if (!byDate[ds] || punchesFromRecord(r).length === 0) return;
       byDate[ds].present.add(r._hr_hremployee_value);
       const s = shiftHist.shiftForDateFromMap(histMap, r._hr_hremployee_value, ds, empById.get(r._hr_hremployee_value));
-      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace });
+      const c = computeSession(punchesFromRecord(r), s, { graceMinutes: s.grace, date: String(r.hr_date).slice(0, 10) });
       if (c.lateArrivalMin > 0) byDate[ds].late.add(r._hr_hremployee_value);
     });
     const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -342,7 +342,7 @@ router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (re
     // ── Admin's own attendance widget (today) ──────────────────────────────────
     const myRec = weekAtt.find(r => r._hr_hremployee_value === req.user.id && String(r.hr_date).slice(0, 10) === today) || null;
     const myShift = shiftByEmp.get(req.user.id) || attnCfg.resolveShift();
-    const ct = computeSession(myRec ? punchesFromRecord(myRec) : [], myShift);
+    const ct = computeSession(myRec ? punchesFromRecord(myRec) : [], myShift, { date: today });
     const todayView = {
       date: today, status: ct.status, state: ct.state,
       firstPunch: ct.firstPunch, lastPunch: ct.lastPunch, punchCount: ct.count,

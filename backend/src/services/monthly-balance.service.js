@@ -159,7 +159,12 @@ async function buildMonthlyBalance({ employeeId, year, month, previousCarryForwa
   ).get(employeeId) || new Map();
 
   const firstDate = await firstAttendanceDate(employeeId);
-  const effFrom = firstDate && firstDate > from ? firstDate : from;   // clamp to first punch
+  let effFrom = firstDate && firstDate > from ? firstDate : from;   // clamp to first punch
+  // EFFECTIVE DATE: the new hour-based calc never looks at dates before the cutoff, so
+  // pre-cutoff days never enter the balance and a pre-cutoff month yields an empty
+  // (zero) result. This also guarantees July can never carry into August.
+  const cutoff = policy.attendance.newRulesFrom();
+  if (effFrom < cutoff) effFrom = cutoff;
   const graceMin = await resolveGraceMinutes();
   const nowMin = (() => { const [h, mi] = String(time.istHHMM() || '00:00').split(':').map(Number); return (h || 0) * 60 + (mi || 0); })();
 
@@ -170,7 +175,7 @@ async function buildMonthlyBalance({ employeeId, year, month, previousCarryForwa
     const dow = d.getUTCDay();
     const shift = shiftResolver.forDate(ds);
     const rec = recByDate.get(ds);
-    const worked = rec ? computeSession(punchesFromRecord(rec), shift, { graceMinutes: shift.grace }) : null;
+    const worked = rec ? computeSession(punchesFromRecord(rec), shift, { graceMinutes: shift.grace, date: ds }) : null;
 
     // Holiday / Weekly-off → expected 0 (never a shortage). Any work done still counts.
     if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(dow)) {

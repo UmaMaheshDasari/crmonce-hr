@@ -23,6 +23,10 @@ const DEFAULTS = {
   halfDayMinHours:       5,      // effective hours in [this, fullDay) → Half Day; below → existing handling
   fullDayExpectedHours:  9,      // hours a Full Day is expected to have contributed (monthly prep)
   halfDayExpectedHours:  5,      // hours a Half Day is expected to have contributed (monthly prep)
+  // EFFECTIVE DATE for the hour-based rules (daily 7/5 classification, monthly balance,
+  // carry-forward, month-end LOP). Attendance dates BEFORE this keep the legacy behaviour
+  // exactly (shift/2 half-day + 'incomplete'); dates on/after it use the new rules.
+  newAttendanceRulesFrom: '2026-08-01',
   overtimeAfterHours:    9,      // overtime accrues on EFFECTIVE hours beyond this (company standard)
   graceMinutes:          5,      // late is counted only AFTER this many minutes past shift start
   compensationEnabled:   true,
@@ -46,6 +50,7 @@ const envProvider = {
       halfDayMinHours:       num(process.env.POLICY_HALFDAY_MIN_HOURS, DEFAULTS.halfDayMinHours),
       fullDayExpectedHours:  num(process.env.POLICY_FULLDAY_EXPECTED_HOURS, DEFAULTS.fullDayExpectedHours),
       halfDayExpectedHours:  num(process.env.POLICY_HALFDAY_EXPECTED_HOURS, DEFAULTS.halfDayExpectedHours),
+      newAttendanceRulesFrom: process.env.POLICY_NEW_ATTENDANCE_RULES_FROM || DEFAULTS.newAttendanceRulesFrom,
       overtimeAfterHours:    num(process.env.POLICY_OVERTIME_AFTER_HOURS, DEFAULTS.overtimeAfterHours),
       graceMinutes:          num(process.env.POLICY_GRACE_MINUTES, DEFAULTS.graceMinutes),
       compensationEnabled:   bool(process.env.POLICY_COMPENSATION_ENABLED, DEFAULTS.compensationEnabled),
@@ -75,6 +80,8 @@ module.exports = {
     halfDayMinHours:      () => settings().halfDayMinHours,
     fullDayExpectedHours: () => settings().fullDayExpectedHours,
     halfDayExpectedHours: () => settings().halfDayExpectedHours,
+    // Effective date (YYYY-MM-DD) from which the new hour-based rules apply.
+    newRulesFrom:         () => settings().newAttendanceRulesFrom,
     // Overtime accrues on effective hours beyond this many hours (default 9).
     overtimeAfterHours: () => settings().overtimeAfterHours,
     // Grace window (minutes) after shift start within which a check-in is On Time.

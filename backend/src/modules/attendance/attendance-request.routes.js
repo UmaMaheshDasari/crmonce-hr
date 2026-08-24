@@ -218,7 +218,7 @@ async function decide(user, id, decision, comment, { enforcePending = false } = 
     // Recompute under the shift that was EFFECTIVE on the attendance date (not the
     // employee's current shift) so approving a correction never re-judges a past day.
     const shift = await require('../../services/shift-history.service').resolveShiftForDate(reqRec.hr_employeeid, reqDate);
-    const c = computeSession(correctedTimes, shift, { graceMinutes: shift.grace });   // ← recalc under the effective shift
+    const c = computeSession(correctedTimes, shift, { graceMinutes: shift.grace, date: String(reqDate).slice(0, 10) });   // ← recalc under the effective shift + effective-date rule
     await d365.update(ATT, record.hr_hrattendanceid, punchPayload(c));     // corrected day persisted
     patch.hr_originalpunches = JSON.stringify(originalTimes);              // audit: never lose history
     patch.hr_correctedpunches = JSON.stringify(correctedTimes);

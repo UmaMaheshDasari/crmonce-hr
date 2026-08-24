@@ -105,7 +105,7 @@ const WRITERS = {
     const times = [d.inTime, d.outTime].map(t => String(t || '').trim()).filter(Boolean);
     let body = { hr_date: d.date, hr_intime: d.inTime || '', hr_outtime: d.outTime || '' };
     if (times.length) {
-      const c = computeSession(times, attnCfg.resolveShift());
+      const c = computeSession(times, attnCfg.resolveShift(), { date: d.date });
       body = {
         hr_date: d.date, hr_intime: c.firstPunch || '', hr_outtime: c.state === 'out' ? c.lastPunch : '',
         hr_workedhours: c.totalSpanHours, hr_overtime: c.overtimeHours, hr_breakduration: c.breakHours,

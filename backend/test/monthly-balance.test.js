@@ -97,58 +97,63 @@ test('buildMonthlyBalance: historical shift per date, leave/holiday/absent, no i
   const attnCfg = require('../src/services/attendance.config');
   const shiftHistory = require('../src/services/shift-history.service');
   const payrollSettings = require('../src/services/payroll-settings.service');
+  const time = require('../src/services/time.util');
   const EMP = 'emp-1';
-  // Past month so capTo = month end (no "today pending" branch).
-  const Y = 2020, M = 1;
+  // Post-cutoff month (Aug 2026). "Today" stubbed to Sep so capTo = month end (no
+  // today-pending branch) and every day is >= the 2026-08-01 effective date.
+  const Y = 2026, M = 8;
   // Records: 29th = 10h (present), 30th = 6h (half). 31st = no record (absent).
   const recs = [
-    { hr_hrattendanceid: 'a1', hr_date: '2020-01-29', hr_allpunches: JSON.stringify(['09:00', '19:00']), hr_punchcount: 2 },
-    { hr_hrattendanceid: 'a2', hr_date: '2020-01-30', hr_allpunches: JSON.stringify(['09:00', '15:00']), hr_punchcount: 2 },
+    { hr_hrattendanceid: 'a1', hr_date: '2026-08-29', hr_allpunches: JSON.stringify(['09:00', '19:00']), hr_punchcount: 2 },
+    { hr_hrattendanceid: 'a2', hr_date: '2026-08-30', hr_allpunches: JSON.stringify(['09:00', '15:00']), hr_punchcount: 2 },
   ];
-  const orig = { gl: d365.getList, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved };
-  // Restrict the working window to Jan 27–31 (firstAttendanceDate) and make 28th a holiday,
+  const orig = { gl: d365.getList, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved, ds: time.istDateStr };
+  // Restrict the working window to Aug 27–31 (firstAttendanceDate) and make 28th a holiday,
   // 27th an approved leave day; 29 present, 30 half, 31 absent. Week-off disabled for determinism.
   attnCfg.weekOffDays = [];
-  attnCfg.setDynamicHolidays(['2020-01-28']);
+  attnCfg.setDynamicHolidays(['2026-08-28']);
+  time.istDateStr = () => '2026-09-15';
   payrollSettings.getResolved = async () => ({ lateLogin: { graceMinutes: 15 } });
   shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ code: 'GEN', name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
   d365.getList = async (entity, opts) => {
     if (entity === d365.constructor.entities.leave) {
-      return { data: [{ hr_fromdate: '2020-01-27', hr_todate: '2020-01-27', hr_status: 123140001 }] };   // approved leave 27th
+      return { data: [{ hr_fromdate: '2026-08-27', hr_todate: '2026-08-27', hr_status: 123140001 }] };   // approved leave 27th
     }
     // attendance entity
-    if (opts && opts.top === 1) return { data: [{ hr_date: '2020-01-27' }] };   // firstAttendanceDate
+    if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-27' }] };   // firstAttendanceDate
     return { data: recs };
   };
   try {
     const r = await buildMonthlyBalance({ employeeId: EMP, year: Y, month: M });
     const byDate = new Map(r.days.map((d) => [d.date, d]));
     // 27th approved leave → expected 0, counted as approved-leave hours
-    assert.equal(byDate.get('2020-01-27').type, 'leave');
-    assert.equal(byDate.get('2020-01-27').expected, 0);
+    assert.equal(byDate.get('2026-08-27').type, 'leave');
+    assert.equal(byDate.get('2026-08-27').expected, 0);
     // 28th holiday → expected 0
-    assert.equal(byDate.get('2020-01-28').type, 'holiday');
-    assert.equal(byDate.get('2020-01-28').expected, 0);
+    assert.equal(byDate.get('2026-08-28').type, 'holiday');
+    assert.equal(byDate.get('2026-08-28').expected, 0);
     // 29th present 10h → expected 9
-    assert.equal(byDate.get('2020-01-29').type, 'working');
-    assert.equal(byDate.get('2020-01-29').worked, 10);
-    assert.equal(byDate.get('2020-01-29').expected, 9);
+    assert.equal(byDate.get('2026-08-29').type, 'working');
+    assert.equal(byDate.get('2026-08-29').worked, 10);
+    assert.equal(byDate.get('2026-08-29').expected, 9);
     // 30th half 6h → expected 5
-    assert.equal(byDate.get('2020-01-30').worked, 6);
-    assert.equal(byDate.get('2020-01-30').expected, 5);
+    assert.equal(byDate.get('2026-08-30').worked, 6);
+    assert.equal(byDate.get('2026-08-30').expected, 5);
     // 31st absent → expected 9 (full-day shortage)
-    assert.equal(byDate.get('2020-01-31').type, 'absent');
-    assert.equal(byDate.get('2020-01-31').expected, 9);
+    assert.equal(byDate.get('2026-08-31').type, 'absent');
+    assert.equal(byDate.get('2026-08-31').expected, 9);
     // Aggregates: required 0+0+9+5+9 = 23 ; effective 10+6 = 16 ; balance (1)+(1)+(-9) = -7
     assert.equal(r.requiredHours, 23);
     assert.equal(r.effectiveHours, 16);
     assert.equal(r.approvedLeaveHours, 9);
     assert.equal(r.currentBalance, -7);
     assert.equal(r.finalShortage, 7);
+    assert.equal(r.lopDays, 1);          // 7h shortage → 1 day LOP
+    assert.equal(r.carryForward, 0);     // LOP applied → nothing carried
     // No 'incomplete' anywhere
     assert.ok(r.days.every((d) => d.type !== 'incomplete'));
   } finally {
-    d365.getList = orig.gl; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps;
+    d365.getList = orig.gl; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds;
     attnCfg.setDynamicHolidays([]);
   }
 });
