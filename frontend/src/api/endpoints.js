@@ -122,6 +122,8 @@ export const leaveOpeningApi = {
   create: (data) => api.post('/leave-opening', data),
   update: (data) => api.put('/leave-opening', data),
   remove: (id) => api.delete(`/leave-opening/${id}`),
+  report: (params) => api.get('/leave-opening/report', { params }),
+  exportReport: (params) => api.get('/leave-opening/report/export', { params, responseType: 'blob' }),
 };
 
 // ── Holiday Calendar (HR-managed) ────────────────────────────────

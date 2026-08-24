@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { leaveOpeningApi, employeeApi } from '../../api/endpoints';
 import Button from '../../components/Button';
 import {
-  ArrowUpTrayIcon, ClockIcon, XMarkIcon, InformationCircleIcon,
+  ArrowUpTrayIcon, ArrowDownTrayIcon, ClockIcon, XMarkIcon, InformationCircleIcon,
 } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -53,6 +53,45 @@ export default function LeaveOpeningBalancePage() {
 
   const { data: listRes, isLoading } = useQuery({ queryKey: ['leave-opening', year], queryFn: () => leaveOpeningApi.list({ year }).then(r => r.data) });
   const rows = listRes?.data || [];
+
+  // ── Leave Usage Report (computed; reporting only) ──────────────────
+  const { data: reportRes, isLoading: reportLoading } = useQuery({
+    queryKey: ['leave-usage-report', year],
+    queryFn: () => leaveOpeningApi.report({ year }).then(r => r.data),
+  });
+  const [sortKey, setSortKey] = useState('totalTaken'); // default: least taken first
+  const [sortDir, setSortDir] = useState('asc');
+  const reportRows = useMemo(() => {
+    const list = reportRes?.data || [];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return list.slice().sort((a, b) => {
+      const av = a[sortKey], bv = b[sortKey];
+      const cmp = typeof av === 'number' && typeof bv === 'number'
+        ? (av - bv)
+        : String(av ?? '').localeCompare(String(bv ?? ''), undefined, { sensitivity: 'base' });
+      // Stable tie-break: alphabetical by name (matches Excel export).
+      return (cmp * dir) || String(a.employeeName || '').localeCompare(String(b.employeeName || ''));
+    });
+  }, [reportRes, sortKey, sortDir]);
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir(key === 'employeeName' ? 'asc' : 'asc'); }
+  };
+  const [exporting, setExporting] = useState(false);
+  const exportReport = async () => {
+    setExporting(true);
+    try {
+      const res = await leaveOpeningApi.exportReport({ year });
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = `leave-usage-${year}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { toast.error(e.response?.data?.error || 'Export failed'); }
+    finally { setExporting(false); }
+  };
+  const num1 = (v) => (v == null ? '—' : v);
+  const arrow = (key) => (sortKey === key ? (sortDir === 'asc' ? '↑' : '↓') : '');
 
   const existing = useMemo(() => rows.find(r => r.employeeId === form.employeeId), [rows, form.employeeId]);
   const isEdit = !!existing;
@@ -179,6 +218,62 @@ export default function LeaveOpeningBalancePage() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Leave Usage Report — computed actual usage for the year (reporting only) */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-5 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-sm font-bold text-gray-900">Leave Usage Report · {year}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Actual leave taken (Approved + Pending). Remaining reflects the real balance — pending is shown but not deducted. Sorted least-taken first.</p>
+          </div>
+          <Button variant="secondary" onClick={exportReport} loading={exporting} className="inline-flex items-center gap-1.5 shrink-0">
+            <ArrowDownTrayIcon className="w-4 h-4" /> Export to Excel
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500">
+              <tr className="text-left">
+                {[
+                  ['employeeName', 'Employee', 'left'],
+                  ['casualTaken', 'Casual', 'right'],
+                  ['sickTaken', 'Sick', 'right'],
+                  ['earnedTaken', 'Earned', 'right'],
+                  ['lopTaken', 'LOP', 'right'],
+                  ['compOffTaken', 'Comp Off', 'right'],
+                  ['absentDays', 'Absent', 'right'],
+                  ['totalTaken', 'Total Taken', 'right'],
+                  ['totalRemaining', 'Remaining', 'right'],
+                ].map(([key, label, align]) => (
+                  <th key={key} className={`px-4 py-3 font-semibold cursor-pointer select-none ${align === 'right' ? 'text-right' : ''}`} onClick={() => toggleSort(key)}>
+                    {label} <span className="text-indigo-500">{arrow(key)}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {reportLoading ? (
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">Calculating…</td></tr>
+              ) : reportRows.length === 0 ? (
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">No employees to report for {year}.</td></tr>
+              ) : reportRows.map(r => (
+                <tr key={r.employeeId} className="hover:bg-gray-50/50">
+                  <td className="px-4 py-3 font-medium text-gray-800">{r.employeeName || '—'}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{r.casualTaken}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{r.sickTaken}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{r.earnedTaken}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{r.lopTaken}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{r.compOffTaken}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{r.absentDays}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-gray-900">{r.totalTaken}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{num1(r.totalRemaining)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[11px] text-gray-400 px-5 py-3 border-t border-gray-50">Earned Leave is uncapped in this system (no fixed allocation), so Earned Remaining is not shown. Absent/Unauthorized days are sourced from generated payroll.</p>
       </div>
 
       {auditFor && <AuditModal employeeId={auditFor.employeeId} year={year} employeeName={auditFor.name} onClose={() => setAuditFor(null)} />}

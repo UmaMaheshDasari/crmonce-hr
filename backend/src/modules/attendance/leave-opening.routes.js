@@ -11,6 +11,7 @@ const d365 = require('../../services/d365.service');
 const { requireRole } = require('../../middleware/auth.middleware');
 const openingSvc = require('../../services/leave-opening.service');
 const leaveEngine = require('../../services/leave-engine.service');
+const usageReport = require('../../services/leave-opening-report.service');
 const { ensureLeaveOpeningTable } = require('../../services/provision-leave-opening');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
 const audit = (p) => { try { activity?.record?.(p); } catch (_) {} };
@@ -50,6 +51,28 @@ router.get('/audit', requireRole(...HR), async (req, res, next) => {
     if (!employeeId) return res.status(400).json({ error: 'employeeId is required' });
     const rows = await openingSvc.readAudit(employeeId, year);
     res.json({ data: rows, count: rows.length });
+  } catch (err) { next(err); }
+});
+
+// GET /report  — computed leave-usage report for a year (least-taken first).
+//   Reporting only: approved+pending usage, year-clamped, remaining from the real
+//   balance (pending not deducted). Reuses the leave engine + payroll LOP source.
+router.get('/report', requireRole(...HR), async (req, res, next) => {
+  try {
+    const rows = await withTable(() => usageReport.buildSummary({ year: req.query.year }));
+    res.json({ data: rows, count: rows.length, year: Number(req.query.year) || new Date().getFullYear() });
+  } catch (err) { next(err); }
+});
+
+// GET /report/export  — same report as an Excel workbook (sorted least-taken first).
+router.get('/report/export', requireRole(...HR), async (req, res, next) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const wb = await withTable(() => usageReport.buildWorkbook({ year }));
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="leave-usage-${year}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
   } catch (err) { next(err); }
 });
 
