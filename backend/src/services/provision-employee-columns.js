@@ -51,6 +51,8 @@ const COLUMNS = [
   str('hr_PhotoUrl', 'Photo', 500),                 // HR/Admin DEFAULT employee photo
   str('hr_PersonalPhotoUrl', 'Personal Photo', 500), // employee-chosen personal photo (wins over default)
   str('hr_PhotoRemoved', 'Photo Removed', 6),        // 'true' → suppress the default fallback (show initials)
+  // Web Check-In access — Admin-controlled, per employee. 'true' | 'false' (absent = false = DISABLED).
+  str('hr_WebCheckinEnabled', 'Web Check-In Enabled', 6),
   // Address
   memo('hr_PermAddress', 'Permanent Address'),
   str('hr_City', 'City', 60),

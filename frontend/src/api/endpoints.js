@@ -19,6 +19,7 @@ export const employeeApi = {
   delete: (id) => api.delete(`/employees/${id}`),
   departments: () => api.get('/employees/meta/departments'),
   verify: (id, data) => api.patch(`/employees/${id}/verify`, data),   // HR: approve/reject/request_changes
+  setWebCheckin: (id, enabled) => api.patch(`/employees/${id}/web-checkin`, { enabled }),   // Admin: enable/disable Web Check-In
   profileAudit: (id) => api.get(`/employees/${id}/profile-audit`),
   // Profile photo. kind: 'personal' (employee, self only) | 'default' (HR/Admin).
   setPhoto: (id, kind, fileUrl) => api.put(`/employees/${id}/photo`, { kind, fileUrl }),

@@ -15,6 +15,7 @@ const holidayService = require('../../services/holiday.service');
 const attendanceExceptions = require('../../services/attendance-exception.service');
 const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
+const webCheckin = require('../../services/web-checkin.service');
 
 const ATT = d365.constructor.entities.attendance;
 const EMP = d365.constructor.entities.employee;
@@ -72,7 +73,7 @@ router.get('/summary', async (req, res, next) => {
     const [emp, monthRecsRes, allLeavesRes, firstDate, openPrior, activityItems, holidays, alerts] = await Promise.all([
       d365.getByIdOptional(EMP, empId, {
         select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_designation',
-        optionalSelect: `${SHIFT_COLS},hr_joiningdate`,
+        optionalSelect: `${SHIFT_COLS},hr_joiningdate,hr_webcheckinenabled`,
       }).catch(() => ({})),
       d365.getList(ATT, {
         select: PUNCH_SELECT,
@@ -117,6 +118,7 @@ router.get('/summary', async (req, res, next) => {
       compensationStatus: ct.compensationStatus,
       canCheckIn: ct.state !== 'in',
       canCheckOut: ct.state === 'in',
+      webCheckinEnabled: webCheckin.bool(emp.hr_webcheckinenabled),   // Admin-controlled; UI gate
       missingCheckout: openPrior
         ? { date: String(openPrior.hr_date).slice(0, 10) }
         : null,
@@ -255,7 +257,7 @@ router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (re
     const [empsRes, weekAttRes, jobsRes, payrollRes, leavesRes, docsRes, activityItems] = await Promise.all([
       d365.getListOptional(EMP, {
         select: 'hr_hremployeeid,hr_hremployee1,hr_department,createdon',
-        optionalSelect: `${SHIFT_COLS},hr_designation`, filter: `hr_status eq ${activeVal}`, top: 5000,
+        optionalSelect: `${SHIFT_COLS},hr_designation,hr_webcheckinenabled`, filter: `hr_status eq ${activeVal}`, top: 5000,
       }).catch(() => ({ data: [] })),
       d365.getAll(ATT, {
         select: PUNCH_SELECT, filter: `hr_date ge ${weekFrom} and hr_date le ${weekTo}`, orderby: 'hr_date desc',
@@ -347,6 +349,7 @@ router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (re
       workedHours: ct.totalSpanHours, breakHours: ct.breakHours, effectiveHours: ct.effectiveHours,
       overtimeHours: ct.overtimeHours, lateByMin: ct.lateArrivalMin, earlyExitMin: ct.earlyDepartureMin,
       canCheckIn: ct.state !== 'in', canCheckOut: ct.state === 'in',
+      webCheckinEnabled: webCheckin.bool(empById.get(req.user.id)?.hr_webcheckinenabled),   // Admin-controlled; UI gate
     };
 
     // ── Leave Summary (org-wide, period-filtered) ──────────────────────────────

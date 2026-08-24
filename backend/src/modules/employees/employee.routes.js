@@ -22,7 +22,7 @@ const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
 const VERIFY_FIELDS = 'hr_verifystatus,hr_verifiedby,hr_verifieddate,hr_verifynote';
 const BANK_FIELDS = 'hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch,hr_chequeurl';
 // Employee-master fields (HR-managed): Employee ID + code + employment metadata.
-const MASTER_FIELDS = 'hr_employeeid,hr_employeecode,hr_confirmationdate,hr_relievingdate,hr_employmenttype,hr_worklocation';
+const MASTER_FIELDS = 'hr_employeeid,hr_employeecode,hr_confirmationdate,hr_relievingdate,hr_employmenttype,hr_worklocation,hr_webcheckinenabled';
 // The business Employee ID (EMP1039) with graceful fallbacks. hr_etimecode is the
 // device Empcode (40) — used only as a last resort so nothing renders blank.
 const employeeIdOf = (e) => e.hr_employeeid || e.hr_employeecode || e.hr_etimecode || '';
@@ -133,7 +133,7 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
     // empty the whole list). Defaults are then applied below.
     const result = await d365.getListResilient(ENTITY, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_phone,hr_department,hr_designation,hr_status,hr_joiningdate,hr_role,_hr_manager_value',
-      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeeid,hr_employeecode,hr_etimecode,hr_photourl,hr_personalphotourl,hr_photoremoved,modifiedon',
+      optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime,hr_employeeid,hr_employeecode,hr_etimecode,hr_photourl,hr_personalphotourl,hr_photoremoved,hr_webcheckinenabled,modifiedon',
       filter: filters.join(' and ') || undefined,
       orderby: 'hr_hremployee1 asc',
       top: pageNum * lim,
@@ -390,6 +390,36 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     res.json({ ...emp, _verifystatus: needsVerify ? 'pending' : (raw.hr_verifystatus || current.hr_verifystatus || 'verified'), _pendingVerification: needsVerify });
+  } catch (err) { next(err); }
+});
+
+// PATCH /api/employees/:id/web-checkin — Admin/HR enables or disables an employee's
+// Web Check-In access. Default is DISABLED; this is the ONLY way it turns on. The
+// change is written as the string flag 'true'/'false' and durably audited
+// (hr_profileaudits): admin, employee, old→new, timestamp.
+router.patch('/:id/web-checkin', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const enabled = req.body?.enabled === true || /^(true|yes|1|on)$/i.test(String(req.body?.enabled ?? ''));
+    // Read current name + prior value for the audit trail (best-effort).
+    let name = 'Employee', prev = false;
+    try {
+      const e = await d365.getByIdOptional(ENTITY, req.params.id, { select: 'hr_hremployee1', optionalSelect: 'hr_webcheckinenabled' });
+      name = e?.hr_hremployee1 || name;
+      prev = e?.hr_webcheckinenabled === true || /^(true|yes|1|on)$/i.test(String(e?.hr_webcheckinenabled ?? ''));
+    } catch { /* name/prev optional */ }
+
+    await updateStrippingOptionalShift(ENTITY, req.params.id, { hr_webcheckinenabled: enabled ? 'true' : 'false' });
+
+    const admin = req.user.name || req.user.email || 'Admin';
+    profile.writeAudit({
+      employeeId: req.params.id, employeeName: name,
+      changes: [{ field: 'hr_webcheckinenabled', label: 'Web Check-In Access', oldValue: prev ? 'Enabled' : 'Disabled', newValue: enabled ? 'Enabled' : 'Disabled' }],
+      updatedBy: admin, action: 'updated',
+    }).catch(() => {});
+    // Live activity feed (ephemeral) — best-effort, never blocks.
+    try { require('../../services/activity.service').record({ category: 'Employee', type: enabled ? 'webcheckin_enabled' : 'webcheckin_disabled', title: `Web Check-In ${enabled ? 'enabled' : 'disabled'}`, name, meta: { by: admin } }); } catch { /* optional */ }
+
+    res.json({ id: req.params.id, employeeName: name, enabled });
   } catch (err) { next(err); }
 });
 

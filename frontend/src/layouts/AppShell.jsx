@@ -72,6 +72,7 @@ const NAV = [
   },
   {
     group: 'Administration', icon: Squares2X2Icon, children: [
+      { to: '/web-checkin-access', label: 'Web Check-In Access', icon: ClockIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/import-export',    label: 'Import / Export',  icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/company-settings', label: 'Company Settings', icon: BuildingOffice2Icon, roles: ['super_admin'] },
     ],
@@ -110,6 +111,7 @@ const LABEL_MAP = {
   '/activities':  'Activity',
   '/import-export': 'Import / Export',
   '/company-settings': 'Company Settings',
+  '/web-checkin-access': 'Web Check-In Access',
 };
 
 function NavItem({ item, collapsed, indented, onClick }) {

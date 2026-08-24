@@ -36,6 +36,7 @@ import GoalsPage from './modules/performance/GoalsPage';
 import ApprovalAction from './modules/attendance/ApprovalAction';
 import ActivitiesPage from './modules/activity/ActivitiesPage';
 import CompanySettingsPage from './modules/company/CompanySettingsPage';
+import WebCheckInAccessPage from './modules/attendance/WebCheckInAccessPage';
 import ImportExportPage from './modules/shared/ImportExportPage';
 import ProfilePage from './modules/employees/ProfilePage';
 import HRVerificationPage from './modules/employees/HRVerificationPage';
@@ -104,6 +105,7 @@ function AppRoutes() {
         <Route path="activities" element={<ActivitiesPage />} />
         <Route path="company-settings" element={<ProtectedRoute roles={['super_admin']}><CompanySettingsPage /></ProtectedRoute>} />
         <Route path="import-export" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ImportExportPage /></ProtectedRoute>} />
+        <Route path="web-checkin-access" element={<ProtectedRoute roles={['super_admin','hr_manager']}><WebCheckInAccessPage /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

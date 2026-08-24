@@ -15,7 +15,18 @@ const activity = require('../../services/activity.service');
 const exceptionSvc = require('../../services/attendance-exception.service');
 const ecfg = require('../../services/email/config');
 const time = require('../../services/time.util');
+const webCheckin = require('../../services/web-checkin.service');
 const { ensureAttendanceAuditTable, ENTITY_SET: ATT_AUDIT_SET } = require('../../services/provision-attendance-audit');
+
+// Web Check-In must be explicitly enabled by an Admin for THIS employee (default
+// DISABLED). Enforced server-side on every web punch so an unauthorized API call is
+// rejected regardless of the UI. The eTime/device sync path is separate and unaffected.
+async function requireWebCheckinEnabled(req, res, next) {
+  try {
+    if (await webCheckin.isEnabled(req.user.id)) return next();
+    return res.status(403).json({ error: 'Web Check-In access is not enabled for this employee.' });
+  } catch (err) { next(err); }
+}
 
 router.use('/leave', leaveRoutes);
 router.use('/comp-off', compOffRoutes);
@@ -364,7 +375,7 @@ async function findOpenPriorRecord(employeeId, today) {
 }
 
 // POST /api/attendance/checkin — append an IN punch (only when currently OUT/none)
-router.post('/checkin', requirePermission('attendance:read'), async (req, res, next) => {
+router.post('/checkin', requirePermission('attendance:read'), requireWebCheckinEnabled, async (req, res, next) => {
   try {
     const employeeId = req.user.id;
     const shift = await getEmployeeShift(employeeId);
@@ -403,7 +414,7 @@ router.post('/checkin', requirePermission('attendance:read'), async (req, res, n
 });
 
 // POST /api/attendance/checkout — append an OUT punch (only when currently IN). Session stays open.
-router.post('/checkout', requirePermission('attendance:read'), async (req, res, next) => {
+router.post('/checkout', requirePermission('attendance:read'), requireWebCheckinEnabled, async (req, res, next) => {
   try {
     const employeeId = req.user.id;
     const shift = await getEmployeeShift(employeeId);
@@ -610,8 +621,10 @@ router.get('/my-status', requirePermission('attendance:read'), async (req, res, 
     const shift = await getEmployeeShift(req.user.id);
     const { today, record } = await findTodayRecord(req.user.id);
     const openPrior = record ? null : await findOpenPriorRecord(req.user.id, today);
+    const webCheckinEnabled = await webCheckin.isEnabled(req.user.id);
     res.json({
       ...sessionView(record, shift),
+      webCheckinEnabled,   // UI shows the Web Check-In button only when true
       incompletePrevious: openPrior ? labelsForEntity('hr_hrattendances', openPrior) : null,
       record: record ? labelsForEntity('hr_hrattendances', record) : null,
     });

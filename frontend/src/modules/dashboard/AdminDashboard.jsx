@@ -347,6 +347,8 @@ export default function AdminDashboard() {
             <Stat label="Effective" value={formatDuration(t?.effectiveHours)} tone="text-emerald-700" />
             <Stat label="Late By" value={formatMinutes(t?.lateByMin)} tone={t?.lateByMin > 0 ? 'text-amber-700' : 'text-gray-800'} />
           </div>
+          {/* Web Check-In — visible ONLY when an Admin has enabled it for this user. */}
+          {t?.webCheckinEnabled && (
           <div className="mt-4">
             {t?.canCheckOut ? (
               <button onClick={() => checkout.mutate()} disabled={busy}
@@ -360,6 +362,7 @@ export default function AdminDashboard() {
               </button>
             )}
           </div>
+          )}
         </div>
 
         {/* Recent Activity (above Leave Summary) */}

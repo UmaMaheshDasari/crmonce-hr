@@ -279,6 +279,8 @@ export default function EmployeeDashboard() {
             <Stat label="Early Exit" value={formatMinutes(t?.earlyExitMin)} tone={t?.earlyExitMin > 0 ? 'text-orange-700' : 'text-gray-800'} />
           </div>
 
+          {/* Web Check-In — visible ONLY when an Admin has enabled it for this employee. */}
+          {t?.webCheckinEnabled && (
           <div className="mt-4">
             {t?.canCheckOut ? (
               <button onClick={() => checkout.mutate()} disabled={busy}
@@ -294,6 +296,7 @@ export default function EmployeeDashboard() {
               </button>
             )}
           </div>
+          )}
         </div>
 
         {/* Leave Summary */}
