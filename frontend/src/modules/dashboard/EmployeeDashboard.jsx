@@ -46,8 +46,8 @@ const STATUS_PILL = {
 // ── compact KPI card (~35% shorter than the old p-5/text-3xl card) ──────────────
 function Kpi({ icon: Icon, label, value, sub, iconBg, iconColor }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-3.5 flex items-center gap-3 hover:shadow-sm transition-shadow">
-      <div className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 ${iconBg}`}>
+    <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-3.5 flex items-center gap-3 hover:shadow-md hover:-translate-y-0.5 transition-all">
+      <div className={`w-10 h-10 rounded-xl grid place-items-center flex-shrink-0 ${iconBg}`}>
         <Icon className={`w-5 h-5 ${iconColor}`} />
       </div>
       <div className="min-w-0">
@@ -64,6 +64,20 @@ function Stat({ label, value, tone = 'text-gray-800' }) {
     <div className="bg-gray-50 rounded-lg px-2.5 py-2 text-center">
       <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">{label}</p>
       <p className={`text-sm font-bold tabular-nums ${tone}`}>{value}</p>
+    </div>
+  );
+}
+
+// Prominent tile for the Today's Attendance hero row (check-in / worked / effective / status).
+function BigTile({ icon: Icon, label, value, tone = 'text-gray-900', iconWrap = 'bg-gray-100 text-gray-500', live = false }) {
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+      <div className="flex items-center gap-2">
+        {Icon && <span className={`w-7 h-7 rounded-lg grid place-items-center flex-shrink-0 ${iconWrap}`}><Icon className="w-4 h-4" /></span>}
+        <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">{label}</p>
+        {live && <span className="ml-auto flex items-center gap-1 text-[9px] font-bold uppercase text-emerald-600"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />Live</span>}
+      </div>
+      <p className={`text-xl font-bold tabular-nums mt-1.5 ${tone}`}>{value}</p>
     </div>
   );
 }
@@ -144,6 +158,24 @@ export default function EmployeeDashboard() {
   const daysPresent = m ? (m.presentDays + m.incompleteDays + m.halfDays * 0.5) : 0;
   const st = todayStatus(t);
 
+  // Employee identity (real name only — never a placeholder; §11).
+  const empName = d?.employee?.name || user?.name || '';
+  const firstName = empName.split(' ').filter(Boolean)[0] || 'there';
+  const initials = (empName.split(' ').filter(Boolean).slice(0, 2).map(s => s[0]).join('') || 'U').toUpperCase();
+
+  // LIVE Effective Hours (§6): the server value = completed sessions; while currently
+  // checked IN, keep it running by adding the time elapsed since the last (open) punch.
+  // When checked OUT it is the static server value. Uses existing state — no extra API.
+  const liveInSession = t?.state === 'in' && !!t?.lastPunch;
+  const liveEffective = (() => {
+    const base = Number(t?.effectiveHours) || 0;
+    if (!liveInSession) return base;
+    const [h, mi] = String(t.lastPunch).split(':').map(Number);
+    const punch = new Date(now); punch.setHours(h || 0, mi || 0, 0, 0);
+    const elapsedH = (now - punch) / 3600000;
+    return elapsedH > 0 ? base + elapsedH : base;
+  })();
+
   const kpis = m && lv ? [
     { icon: CheckCircleIcon, label: 'Days Present', value: Number.isInteger(daysPresent) ? daysPresent : daysPresent.toFixed(1), sub: `of ${m.workingElapsed} working`, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
     { icon: XCircleIcon, label: 'Absent Days', value: m.absentDays, sub: 'this month', iconBg: 'bg-red-50', iconColor: 'text-red-600' },
@@ -163,18 +195,24 @@ export default function EmployeeDashboard() {
   ] : [];
 
   return (
-    <div className="space-y-5">
-      {/* ── Hero banner (compact) ─────────────────────────────────────────── */}
-      <div className="rounded-2xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-700 px-5 py-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight">
-              {greeting()}, {d?.employee?.name?.split(' ')[0] || user?.name?.split(' ')[0] || 'there'}
-            </h1>
-            <p className="text-indigo-200 text-xs mt-1">
-              {now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-              {d?.employee?.designation ? ` · ${d.employee.designation}` : ''}
-            </p>
+    <div className="space-y-6">
+      {/* ── SECTION 1 · Hero — greeting + profile summary ─────────────────── */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-700 px-5 sm:px-7 py-6 shadow-sm">
+        <div className="pointer-events-none absolute -right-10 -top-12 w-52 h-52 rounded-full bg-white/10 blur-2xl" />
+        <div className="relative flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="w-14 h-14 rounded-2xl bg-white/15 ring-1 ring-white/25 grid place-items-center text-lg font-bold text-white flex-shrink-0">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate">
+                {greeting()}, {firstName}
+              </h1>
+              <p className="text-indigo-200 text-xs sm:text-sm mt-1 truncate">
+                {now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                {d?.employee?.designation ? ` · ${d.employee.designation}` : ''}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {d?.shift && (
@@ -189,7 +227,7 @@ export default function EmployeeDashboard() {
 
       {/* ── Profile completion / verification / documents ─────────────────── */}
       {(completion.percent < 100 || vstatus !== 'verified' || missingDocs.length > 0) && (
-        <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 flex flex-wrap items-center gap-4">
+        <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-4 sm:p-5 flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-3 flex-1 min-w-[200px]">
             <div className="relative w-12 h-12 flex-shrink-0">
               <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
@@ -220,7 +258,7 @@ export default function EmployeeDashboard() {
       </div>
 
       {/* ── Attendance Alerts (auto-detected exceptions) ──────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
+      <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
         <div className="flex items-center gap-2 mb-3">
           <BellAlertIcon className="w-5 h-5 text-amber-500" />
           <h2 className="text-base font-bold text-gray-900">Attendance Alerts</h2>
@@ -255,7 +293,7 @@ export default function EmployeeDashboard() {
             fills the height beside the taller Monthly Hour Balance (no dead space). */}
         <div className="xl:col-span-2 space-y-5">
         {/* Attendance widget */}
-        <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <ClockIcon className="w-5 h-5 text-indigo-500" />
@@ -272,14 +310,20 @@ export default function EmployeeDashboard() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-            <Stat label="First Punch" value={t?.firstPunch || '—'} />
+          {/* Key figures — Check-in · Worked · live Effective · Status */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <BigTile icon={ArrowRightOnRectangleIcon} label="Check-in" value={t?.firstPunch || '—'} iconWrap="bg-emerald-100 text-emerald-600" />
+            <BigTile icon={BriefcaseIcon} label="Worked" value={formatDuration(t?.workedHours)} iconWrap="bg-indigo-100 text-indigo-600" />
+            <BigTile icon={ClockIcon} label="Effective" value={formatDuration(liveEffective)} tone="text-emerald-700" iconWrap="bg-emerald-100 text-emerald-600" live={liveInSession} />
+            <BigTile icon={CheckCircleIcon} label="Status" value={st.label} iconWrap="bg-violet-100 text-violet-600" />
+          </div>
+
+          {/* Secondary details — every existing figure retained */}
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
             <Stat label="Last Punch" value={t?.lastPunch || '—'} />
             <Stat label="Shift" value={d?.shift ? `${d.shift.start}–${d.shift.end}` : '—'} />
             <Stat label="Punches" value={t?.punchCount ?? 0} />
-            <Stat label="Worked" value={formatDuration(t?.workedHours)} />
             <Stat label="Break" value={formatDuration(t?.breakHours)} tone="text-amber-700" />
-            <Stat label="Effective" value={formatDuration(t?.effectiveHours)} tone="text-emerald-700" />
             <Stat label="Overtime" value={formatDuration(t?.overtimeHours)} tone="text-violet-700" />
             <Stat label="Late By" value={formatMinutes(t?.lateByMin)} tone={t?.lateByMin > 0 ? 'text-amber-700' : 'text-gray-800'} />
             <Stat label="Early Exit" value={formatMinutes(t?.earlyExitMin)} tone={t?.earlyExitMin > 0 ? 'text-orange-700' : 'text-gray-800'} />
@@ -306,7 +350,7 @@ export default function EmployeeDashboard() {
         </div>
 
         {/* Leave Summary */}
-        <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
             <h2 className="text-base font-bold text-gray-900">Leave Summary</h2>
             <select value={leaveRange} onChange={e => setLeaveRange(e.target.value)}
@@ -343,7 +387,7 @@ export default function EmployeeDashboard() {
         {/* Leave Balance (allocation-based) — kept in the LEFT column so the stacked
             cards fill the height beside the taller Monthly Hour Balance card. */}
         {lb && (
-        <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-bold text-gray-900">Leave Balance · {lb.year}</h2>
             <Link to="/leave" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">Details →</Link>
@@ -371,7 +415,7 @@ export default function EmployeeDashboard() {
 
       {/* ── Late Login (this month) ───────────────────────────────────────── */}
       {ll && (
-        <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <ClockIcon className="w-5 h-5 text-indigo-500" />
@@ -400,7 +444,7 @@ export default function EmployeeDashboard() {
       <TodaysCelebrations />
 
       {/* ── Recent Activity ───────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
+      <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-bold text-gray-900">Recent Activity</h2>
           <Link to="/activities" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all →</Link>
