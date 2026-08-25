@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { attendanceApi, employeeApi } from '../../api/endpoints';
 import { ArrowPathIcon, ClockIcon, UserGroupIcon, ExclamationTriangleIcon, XCircleIcon, FunnelIcon, CalendarDaysIcon, ComputerDesktopIcon, PencilSquareIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
@@ -17,6 +17,56 @@ const STATUS_CONFIG = {
   in_progress: { dot: 'bg-indigo-500 animate-pulse', text: 'text-indigo-700', label: 'In Progress' },
   incomplete: { dot: 'bg-slate-400', text: 'text-slate-600', label: 'Incomplete' },
 };
+
+/**
+ * EFFECTIVE column cell with a LIVE running timer for TODAY's open session.
+ * The backend marks today's open IN session as hr_status === 'in_progress' (today-only),
+ * so the timer runs ONLY then. Live effective = server effective (completed IN→OUT
+ * sessions, breaks already excluded) + time elapsed since the latest (open) IN punch.
+ * Breaks are NOT counted (they precede the open IN). Previous days / closed sessions are
+ * static. Self-contained interval → only this cell re-renders each second (never the table).
+ */
+function LiveEffective({ record }) {
+  const isLive = record.hr_status === 'in_progress';
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isLive) return undefined;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isLive]);
+
+  // Base = completed effective hours (span − breaks; the open IN contributes 0 server-side).
+  const base = Number(record.hr_effectivehours || record.hr_workedhours || 0);
+  let eff = base;
+  if (isLive) {
+    let punches = [];
+    try { punches = JSON.parse(record.hr_allpunches || '[]'); } catch { /* malformed → static base */ }
+    const lastPunch = Array.isArray(punches) && punches.length ? String(punches[punches.length - 1]) : null;
+    const m = lastPunch && lastPunch.match(/(\d{1,2}):(\d{2})/);
+    if (m) {
+      const openIn = new Date(); openIn.setHours(Number(m[1]) || 0, Number(m[2]) || 0, 0, 0);
+      const elapsedH = (nowMs - openIn.getTime()) / 3600000;   // hours since the open IN punch
+      if (elapsedH > 0) eff = base + elapsedH;                 // add the running open session
+    }
+  }
+
+  const pct = Math.min((eff / 9) * 100, 100);
+  const bar = eff >= 8 ? 'bg-emerald-500' : eff >= 4 ? 'bg-amber-500' : 'bg-red-400';
+  const txt = eff >= 8 ? 'text-emerald-600' : eff >= 4 ? 'text-amber-600' : 'text-red-500';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-14 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${bar} transition-all duration-500`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={`text-sm font-semibold tabular-nums ${txt}`}>{formatDuration(eff)}</span>
+      {isLive && (
+        <span title="Live — counting the open session" className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-emerald-600">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />Live
+        </span>
+      )}
+    </div>
+  );
+}
 
 export default function AttendancePage() {
   const { isHR } = useAuth();
@@ -315,18 +365,7 @@ export default function AttendancePage() {
           })()}
         </td>
         <td className="px-5 py-4">
-          {(() => {
-            const eff = r.hr_effectivehours || r.hr_workedhours || 0;
-            const pct = Math.min((eff / 9) * 100, 100);
-            return (
-              <div className="flex items-center gap-2">
-                <div className="w-14 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full ${eff >= 8 ? 'bg-emerald-500' : eff >= 4 ? 'bg-amber-500' : 'bg-red-400'}`} style={{ width: `${pct}%` }} />
-                </div>
-                <span className={`text-sm font-semibold tabular-nums ${eff >= 8 ? 'text-emerald-600' : eff >= 4 ? 'text-amber-600' : 'text-red-500'}`}>{formatDuration(eff)}</span>
-              </div>
-            );
-          })()}
+          <LiveEffective record={r} />
         </td>
         <td className="px-5 py-4">
           {r.hr_breakduration > 0 ? (
