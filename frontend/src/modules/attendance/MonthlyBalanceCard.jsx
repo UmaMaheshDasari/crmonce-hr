@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { attendanceApi } from '../../api/endpoints';
-import { ScaleIcon } from '@heroicons/react/24/outline';
+import { ScaleIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const now = new Date();
@@ -118,13 +118,16 @@ export default function MonthlyBalanceCard({ employeeId }) {
             <p className="text-[11px] text-red-500 mt-2.5">{data.absentDays} absent day(s) — handled separately as LOP (not part of the hourly shortage).</p>
           )}
 
-          {/* ── How this is calculated — the existing business-rule text, compact ── */}
-          <div className="mt-4 rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">How this is calculated</p>
-            <p className="text-[11px] text-gray-500 leading-relaxed">
+          {/* ── How this is calculated — collapsible; existing business-rule text kept ── */}
+          <details className="group mt-4 rounded-xl bg-gray-50 border border-gray-100 px-4 py-2.5">
+            <summary className="text-[11px] font-bold uppercase tracking-wider text-gray-400 cursor-pointer select-none list-none flex items-center justify-between">
+              How this is calculated
+              <ChevronDownIcon className="w-4 h-4 transition-transform group-open:rotate-180" />
+            </summary>
+            <p className="text-[11px] text-gray-500 leading-relaxed mt-2">
               Monthly hours are calculated independently. Working days × 9 hours gives the base required hours. Approved leave, HR-approved hour adjustments, and approved early logouts reduce the required hours for the days they apply to (none of these is a salary deduction, and actual worked hours are never changed). Present and half-day hours use actual punch hours. The monthly difference is Total Worked Hours − Final Required Hours; a surplus on one day offsets a shortage on another within the same month. Positive hours do not carry forward. Only a negative monthly balance is deducted, using the employee's hourly rate. Absent days are handled separately as LOP.
             </p>
-          </div>
+          </details>
         </>
       )}
     </div>

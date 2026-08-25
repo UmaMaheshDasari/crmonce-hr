@@ -195,7 +195,7 @@ export default function EmployeeDashboard() {
   ] : [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* ── SECTION 1 · Hero — greeting + profile summary ─────────────────── */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-700 px-5 sm:px-7 py-6 shadow-sm">
         <div className="pointer-events-none absolute -right-10 -top-12 w-52 h-52 rounded-full bg-white/10 blur-2xl" />
@@ -250,44 +250,17 @@ export default function EmployeeDashboard() {
         </div>
       )}
 
-      {/* ── Top KPI cards ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {isLoading && !d
-          ? Array.from({ length: 8 }).map((_, i) => <div key={i} className="bg-gray-50 rounded-xl h-[62px] animate-pulse" />)
-          : kpis.map(k => <Kpi key={k.label} {...k} />)}
-      </div>
-
-      {/* ── Attendance Alerts (auto-detected exceptions) ──────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <BellAlertIcon className="w-5 h-5 text-amber-500" />
-          <h2 className="text-base font-bold text-gray-900">Attendance Alerts</h2>
-          {alerts.length > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">{alerts.length}</span>}
+      {/* ── SECTION 2 · Today's Overview (compact KPI grid) ───────────────── */}
+      <div>
+        <h2 className="text-base font-semibold text-gray-800 mb-3 px-0.5">Today's Overview</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {isLoading && !d
+            ? Array.from({ length: 8 }).map((_, i) => <div key={i} className="bg-gray-50 rounded-xl h-[62px] animate-pulse" />)
+            : kpis.map(k => <Kpi key={k.label} {...k} />)}
         </div>
-        {alerts.length === 0 ? (
-          <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
-            <CheckCircleIcon className="w-5 h-5 text-emerald-500" /> No attendance issues detected.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {alerts.map(a => (
-              <div key={a.date + a.code} className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/50 px-4 py-3 flex-wrap">
-                <div className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 ${a.priority === 'high' ? 'bg-red-100' : 'bg-amber-100'}`}>
-                  <ExclamationTriangleIcon className={`w-5 h-5 ${a.priority === 'high' ? 'text-red-600' : 'text-amber-600'}`} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-gray-800">{a.label}</p>
-                  <p className="text-xs text-gray-500">{fmtDay(a.date)}{a.punches?.length ? ` · Recorded: ${a.punches.join(', ')}` : ''}</p>
-                </div>
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700">Action Required</span>
-                <Button variant="secondary" onClick={() => setCorrectionModal({ open: true, date: a.date, type: a.code })}>Raise Request</Button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
-      {/* ── SECTION 2 · Today's Attendance (full width) ───────────────────── */}
+      {/* ── SECTION 3 · Today's Attendance (full width) ───────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -409,8 +382,40 @@ export default function EmployeeDashboard() {
       {/* ── SECTION 4 · Monthly Hour Balance (full-width panel) ───────────── */}
       <MonthlyBalanceCard />
 
-      {/* ── Late Login (this month) ───────────────────────────────────────── */}
-      {ll && (
+      {/* ── SECTION 5 · Attendance Alerts + Late Login (two columns) ──────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 lg:items-start">
+        {/* Attendance Alerts (auto-detected exceptions) — spans full width if no Late Login */}
+        <div className={`bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5 ${ll ? '' : 'lg:col-span-2'}`}>
+          <div className="flex items-center gap-2 mb-3">
+            <BellAlertIcon className="w-5 h-5 text-amber-500" />
+            <h2 className="text-base font-bold text-gray-900">Attendance Alerts</h2>
+            {alerts.length > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">{alerts.length}</span>}
+          </div>
+          {alerts.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-gray-400 py-1">
+              <CheckCircleIcon className="w-5 h-5 text-emerald-500" /> No attendance issues detected.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {alerts.map(a => (
+                <div key={a.date + a.code} className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/50 px-4 py-3 flex-wrap">
+                  <div className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 ${a.priority === 'high' ? 'bg-red-100' : 'bg-amber-100'}`}>
+                    <ExclamationTriangleIcon className={`w-5 h-5 ${a.priority === 'high' ? 'text-red-600' : 'text-amber-600'}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-800">{a.label}</p>
+                    <p className="text-xs text-gray-500">{fmtDay(a.date)}{a.punches?.length ? ` · Recorded: ${a.punches.join(', ')}` : ''}</p>
+                  </div>
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700">Action Required</span>
+                  <Button variant="secondary" onClick={() => setCorrectionModal({ open: true, date: a.date, type: a.code })}>Raise Request</Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Late Login (this month) */}
+        {ll && (
         <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -434,18 +439,19 @@ export default function EmployeeDashboard() {
             ))}
           </div>
         </div>
-      )}
+        )}
+      </div>
 
-      {/* ── Today's Celebrations ──────────────────────────────────────────── */}
-      <TodaysCelebrations />
-
-      {/* ── Recent Activity ───────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-bold text-gray-900">Recent Activity</h2>
-          <Link to="/activities" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all →</Link>
+      {/* ── SECTION 6 · Celebrations + Recent Activity (two columns) ───────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2 flex"><TodaysCelebrations /></div>
+        <div className="lg:col-span-3 bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold text-gray-900">Recent Activity</h2>
+            <Link to="/activities" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all →</Link>
+          </div>
+          <ActivityFeed items={d?.activity ?? []} loading={isLoading && !d} emptyText="No recent activity yet." />
         </div>
-        <ActivityFeed items={d?.activity ?? []} loading={isLoading && !d} emptyText="No recent activity yet." />
       </div>
 
       {/* One-click: opens the correction form pre-filled from the detected exception. */}

@@ -50,7 +50,7 @@ export default function TodaysCelebrations() {
   const total = birthdays.length + marriages.length + works.length;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5 h-full">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-bold text-gray-900">Today's Celebrations</h2>
         {total > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{total}</span>}
