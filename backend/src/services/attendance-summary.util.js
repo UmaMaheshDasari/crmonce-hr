@@ -48,7 +48,7 @@ function summarizeEmployee(sessions = [], { working = 0, leaveDays = 0 } = {}) {
     if ((c.count || 0) > 0) attended++;                 // any punch → not absent (rule 8)
     if (c.status === 'present') present++;
     else if (c.status === 'half_day') half++;
-    else if (c.status === 'incomplete') incomplete++;   // legacy stored rows read raw
+    else if (c.status === 'incomplete' || c.status === 'in_progress') incomplete++;   // legacy rows + open/unfinalized sessions
     // Missing-punch details are keyed off punch PARITY / attendanceIssue (independent
     // of status), so the "Missing Punch Details" export survives the removal of the
     // 'incomplete' status. A missing-punch day still classifies (as half_day) above;

@@ -48,19 +48,32 @@ function punchesFromRecord(record) {
 /**
  * DAILY worked-hours classification (fixed rules). The employee shift still governs
  * late/early/overtime; these thresholds are worked-hour rules, not office timings.
- *   effective >= fullDayMinHours (7)  → 'present'  (Full Day)
  *   0 punches                         → 'absent'
- *   otherwise (punched, < full)       → 'half_day' (Half Day for 5–7h; below 5h uses
+ *   OPEN session (last punch is IN)   → 'in_progress'  (day NOT finalized — the
+ *                                        employee is still working; a first check-in
+ *                                        must NEVER become Half Day)
+ *   effective >= fullDayMinHours (7)  → 'present'  (Full Day)
+ *   otherwise (closed, < full)        → 'half_day' (Half Day for 5–7h; below 5h uses
  *                                        the same below-half handling — never Absent
- *                                        when a punch exists; monthly LOP is a later phase)
- * 'incomplete' is intentionally NOT produced: a missing/odd punch is a data-quality
- * flag carried by `attendanceIssue`, not an attendance status.
+ *                                        when a punch exists)
+ * Present/Half are decided ONLY once the session is closed (an OUT punch exists) —
+ * i.e. once the day's worked hours are actually known. 'incomplete' is not produced
+ * here; a missing/odd punch is a data-quality flag carried by `attendanceIssue`.
  */
-function classifyStatus(effectiveHours, punchCount, { fullDayMinHours = 7 } = {}) {
+function classifyStatus(effectiveHours, punchCount, { fullDayMinHours = 7, openSession = false } = {}) {
   if (!punchCount) return 'absent';
+  if (openSession) return 'in_progress';   // open IN session → not yet finalized
   if (effectiveHours >= fullDayMinHours) return 'present';
   return 'half_day';
 }
+
+/**
+ * A computed status → a Dataverse-storable choice. The hr_attendance_status choice
+ * column has no 'in_progress' member (present/absent/half_day/incomplete/holiday), so
+ * an open session persists as 'incomplete' (odd / not-finalized) and recomputes to
+ * 'in_progress' on read via computeSession. No schema change; no write rejection.
+ */
+function statusForStorage(status) { return status === 'in_progress' ? 'incomplete' : status; }
 
 /** Expected credited hours for a day's status (monthly-balance preparation). */
 function expectedHoursFor(status, { fullDayExpectedHours = 9, halfDayExpectedHours = 5 } = {}) {
@@ -94,6 +107,29 @@ function breakHours(punches) {
 }
 
 /**
+ * Pair punches into completed IN→OUT work sessions + one trailing OPEN session.
+ * ONLY IN→OUT counts as worked time; OUT→IN gaps are breaks (excluded). Night-shift
+ * safe (a session crossing midnight adds 1440). This is the single source of truth
+ * for the punch timeline (web + device) — §18 calculateDailyPunchSessions.
+ *   Σ session.minutes === effectiveHours × 60 (the open session contributes 0 until it closes).
+ * @returns {{sessions: Array<{inTime:string,outTime:string,minutes:number}>, openSession: {inTime:string}|null}}
+ */
+function buildSessions(punches) {
+  const sessions = [];
+  let open = null;
+  for (const p of punches) {
+    if (p.d === 'in') { open = { inTime: p.t }; }        // consecutive INs: the latest is the open one
+    else if (open) {                                      // OUT closes the open session
+      let mins = toMin(p.t) - toMin(open.inTime);
+      if (mins < 0) mins += 1440;                         // crossed midnight
+      sessions.push({ inTime: open.inTime, outTime: p.t, minutes: mins });
+      open = null;
+    }                                                      // lone OUT (no open IN) → ignored (Missing Check In)
+  }
+  return { sessions, openSession: open };
+}
+
+/**
  * Compute the full attendance session for a set of punches under a shift.
  * opts:
  *   leaveUntil     "HH:MM" — approved leave end time; offsets the late-arrival
@@ -122,6 +158,7 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   }
   const breakH = breakHours(punches);
   const effectiveHours = Math.max(0, round2(totalSpanHours - breakH));
+  const sess = buildSessions(punches);   // completed IN→OUT sessions + open session (§18 timeline)
   // Overtime = effective hours beyond the company standard (default 9h), NOT the
   // shift span — so working past 9h earns overtime regardless of a longer shift.
   const overtimeAfter = Number.isFinite(opts.overtimeAfterHours) ? opts.overtimeAfterHours : policy.attendance.overtimeAfterHours();
@@ -163,8 +200,12 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   const dateStr = opts.date ? String(opts.date).slice(0, 10) : null;
   const useNewRules = !dateStr || dateStr >= policy.attendance.newRulesFrom();
   const legacyHalfThreshold = Number.isFinite(opts.halfDayThreshold) ? opts.halfDayThreshold : policy.attendance.halfDayThreshold(shift.durationHours);
+  // An OPEN session (last punch is a check-IN) means the employee is still working —
+  // the day is NOT finalized, so it is 'in_progress', never Half Day / Present / Absent.
+  // Legacy (pre-cutoff) days keep the historical 'incomplete' for an odd punch.
+  const openSession = state === 'in';
   const status = useNewRules
-    ? classifyStatus(effectiveHours, count, { fullDayMinHours })
+    ? classifyStatus(effectiveHours, count, { fullDayMinHours, openSession })
     : classifyStatusLegacy(effectiveHours, count, legacyHalfThreshold);
 
   // Expected hours + daily balance — monthly-calculation preparation. COMPUTED only
@@ -197,6 +238,7 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
 
   return {
     punches, count, state, firstPunch, lastPunch,
+    sessions: sess.sessions, openSession: sess.openSession, totalWorkedMinutes: Math.round(effectiveHours * 60),
     totalSpanHours, breakHours: breakH, effectiveHours, overtimeHours,
     fullDayThreshold: useNewRules ? fullDayMinHours : null, halfDayThreshold: useNewRules ? halfDayMinHours : legacyHalfThreshold, requiredHours,
     newRules: useNewRules, expectedHours, dailyBalanceHours,
@@ -217,4 +259,4 @@ function computeFromPunches(rawPunches, shiftCode) {
   };
 }
 
-module.exports = { normalizePunches, punchesFromRecord, breakHours, computeSession, computeFromPunches, classifyStatus, classifyStatusLegacy, expectedHoursFor, LATE_ENTRY_GRACE_MIN };
+module.exports = { normalizePunches, punchesFromRecord, breakHours, buildSessions, computeSession, computeFromPunches, classifyStatus, classifyStatusLegacy, expectedHoursFor, statusForStorage, LATE_ENTRY_GRACE_MIN };

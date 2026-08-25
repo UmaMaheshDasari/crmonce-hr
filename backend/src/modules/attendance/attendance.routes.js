@@ -5,7 +5,7 @@ const etimeService = require('../../services/etime.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
 const ExcelJS = require('exceljs');
-const { computeFromPunches, computeSession, punchesFromRecord } = require('../../services/attendance.util');
+const { computeFromPunches, computeSession, punchesFromRecord, statusForStorage } = require('../../services/attendance.util');
 const attnCfg = require('../../services/attendance.config');
 const leaveRoutes = require('./leave.routes');
 const compOffRoutes = require('./comp-off.routes');
@@ -253,7 +253,9 @@ function punchPayload(c) {
     // Store times as a string array (device/zk-push compatible). Direction is
     // re-derived by pairing on read — correct for web's strict IN/OUT order.
     hr_allpunches: JSON.stringify(c.punches.map(p => p.t)),
-    hr_status: toValue('hr_attendance_status', c.status),
+    // Open session → stored as 'incomplete' (the choice column has no 'in_progress');
+    // recomputes to 'in_progress' on read. A closing OUT stores present/half normally.
+    hr_status: toValue('hr_attendance_status', statusForStorage(c.status)),
   };
 }
 
@@ -604,6 +606,10 @@ function sessionView(record, shift) {
     breakHours: c.breakHours,
     effectiveHours: c.effectiveHours,
     overtimeHours: c.overtimeHours,
+    // Punch timeline (§12/§18): completed IN→OUT sessions + open session + worked minutes.
+    sessions: c.sessions,
+    openSession: c.openSession,
+    totalWorkedMinutes: c.totalWorkedMinutes,
     lateArrivalMin: c.lateArrivalMin,
     earlyDepartureMin: c.earlyDepartureMin,
     compensationStatus: c.compensationStatus,

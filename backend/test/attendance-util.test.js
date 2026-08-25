@@ -6,13 +6,17 @@ const { computeSession, computeFromPunches, punchesFromRecord, normalizePunches 
 // >0 & <7h Half Day, no punch Absent. No 'incomplete' status.
 const S = (start, end, dur, night = false) => ({ code: 'X', name: 'X', start, end, durationHours: dur, isNight: night });
 
-test('single punch → currently IN, half_day (missing checkout), never incomplete', () => {
+test('single punch (open session) → IN, in_progress (NOT Half Day, NOT Absent)', () => {
   const c = computeSession(['09:00']);
   assert.strictEqual(c.state, 'in');
-  assert.strictEqual(c.status, 'half_day');       // 0 effective, has a punch → Half Day
-  assert.notStrictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.status, 'in_progress');    // still working — day not finalized
+  assert.notStrictEqual(c.status, 'half_day');    // the reported bug — must NOT be Half Day
+  assert.notStrictEqual(c.status, 'absent');
   assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
   assert.strictEqual(c.count, 1);
+  assert.deepStrictEqual(c.sessions, []);         // no completed IN→OUT session yet
+  assert.deepStrictEqual(c.openSession, { inTime: '09:00' });
+  assert.strictEqual(c.totalWorkedMinutes, 0);
 });
 
 test('IN / OUT → present, span & effective, no overtime', () => {
@@ -21,6 +25,41 @@ test('IN / OUT → present, span & effective, no overtime', () => {
   assert.strictEqual(c.effectiveHours, 9);
   assert.strictEqual(c.overtimeHours, 0);      // 9 - 9
   assert.strictEqual(c.status, 'present');
+});
+
+// ── Spec §22 test cases — punch pairing, breaks excluded, no premature finalize ──
+test('§22 TEST 2: 09:00 IN, 12:00 OUT → one 3h session, out state', () => {
+  const c = computeSession(['09:00', '12:00']);
+  assert.strictEqual(c.state, 'out');
+  assert.deepStrictEqual(c.sessions, [{ inTime: '09:00', outTime: '12:00', minutes: 180 }]);
+  assert.strictEqual(c.openSession, null);
+  assert.strictEqual(c.totalWorkedMinutes, 180);
+});
+
+test('§22 TEST 3: 09:00-12:00, 13:00-18:00 → 8h worked (1h break excluded), Full Day', () => {
+  const c = computeSession(['09:00', '12:00', '13:00', '18:00']);
+  assert.strictEqual(c.effectiveHours, 8);     // 3h + 5h, the 1h break not counted
+  assert.strictEqual(c.totalWorkedMinutes, 480);
+  assert.strictEqual(c.status, 'present');
+  assert.deepStrictEqual(c.sessions.map(s => s.minutes), [180, 300]);
+});
+
+test('§22 TEST 8: 3 sessions with breaks → 7h30m worked, Full Day', () => {
+  const c = computeSession(['09:00', '11:00', '11:30', '14:00', '15:00', '18:00']);
+  assert.strictEqual(c.totalWorkedMinutes, 450);   // 120 + 150 + 180 = 7h30m
+  assert.strictEqual(c.effectiveHours, 7.5);
+  assert.strictEqual(c.status, 'present');
+  assert.deepStrictEqual(c.sessions.map(s => s.minutes), [120, 150, 180]);
+  assert.strictEqual(c.openSession, null);
+});
+
+test('§22 TEST 4/5/6: closed sessions classify by actual hours; overtime not added to worked', () => {
+  assert.strictEqual(computeSession(['09:00', '14:00']).status, 'half_day');   // 5h → Half Day
+  assert.strictEqual(computeSession(['09:00', '16:00']).status, 'present');    // 7h → Full Day
+  const ot = computeSession(['09:00', '19:00']);                               // 10h
+  assert.strictEqual(ot.effectiveHours, 10);        // monthly worked uses the actual 10h…
+  assert.strictEqual(ot.overtimeHours, 1);          // …overtime (1h) is reported separately, never added
+  assert.strictEqual(ot.totalWorkedMinutes, 600);
 });
 
 test('lunch break → break subtracted from effective', () => {
@@ -43,10 +82,13 @@ test('multiple breaks summed', () => {
   assert.strictEqual(c.effectiveHours, 7.75);
 });
 
-test('forgot checkout (odd punches) → in + half_day, re-openable', () => {
-  const c = computeSession(['09:00', '13:00', '14:00']);  // 5h span − 1h break = 4h effective
+test('open 3rd session (IN,OUT,IN) → in_progress; session 1 counted, open session not', () => {
+  const c = computeSession(['09:00', '13:00', '14:00']);  // session1 = 4h; then re-checked in (open)
   assert.strictEqual(c.state, 'in');
-  assert.strictEqual(c.status, 'half_day');               // < 7h → Half Day (not 'incomplete')
+  assert.strictEqual(c.status, 'in_progress');            // still working — NOT finalized
+  assert.strictEqual(c.effectiveHours, 4);                // only the completed IN→OUT session
+  assert.deepStrictEqual(c.sessions, [{ inTime: '09:00', outTime: '13:00', minutes: 240 }]);
+  assert.deepStrictEqual(c.openSession, { inTime: '14:00' });
   assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
 });
 
@@ -160,11 +202,11 @@ test('policy: approved leave offsets late calculation', () => {
 });
 
 // ── Rule: any punch → never Absent; attendance issue ───────────────────────
-test('single IN → half_day, never Absent, Missing Check Out flag preserved', () => {
+test('single IN → in_progress, never Absent, Missing Check Out flag preserved', () => {
   const c = computeSession(['09:00']);
-  assert.strictEqual(c.status, 'half_day');
+  assert.strictEqual(c.status, 'in_progress');
   assert.notStrictEqual(c.status, 'absent');
-  assert.notStrictEqual(c.status, 'incomplete');
+  assert.notStrictEqual(c.status, 'half_day');
   assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
 });
 

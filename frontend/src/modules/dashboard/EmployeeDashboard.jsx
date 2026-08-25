@@ -30,6 +30,7 @@ function todayStatus(t) {
   if (!t) return { label: 'Loading…', tone: 'bg-white/15 text-white' };
   if (t.state === 'in') return { label: 'Checked In', tone: 'bg-emerald-400/25 text-emerald-50 ring-1 ring-emerald-300/40' };
   switch (t.status) {
+    case 'in_progress': return { label: 'In Progress', tone: 'bg-indigo-400/25 text-indigo-50 ring-1 ring-indigo-300/40' };
     case 'present':
     case 'incomplete': return { label: 'Present', tone: 'bg-emerald-400/25 text-emerald-50 ring-1 ring-emerald-300/40' };
     case 'half_day': return { label: 'Half Day', tone: 'bg-amber-400/25 text-amber-50 ring-1 ring-amber-300/40' };
@@ -38,6 +39,7 @@ function todayStatus(t) {
 }
 const STATUS_PILL = {
   present: 'bg-emerald-50 text-emerald-700', half_day: 'bg-amber-50 text-amber-700',
+  in_progress: 'bg-indigo-50 text-indigo-700',
   incomplete: 'bg-slate-100 text-slate-600', absent: 'bg-red-50 text-red-700',
 };
 

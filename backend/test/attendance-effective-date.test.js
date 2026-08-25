@@ -41,8 +41,8 @@ test('2026-08-01 → NEW calculation (half_day, no incomplete, expected 5h)', ()
   assert.equal(c.expectedHours, 5);
   assert.equal(c.dailyBalanceHours, 1);    // 6 − 5
   const odd = computeSession(['09:00'], 'GENERAL', { date: '2026-08-01' });
-  assert.equal(odd.status, 'half_day');
-  assert.notEqual(odd.status, 'incomplete');
+  assert.equal(odd.status, 'in_progress');   // open session under new rules — NOT Half Day
+  assert.notEqual(odd.status, 'half_day');
 });
 
 test('2026-08-24 → NEW calculation', () => {

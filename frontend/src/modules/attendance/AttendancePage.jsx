@@ -14,6 +14,7 @@ const STATUS_CONFIG = {
   present: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Present' },
   absent: { dot: 'bg-red-500', text: 'text-red-700', label: 'Absent' },
   half_day: { dot: 'bg-amber-500', text: 'text-amber-700', label: 'Half Day' },
+  in_progress: { dot: 'bg-indigo-500 animate-pulse', text: 'text-indigo-700', label: 'In Progress' },
   incomplete: { dot: 'bg-slate-400', text: 'text-slate-600', label: 'Incomplete' },
 };
 
@@ -466,6 +467,7 @@ export default function AttendancePage() {
               <option value="present">Present</option>
               <option value="absent">Absent</option>
               <option value="half_day">Half Day</option>
+              <option value="in_progress">In Progress</option>
               <option value="incomplete">Incomplete</option>
             </select>
           </div>

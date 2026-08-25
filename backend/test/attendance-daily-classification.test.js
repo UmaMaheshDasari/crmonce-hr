@@ -67,10 +67,10 @@ test('computeSession: no punch → absent, expected 0', () => {
   assert.equal(s.dailyBalanceHours, 0);
 });
 
-test('computeSession: single (odd) punch → half_day + Missing Check Out flag, never incomplete', () => {
+test('computeSession: single (odd) punch → in_progress + Missing Check Out flag (NOT Half Day)', () => {
   const s = computeSession(['09:00'], 'GENERAL');
-  assert.equal(s.status, 'half_day');
-  assert.notEqual(s.status, 'incomplete');
+  assert.equal(s.status, 'in_progress');                  // open session — not finalized
+  assert.notEqual(s.status, 'half_day');
   assert.equal(s.attendanceIssue, 'Missing Check Out');   // missing-punch info preserved
 });
 

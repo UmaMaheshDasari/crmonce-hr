@@ -136,3 +136,43 @@ test('buildMonthlyBalance: Aug 2026 — working days, present/half punch hours, 
     attnCfg.setDynamicHolidays([]);
   }
 });
+
+// ── Open session TODAY → Pending (not finalized): no working-day, no phantom shortage ──
+test('buildMonthlyBalance: an OPEN session today is excluded (pending), no mid-day shortage', async () => {
+  const d365 = require('../src/services/d365.service');
+  const attnCfg = require('../src/services/attendance.config');
+  const shiftHistory = require('../src/services/shift-history.service');
+  const payrollSettings = require('../src/services/payroll-settings.service');
+  const time = require('../src/services/time.util');
+  const EMP = 'emp-2';
+  const orig = { gl: d365.getList, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved, ds: time.istDateStr, hh: time.istHHMM };
+  attnCfg.weekOffDays = [];
+  attnCfg.setDynamicHolidays([]);
+  time.istDateStr = () => '2026-08-03';   // "today" is Aug 3; open session in progress
+  time.istHHMM = () => '12:00';
+  payrollSettings.getResolved = async () => ({ lateLogin: { graceMinutes: 15 } });
+  shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
+  d365.getList = async (entity, opts) => {
+    if (entity === d365.constructor.entities.leave) return { data: [] };
+    if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-01' }] };
+    return { data: [
+      { hr_hrattendanceid: 'b1', hr_date: '2026-08-01', hr_allpunches: JSON.stringify(['09:00', '18:00']), hr_punchcount: 2 },   // present 9h
+      { hr_hrattendanceid: 'b2', hr_date: '2026-08-03', hr_allpunches: JSON.stringify(['09:00']), hr_punchcount: 1 },            // OPEN (today, in progress)
+    ] };
+  };
+  try {
+    const r = await buildMonthlyBalance({ employeeId: EMP, year: 2026, month: 8 });
+    // Aug 1 present (working day). Aug 3 open-today → pending, NOT counted. (Aug 2 is Sunday-excluded? weekOff=[] so it's a working day with no punch → absent.)
+    assert.equal(r.presentDays, 1);
+    assert.equal(r.presentWorkedHours, 9);
+    // The open day today must NOT appear as present/half/absent and must NOT add a working day.
+    assert.equal(r.workingDays, 2);              // Aug 1 (present) + Aug 2 (absent); Aug 3 pending/excluded
+    assert.equal(r.absentDays, 1);               // Aug 2 only — the open today is NOT absent
+    assert.equal(r.totalWorkedHours, 9);         // today's partial/open work does not inflate worked
+    assert.equal(r.finalRequiredHours, 9);       // 2×9 − 9 absent = 9 (today not required yet)
+    assert.equal(r.monthlyDifference, 0);        // no phantom shortage from the in-progress day
+    assert.equal(r.shortageHours, 0);
+  } finally {
+    d365.getList = orig.gl; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds; time.istHHMM = orig.hh;
+  }
+});

@@ -20,17 +20,17 @@ test('Normal Present → attended, not Absent', () => {
   assert.strictEqual(s.absent, 0);
 });
 
-test('Device Punch only (single IN) → half_day, NOT Absent', () => {
+test('Device Punch only (single IN) → in_progress (unfinalized), NOT Absent', () => {
   const s = summarizeEmployee([day('2026-07-06', ['09:00'])], { working: 1 });
-  assert.strictEqual(s.half, 1);               // single punch, <7h → Half Day (not 'incomplete')
-  assert.strictEqual(s.incomplete, 0);
+  assert.strictEqual(s.half, 0);               // open session — NOT Half Day
+  assert.strictEqual(s.incomplete, 1);         // counted as Incomplete (unfinalized), still attended
   assert.strictEqual(s.attended, 1);
   assert.strictEqual(s.absent, 0);
 });
 
-test('Web Check-in only → half_day (Missing Check Out), NOT Absent', () => {
+test('Web Check-in only → in_progress (Missing Check Out), NOT Absent', () => {
   const c = computeSession(['09:15']);
-  assert.strictEqual(c.status, 'half_day');
+  assert.strictEqual(c.status, 'in_progress');
   assert.strictEqual(c.attendanceIssue, 'Missing Check Out');
   assert.strictEqual(summarizeEmployee([{ ...c, date: '2026-07-06' }], { working: 1 }).absent, 0);
 });
@@ -110,11 +110,12 @@ test('Mixed month reconciles: Absent = Working − Attended − Leave', () => {
   const sessions = [
     day('2026-07-01', ['09:00', '18:00']),  // present
     day('2026-07-02', ['09:00', '18:00']),  // present
-    day('2026-07-03', ['09:00']),           // half_day (missing checkout) — still attended, not absent
+    day('2026-07-03', ['09:00']),           // in_progress (missing checkout) — still attended, not absent
   ];
   const s = summarizeEmployee(sessions, { working: 22, leaveDays: 2 });
   assert.strictEqual(s.present, 2);
-  assert.strictEqual(s.half, 1);            // single-punch day → Half Day
+  assert.strictEqual(s.half, 0);            // open single-punch day → NOT Half Day
+  assert.strictEqual(s.incomplete, 1);      // → Incomplete (unfinalized), still attended
   assert.strictEqual(s.attended, 3);
   assert.strictEqual(s.absent, 17);         // 22 − 3 attended − 2 leave (unchanged: attended counts any punch)
 });

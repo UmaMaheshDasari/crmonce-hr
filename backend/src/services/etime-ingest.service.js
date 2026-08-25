@@ -14,7 +14,7 @@
  */
 const d365 = require('./d365.service');
 const { toValue } = require('./picklist');
-const { computeSession } = require('./attendance.util');
+const { computeSession, statusForStorage } = require('./attendance.util');
 const attnCfg = require('./attendance.config');
 
 const EMP = d365.constructor.entities.employee;
@@ -69,7 +69,9 @@ function payloadFromSession(c) {
     hr_effectivehours: c.effectiveHours,
     hr_punchcount: c.count,
     hr_allpunches: JSON.stringify(c.punches.map((p) => p.t)),
-    hr_status: toValue('hr_attendance_status', c.status),
+    // Open session (last punch is a check-IN) stored as 'incomplete' — recomputes to
+    // 'in_progress' on read; a closing OUT punch stores present/half normally.
+    hr_status: toValue('hr_attendance_status', statusForStorage(c.status)),
   };
 }
 

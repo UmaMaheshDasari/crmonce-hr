@@ -141,6 +141,11 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
     // Today, before shift-start + grace, is Pending — not yet a scheduled/countable day.
     if (!worked && ds === today && !gracePassedToday(shift, graceMin, nowMin)) continue;
 
+    // TODAY with an OPEN session (checked in, not yet out) → NOT finalized. Treat it as
+    // Pending — exactly like a no-punch today — so a day still in progress never inflates
+    // Working Days / Required Hours and never creates a phantom mid-day shortage (§5, §14).
+    if (worked && worked.status === 'in_progress' && ds === today) continue;
+
     workingDays++;   // a scheduled working day (present / half / approved-leave / absent)
 
     // Approved leave → reduces the required hours (full day 9h, half day 5h). Never worked,
@@ -148,10 +153,12 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
     if (leaveMap.has(ds)) { approvedLeaveDays++; approvedLeaveHours += fd; continue; }
 
     if (worked) {
-      // ATTENDED: credit ACTUAL punch hours (effective = span − breaks). A Half day still
-      // required a full 9h (via Base Required) but only credits its real hours.
-      if (worked.status === 'half_day') { halfDays++; halfWorkedHours += num(worked.effectiveHours); }
-      else { presentDays++; presentWorkedHours += num(worked.effectiveHours); }   // present (or any punched day)
+      // ATTENDED: credit ACTUAL punch hours (effective = span − breaks; open sessions
+      // count only completed IN→OUT time). A Half day still required a full 9h (via Base
+      // Required) but only credits its real hours. A PAST open session (forgotten checkout,
+      // status 'in_progress') is a completed day → bucketed by its actual worked hours.
+      if (worked.status === 'present') { presentDays++; presentWorkedHours += num(worked.effectiveHours); }
+      else { halfDays++; halfWorkedHours += num(worked.effectiveHours); }   // half_day or past in_progress
     } else {
       absentDays++;   // scheduled working day, no punch, no approved leave → day-based LOP (separate)
     }
