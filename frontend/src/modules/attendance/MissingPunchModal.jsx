@@ -25,7 +25,7 @@ const durLabel = (mins) => `${Math.floor(Math.abs(mins) / 60)}h ${String(Math.ab
 //  • Early Logout — permitted early leave; the granted hours (shift end − requested
 //    logout) reduce ONLY that day's required hours. Both grant hours (no punch change,
 //    not a deduction) and are approved by HR before they affect the monthly balance.
-export default function MissingPunchModal({ open, onClose, defaultDate, defaultType, editRecord }) {
+export default function MissingPunchModal({ open, onClose, defaultDate, defaultType, editRecord, defaultKind }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const isEdit = !!editRecord;
@@ -52,7 +52,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
         reason: editRecord.reason || '',
       });
     } else {
-      setMode('correction');
+      setMode(defaultKind || 'correction');   // deep-link (e.g. Early Logout) preselects the kind
       setForm(f => ({
         ...f,
         attendanceDate: defaultDate || f.attendanceDate || new Date().toISOString().slice(0, 10),
@@ -60,7 +60,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
         requestedTime: '', adjustmentHours: '',
       }));
     }
-  }, [open, defaultDate, defaultType, editRecord]);
+  }, [open, defaultDate, defaultType, editRecord, defaultKind]);
 
   // Live Early Logout hours = shift end − requested logout (positive = valid).
   const elMinutes = (isEarly && shiftEnd && form.requestedTime) ? (toMin(shiftEnd) - toMin(form.requestedTime)) : null;

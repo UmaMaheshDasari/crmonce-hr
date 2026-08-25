@@ -46,6 +46,7 @@ const NAV = [
     group: 'Leave', icon: CalendarDaysIcon, children: [
       { to: '/leave',               label: 'Leave',               icon: CalendarDaysIcon },
       { to: '/late-login',          label: 'Late Login',          icon: ClockIcon },
+      { to: '/early-logout',        label: 'Early Logout',        icon: ArrowRightOnRectangleIcon },
       { to: '/comp-off',            label: 'Comp Off',            icon: ArrowPathIcon },
       { to: '/holidays',            label: 'Holidays',            icon: CalendarDaysIcon },
     ],
@@ -91,6 +92,7 @@ const LABEL_MAP = {
   '/historical-attendance-requests': 'Historical Requests',
   '/leave':       'Leave',
   '/late-login':  'Late Login',
+  '/early-logout': 'Early Logout',
   '/historical-attendance': 'Historical Attendance',
   '/comp-off':    'Comp Off',
   '/leave-opening-balance': 'Leave Opening Balance',
