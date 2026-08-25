@@ -41,6 +41,9 @@ const COLUMNS = [
   str('hr_Status', 'Status', 20), memo('hr_OriginalPunches', 'Original Punches'), memo('hr_CorrectedPunches', 'Corrected Punches'),
   str('hr_ApprovedBy', 'Approved By', 200), str('hr_ApprovedDate', 'Approved Date', 30), memo('hr_ApproverComment', 'Approver Comment'),
   str('hr_AttendanceRecordId', 'Attendance Record Id', 100),
+  // Approved HOUR ADJUSTMENT hours for an 'hour_adjustment' request (stored as a Text
+  // string like "3" / "3.5" — the whole table is Edm.String; parsed to a number on read).
+  str('hr_AdjustmentHours', 'Adjustment Hours', 10),
 ];
 
 const ENTITY_BODY = {

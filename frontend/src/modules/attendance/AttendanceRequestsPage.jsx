@@ -79,7 +79,9 @@ export default function AttendanceRequestsPage() {
                   {isHR() && <td className="px-4 py-3 font-medium text-gray-800">{r.employeeName}</td>}
                   <td className="px-4 py-3 text-gray-600">{r.date}</td>
                   <td className="px-4 py-3 text-gray-600">{r.punchTypeLabel}</td>
-                  <td className="px-4 py-3 font-semibold text-gray-800 tabular-nums">{r.requestedTime}</td>
+                  <td className="px-4 py-3 font-semibold text-gray-800 tabular-nums">
+                    {r.punchType === 'hour_adjustment' ? `${r.adjustmentHours}h adjustment` : r.requestedTime}
+                  </td>
                   <td className="px-4 py-3 text-gray-500 max-w-[220px] truncate" title={r.reason}>{r.reason}</td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${STATUS_STYLE[r.status] || 'bg-gray-100 text-gray-500'}`}>{r.status}</span>

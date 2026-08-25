@@ -17,33 +17,60 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const mb = require('../src/services/monthly-balance.service');
 const { computeMonthlySummary, buildMonthlyBalance, estimateSalaryDeduction } = mb;
+const round2 = (n) => Math.round(n * 100) / 100;
 
 // ── §21 exact case ────────────────────────────────────────────────────
-test('§21: 17 WD, 1 approved leave, present 130h + half 10h → final 144, total 140, diff -4', () => {
-  const r = computeMonthlySummary({ workingDays: 17, approvedLeaveHours: 9, absentDays: 0, presentWorkedHours: 130, halfWorkedHours: 10 });
+test('§21: 17 WD, 1 approved leave, present 140h → final 144, total 140, diff -4', () => {
+  const r = computeMonthlySummary({ workingDays: 17, approvedLeaveHours: 9, absentDays: 0, presentWorkedHours: 140 });
   assert.equal(r.baseRequiredHours, 153);        // 17 × 9
   assert.equal(r.approvedLeaveHours, 9);
   assert.equal(r.finalRequiredHours, 144);       // 153 − 9
-  assert.equal(r.totalWorkedHours, 140);         // 130 + 10
+  assert.equal(r.totalWorkedHours, 140);
   assert.equal(r.monthlyDifference, -4);         // 140 − 144
   assert.equal(r.shortageHours, 4);
 });
 
 test('§21: positive difference — total 148.27h → +4.27, no shortage', () => {
-  const r = computeMonthlySummary({ workingDays: 17, approvedLeaveHours: 9, presentWorkedHours: 138.27, halfWorkedHours: 10 });
+  const r = computeMonthlySummary({ workingDays: 17, approvedLeaveHours: 9, presentWorkedHours: 148.27 });
   assert.equal(r.finalRequiredHours, 144);
   assert.equal(r.totalWorkedHours, 148.27);
   assert.equal(r.monthlyDifference, 4.27);
   assert.equal(r.shortageHours, 0);
 });
 
-// ── Half-worked day still REQUIRES a full 9h (only credits actual hours) ──
-test('half-worked day requires 9h, credits actual: 1 WD half 6h → diff -3', () => {
-  const r = computeMonthlySummary({ workingDays: 1, halfWorkedHours: 6 });
+// ── §7: the Half Day LABEL never reduces required by itself (no adjustment) ──
+test('§26 TEST 1: 1 WD, worked 6h49m, NO adjustment → −2h11m (label is irrelevant)', () => {
+  const r = computeMonthlySummary({ workingDays: 1, presentWorkedHours: round2(6 + 49 / 60) });
   assert.equal(r.baseRequiredHours, 9);
-  assert.equal(r.finalRequiredHours, 9);         // not reduced to 5
-  assert.equal(r.totalWorkedHours, 6);
-  assert.equal(r.monthlyDifference, -3);         // 6 − 9 (harsher than the old status-based 5h)
+  assert.equal(r.approvedAdjustmentHours, 0);
+  assert.equal(r.finalRequiredHours, 9);          // 9h, NOT 5h — the half-day label doesn't reduce it
+  assert.equal(r.monthlyDifference, round2(6 + 49 / 60 - 9));   // ≈ −2h11m
+  assert.equal(r.shortageHours, round2(9 - (6 + 49 / 60)));
+});
+
+// ── §2/§4: an APPROVED HOUR ADJUSTMENT reduces ONLY that day's required hours ──
+test('§26 TEST 2: 9h req, 3h approved adjustment, worked 6h49m → +49m, no shortage', () => {
+  const r = computeMonthlySummary({ workingDays: 1, approvedAdjustmentHours: 3, presentWorkedHours: round2(6 + 49 / 60) });
+  assert.equal(r.approvedAdjustmentHours, 3);
+  assert.equal(r.finalRequiredHours, 6);          // 9 − 3 adjustment → adjusted requirement 6h
+  assert.equal(r.monthlyDifference, round2(6 + 49 / 60 - 6));   // +0.82h ≈ +49m
+  assert.equal(r.shortageHours, 0);               // approved adjustment → NO deduction
+});
+
+test('§26 TEST 3 / §20 no double-count: 9h req, 3h adjustment, worked 7h → +1h (not 7−3−6)', () => {
+  const r = computeMonthlySummary({ workingDays: 1, approvedAdjustmentHours: 3, presentWorkedHours: 7 });
+  assert.equal(r.finalRequiredHours, 6);          // adjustment reduces REQUIRED only, never worked
+  assert.equal(r.totalWorkedHours, 7);            // full actual punch hours retained
+  assert.equal(r.monthlyDifference, 1);           // 7 − 6
+});
+
+test('adjustment stacks with leave & absent in Final Required (§19)', () => {
+  // 17 WD, 1 leave (9h), 3h total approved adjustments, 1 absent (9h).
+  const r = computeMonthlySummary({ workingDays: 17, approvedLeaveHours: 9, approvedAdjustmentHours: 3, absentDays: 1, presentWorkedHours: 133 });
+  assert.equal(r.baseRequiredHours, 153);         // 17 × 9
+  assert.equal(r.finalRequiredHours, 132);        // 153 − 9 leave − 3 adjustment − 9 absent
+  assert.equal(r.monthlyDifference, 1);           // 133 − 132
+  assert.equal(r.shortageHours, 0);
 });
 
 // ── Approved leave reduces required, never deducts ────────────────────
@@ -103,12 +130,13 @@ test('buildMonthlyBalance: Aug 2026 — working days, present/half punch hours, 
     { hr_hrattendanceid: 'a1', hr_date: '2026-08-29', hr_allpunches: JSON.stringify(['09:00', '19:00']), hr_punchcount: 2 },   // 10h present
     { hr_hrattendanceid: 'a2', hr_date: '2026-08-30', hr_allpunches: JSON.stringify(['09:00', '15:00']), hr_punchcount: 2 },   // 6h half
   ];
-  const orig = { gl: d365.getList, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved, ds: time.istDateStr };
+  const orig = { gl: d365.getList, glo: d365.getListOptional, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved, ds: time.istDateStr };
   attnCfg.weekOffDays = [];
   attnCfg.setDynamicHolidays(['2026-08-28']);
   time.istDateStr = () => '2026-09-15';   // month complete
   payrollSettings.getResolved = async () => ({ lateLogin: { graceMinutes: 15 } });
   shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
+  d365.getListOptional = async () => ({ data: [] });   // no approved hour adjustments
   d365.getList = async (entity, opts) => {
     if (entity === d365.constructor.entities.leave) return { data: [{ hr_fromdate: '2026-08-27', hr_todate: '2026-08-27', hr_status: 123140001 }] };
     if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-27' }] };
@@ -125,15 +153,54 @@ test('buildMonthlyBalance: Aug 2026 — working days, present/half punch hours, 
     assert.equal(r.halfDays, 1);
     assert.equal(r.halfWorkedHours, 6);
     assert.equal(r.absentDays, 1);
+    assert.equal(r.approvedAdjustmentHours, 0);
     assert.equal(r.baseRequiredHours, 36);      // 4 × 9
-    assert.equal(r.finalRequiredHours, 18);     // 36 − 9 leave − 9 absent
+    assert.equal(r.finalRequiredHours, 18);     // 36 − 9 leave − 9 absent (no half-credit, no adjustment)
     assert.equal(r.totalWorkedHours, 16);       // 10 + 6
-    assert.equal(r.monthlyDifference, -2);      // 16 − 18
+    assert.equal(r.monthlyDifference, -2);      // 16 − 18 (half day shorts when unadjusted)
     assert.equal(r.shortageHours, 2);
     assert.ok(!('effectiveHours' in r) && !('overtime' in r) && !('carryForward' in r));
   } finally {
-    d365.getList = orig.gl; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds;
+    d365.getList = orig.gl; d365.getListOptional = orig.glo; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds;
     attnCfg.setDynamicHolidays([]);
+  }
+});
+
+// ── §30: approved hour adjustment offsets a half-day so there is NO shortage ──
+test('buildMonthlyBalance: 6h49m half day + approved 3h adjustment → +49m, no deduction', async () => {
+  const d365 = require('../src/services/d365.service');
+  const attnCfg = require('../src/services/attendance.config');
+  const shiftHistory = require('../src/services/shift-history.service');
+  const payrollSettings = require('../src/services/payroll-settings.service');
+  const time = require('../src/services/time.util');
+  const EMP = 'emp-3';
+  const orig = { gl: d365.getList, glo: d365.getListOptional, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved, ds: time.istDateStr, hh: time.istHHMM };
+  attnCfg.weekOffDays = []; attnCfg.setDynamicHolidays([]);
+  time.istDateStr = () => '2026-08-26';   // day after; Aug 25 is complete
+  time.istHHMM = () => '08:00';           // before today's shift start+grace → Aug 26 stays pending
+  payrollSettings.getResolved = async () => ({ lateLogin: { graceMinutes: 15 } });
+  shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
+  // Approved 3h hour-adjustment for Aug 25 (via the Attendance Request approval system).
+  d365.getListOptional = async () => ({ data: [{ hr_attendancedate: '2026-08-25', hr_punchtype: 'hour_adjustment', hr_status: 'approved', hr_adjustmenthours: '3' }] });
+  d365.getList = async (entity, opts) => {
+    if (entity === d365.constructor.entities.leave) return { data: [] };
+    if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-25' }] };   // first attendance = Aug 25 → window starts there
+    // Aug 25: 09:00–13:00, 13:49–16:38 → 4h + 2h49m = 6h49m worked (a half day by label).
+    return { data: [{ hr_hrattendanceid: 'c1', hr_date: '2026-08-25', hr_allpunches: JSON.stringify(['09:00', '13:00', '13:49', '16:38']), hr_punchcount: 4 }] };
+  };
+  try {
+    const r = await buildMonthlyBalance({ employeeId: EMP, year: 2026, month: 8 });
+    assert.equal(r.workingDays, 1);
+    assert.equal(r.halfDays, 1);                    // labelled Half Day (6h49m < 7h)
+    assert.equal(r.approvedAdjustmentHours, 3);
+    assert.equal(r.adjustedDays, 1);
+    assert.equal(r.baseRequiredHours, 9);
+    assert.equal(r.finalRequiredHours, 6);          // 9 − 3 approved adjustment
+    assert.equal(r.totalWorkedHours, 6.81);         // 6h49m actual punch hours (span 7.63 − 0.82 break)
+    assert.equal(r.monthlyDifference, 0.81);        // 6.81 − 6 → +49m surplus (displayed)
+    assert.equal(r.shortageHours, 0);               // approved adjustment → NO deduction
+  } finally {
+    d365.getList = orig.gl; d365.getListOptional = orig.glo; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds; time.istHHMM = orig.hh;
   }
 });
 

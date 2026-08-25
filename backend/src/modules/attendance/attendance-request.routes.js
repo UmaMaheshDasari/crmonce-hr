@@ -17,7 +17,7 @@ const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue } = require('../../services/picklist');   // only hr_attendance_status (a real Choice) uses this
 const { computeSession, punchesFromRecord } = require('../../services/attendance.util');
-const { insertPunchTime, detectMissingPunches, PUNCH_TYPES } = require('../../services/missing-punch.util');
+const { insertPunchTime, detectMissingPunches, PUNCH_TYPES, NON_PUNCH_TYPES } = require('../../services/missing-punch.util');
 const attnCfg = require('../../services/attendance.config');
 const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
@@ -63,6 +63,8 @@ const view = (r) => ({
   // hr_punchtype / hr_status are TEXT string codes ('lunch_out', 'pending', …).
   punchType: r.hr_punchtype, punchTypeLabel: PUNCH_TYPES[r.hr_punchtype] || r.hr_punchtype,
   requestedTime: r.hr_requestedtime, reason: r.hr_reason, remarks: r.hr_remarks,
+  // Approved Hour Adjustment (only meaningful when punchType === 'hour_adjustment').
+  adjustmentHours: Number(r.hr_adjustmenthours) || 0,
   attachmentUrl: r.hr_attachmenturl, status: r.hr_status,
   originalPunches: safeJson(r.hr_originalpunches), correctedPunches: safeJson(r.hr_correctedpunches),
   approvedBy: r.hr_approvedby, approvedDate: r.hr_approveddate, approverComment: r.hr_approvercomment,
@@ -119,13 +121,23 @@ router.post('/setup', requireRole('super_admin'), async (req, res, next) => {
 // POST /api/attendance-requests — employee submits a Missing Punch request.
 router.post('/', requirePermission('attendance:read'), async (req, res, next) => {
   try {
-    const { attendanceDate, punchType, requestedTime, reason, remarks, attachmentUrl } = req.body;
+    const { attendanceDate, punchType, requestedTime, reason, remarks, attachmentUrl, adjustmentHours } = req.body;
     const dateOnly = String(attendanceDate || '').slice(0, 10);
-    if (!attendanceDate || !punchType || !requestedTime) {
-      return res.status(400).json({ error: 'Attendance date, correction type and correct time are required' });
-    }
+    const isAdjustment = punchType === 'hour_adjustment';
     if (!PUNCH_TYPES[punchType]) return res.status(400).json({ error: 'Invalid correction type' });
-    if (!/^\d{1,2}:\d{2}$/.test(requestedTime)) return res.status(400).json({ error: 'Correct time must be HH:MM' });
+    if (isAdjustment) {
+      // Hour Adjustment: needs date + hours (0 < h ≤ full-day) + reason. No punch time.
+      const fullDay = require('../../services/company.policy').attendance.fullDayExpectedHours();
+      const hrs = Number(adjustmentHours);
+      if (!attendanceDate) return res.status(400).json({ error: 'Attendance date is required' });
+      if (!Number.isFinite(hrs) || hrs <= 0) return res.status(400).json({ error: 'Adjustment hours must be greater than 0' });
+      if (hrs > fullDay) return res.status(400).json({ error: `Adjustment hours cannot exceed the full-day requirement (${fullDay}h)` });
+    } else {
+      if (!attendanceDate || !requestedTime) {
+        return res.status(400).json({ error: 'Attendance date, correction type and correct time are required' });
+      }
+      if (!/^\d{1,2}:\d{2}$/.test(requestedTime)) return res.status(400).json({ error: 'Correct time must be HH:MM' });
+    }
     if (!String(reason || '').trim()) return res.status(400).json({ error: 'Reason is required' });   // #8
     if (dateOnly > time.istDateStr()) return res.status(400).json({ error: 'Cannot request a correction for a future date' });
 
@@ -141,11 +153,12 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     // Every value is a STRING — hr_punchtype and hr_status are Edm.String (Text)
     // columns in Dataverse, so we store the string code, never an option-set int.
     const body = {
-      hr_name: `Attendance Correction — ${req.user.name} — ${dateOnly}`,
+      hr_name: `${isAdjustment ? 'Hour Adjustment' : 'Attendance Correction'} — ${req.user.name} — ${dateOnly}`,
       hr_employeeid: req.user.id, hr_employeename: req.user.name, hr_employeeemail: req.user.email || '',
       hr_attendancedate: String(attendanceDate).slice(0, 10),
-      hr_punchtype: String(punchType),          // 'lunch_out' | 'missing_check_out' | …  (Text)
-      hr_requestedtime: String(requestedTime),  // 'HH:MM' (Text)
+      hr_punchtype: String(punchType),          // 'hour_adjustment' | 'missing_check_out' | …  (Text)
+      hr_requestedtime: isAdjustment ? '' : String(requestedTime),  // 'HH:MM' (Text); N/A for an adjustment
+      hr_adjustmenthours: isAdjustment ? String(Number(adjustmentHours)) : '',   // approved hours (Text) for adjustments
       hr_reason: reason || '', hr_remarks: remarks || '', hr_attachmenturl: attachmentUrl || '',
       hr_status: 'pending',                     // Text
     };
@@ -158,19 +171,20 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     const created = await robustCreateRequest(body);
 
     // Activity + emails (best-effort, never block the response).
-    activity.record({ category: 'Attendance', type: 'correction_submitted', title: 'Attendance Correction Request',
-      name: req.user.name, meta: `${PUNCH_TYPES[punchType]} @ ${requestedTime} on ${dateOnly}` });
-    // Employee acknowledgement — "Attendance Correction Request Submitted", FROM the
-    // employee's own mailbox. (moduleTitle overrides the display name for THIS email
-    // only; the missing_punch DECISION email keeps its "Missing Punch" wording.)
-    requestNotify.emailApplyAcknowledgement({ type: 'missing_punch', moduleTitle: 'Attendance Correction', toEmail: req.user.email, employeeName: req.user.name, approverName: 'HR' });
-    // ONE actionable "Attendance Correction Request - {name}" email to the WHOLE
-    // authorized HR queue (all active Super Admin + HR Manager) on the TO line, no
-    // CC. FROM = the employee's own mailbox. Fire-and-forget — never blocks/faults
-    // the submission; the record is already saved.
+    const detailValue = isAdjustment ? `${Number(adjustmentHours)}h adjustment` : `@ ${requestedTime}`;
+    const moduleTitle = isAdjustment ? 'Hour Adjustment' : 'Attendance Correction';
+    activity.record({ category: 'Attendance', type: 'correction_submitted', title: `${moduleTitle} Request`,
+      name: req.user.name, meta: `${PUNCH_TYPES[punchType]} ${detailValue} on ${dateOnly}` });
+    // Employee acknowledgement — FROM the employee's own mailbox. (moduleTitle overrides
+    // the display name for THIS email only; the DECISION email keeps its wording.)
+    requestNotify.emailApplyAcknowledgement({ type: 'missing_punch', moduleTitle: `${moduleTitle}`, toEmail: req.user.email, employeeName: req.user.name, approverName: 'HR' });
+    // ONE actionable email to the WHOLE authorized HR queue (all active Super Admin +
+    // HR Manager) on the TO line, no CC. FROM = the employee's own mailbox.
     requestNotify.emailCorrectionRequestToHR({
       recordId: created.hr_attendancerequestid, actor: req.user,
-      details: [['Date', time.fmtDate(attendanceDate)], ['Punch Type', PUNCH_TYPES[punchType]], ['Requested Time', requestedTime], ['Reason', reason || '—']],
+      details: [['Date', time.fmtDate(attendanceDate)], ['Type', PUNCH_TYPES[punchType]],
+        [isAdjustment ? 'Adjustment Hours' : 'Requested Time', isAdjustment ? `${Number(adjustmentHours)}h` : requestedTime],
+        ['Reason', reason || '—']],
       applyTime: new Date().toISOString(),
     }).catch(() => {});
 
@@ -210,7 +224,10 @@ async function decide(user, id, decision, comment, { enforcePending = false } = 
     hr_approvercomment: comment || '',
   };
 
-  if (decision === 'approved') {
+  // Hour Adjustment approval does NOT touch the attendance record / punches — it only
+  // grants hours that reduce that day's required working hours (read by the monthly
+  // balance). Approving it just flips the status; nothing is recomputed or inserted.
+  if (decision === 'approved' && !NON_PUNCH_TYPES.has(reqRec.hr_punchtype)) {
     const record = await findAttendanceRecord(reqRec.hr_employeeid, reqDate);
     if (!record) { const e = new Error('No attendance record found for that date to correct'); e.status = 404; throw e; }
     const originalTimes = punchesFromRecord(record).map(p => p.t || p);

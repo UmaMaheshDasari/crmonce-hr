@@ -160,7 +160,7 @@ registerAdapter({
   cancelledPatch: () => ({ hr_status: 'rejected' }),
   resubmitPatch: () => ({ hr_status: 'pending' }),
   // Editable while PENDING (or on resubmit): the correction content itself.
-  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', remarks: 'hr_remarks', date: 'hr_attendancedate', punchType: 'hr_punchtype', requestedTime: 'hr_requestedtime' }),
+  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', remarks: 'hr_remarks', date: 'hr_attendancedate', punchType: 'hr_punchtype', requestedTime: 'hr_requestedtime', adjustmentHours: 'hr_adjustmenthours' }),
   summary: (r) => `Attendance Correction ${String(r.hr_date || '').slice(0, 10)}`,
   managerRecipients: (r) => managerRecipientsFor(r.hr_employeeid),
   hrRecipients,

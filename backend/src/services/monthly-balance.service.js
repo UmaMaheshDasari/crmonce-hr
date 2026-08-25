@@ -4,7 +4,8 @@
  * SIMPLE, transparent monthly calculation from ACTUAL attendance punches:
  *   Base Required Hours  = Working Days × 9h            (every scheduled working day = 9h)
  *   Approved Leave Hours = full leave × 9h + half leave × 5h   (reduces the requirement)
- *   Final Required Hours = Base Required − Approved Leave Hours − (Absent Days × 9h)
+ *   Approved Adjustment  = Σ HR-approved hour adjustments for the days they apply to
+ *   Final Required Hours = Base Required − Approved Leave − Approved Adjustment − (Absent Days × 9h)
  *   Total Worked Hours   = Σ actual punch hours of Present days + Half days
  *   Monthly Difference   = Total Worked Hours − Final Required Hours
  *   Shortage Hours       = max(0, −Monthly Difference)
@@ -13,8 +14,11 @@
  * NOTES:
  *  - "Actual punch hours" = computeSession.effectiveHours (span − breaks). Late arrival is
  *    NEVER subtracted again — the real worked duration is used as-is.
- *  - A Half-worked day still REQUIRES a full 9h (via Base Required); it only CREDITS its
- *    actual punch hours — it is not forced to 5h.
+ *  - The Half Day LABEL never reduces required hours by itself (§7). A short day only
+ *    shorts if worked < its ADJUSTED requirement (9h − any approved hour adjustment).
+ *  - An APPROVED HOUR ADJUSTMENT (from the Attendance Request approval system) reduces
+ *    ONLY that day's required hours (capped at a full day). It is NOT a deduction, NOT
+ *    counted as worked hours, and never applied twice (§3, §20).
  *  - ABSENT (scheduled working day, no punch, no approved leave) is a SEPARATE day-based
  *    LOP category (existing payroll mechanism); its hours are removed from Final Required
  *    so an absent day is never double-counted (LOP + hourly shortage).
@@ -43,22 +47,28 @@ const fullDayExpected = () => policy.attendance.fullDayExpectedHours();
 
 /**
  * PURE monthly summary from already-aggregated inputs. No I/O, no carry-forward.
+ * This is the per-day balance model, aggregated:
  *   Base Required   = Working Days × fullDayExpected (9)
- *   Final Required  = Base − Approved Leave Hours − (Absent Days × 9)   [absent → separate LOP]
- *   Total Worked    = Present punch hours + Half-day punch hours
- *   Difference      = Total Worked − Final Required
+ *   Final Required  = Base − Approved Leave Hours − Approved Adjustment Hours − (Absent Days × 9)
+ *   Total Worked    = Present punch hours + Half-day punch hours   (ACTUAL punch hours)
+ *   Difference      = Total Worked − Final Required        (= Σ daily balances)
  *   Shortage        = max(0, −Difference)
- * @param {{workingDays:number, approvedLeaveHours:number, absentDays:number,
- *          presentWorkedHours:number, halfWorkedHours:number, fullDayExpected?:number}} p
+ * An APPROVED HOUR ADJUSTMENT (HR-granted, per day) reduces ONLY that day's required
+ * hours — it is NOT a deduction, NOT worked hours (never double-counted, §20). The
+ * Half Day LABEL never reduces required hours by itself (§7): a short day only shorts
+ * if worked < its adjusted requirement. ABSENT days are removed entirely (separate
+ * day-based LOP). Overtime/late never enter this calc.
+ * @param {{workingDays:number, approvedLeaveHours:number, approvedAdjustmentHours:number,
+ *          absentDays:number, presentWorkedHours:number, halfWorkedHours:number, fullDayExpected?:number}} p
  */
-function computeMonthlySummary({ workingDays = 0, approvedLeaveHours = 0, absentDays = 0, presentWorkedHours = 0, halfWorkedHours = 0, fullDayExpected = 9 } = {}) {
+function computeMonthlySummary({ workingDays = 0, approvedLeaveHours = 0, approvedAdjustmentHours = 0, absentDays = 0, presentWorkedHours = 0, halfWorkedHours = 0, fullDayExpected = 9 } = {}) {
   const fd = num(fullDayExpected) || 9;
   const baseRequiredHours = round2(num(workingDays) * fd);
-  const finalRequiredHours = Math.max(0, round2(baseRequiredHours - num(approvedLeaveHours) - num(absentDays) * fd));
+  const finalRequiredHours = Math.max(0, round2(baseRequiredHours - num(approvedLeaveHours) - num(approvedAdjustmentHours) - num(absentDays) * fd));
   const totalWorkedHours = round2(num(presentWorkedHours) + num(halfWorkedHours));
   const monthlyDifference = round2(totalWorkedHours - finalRequiredHours);
   const shortageHours = monthlyDifference < 0 ? round2(-monthlyDifference) : 0;
-  return { baseRequiredHours, approvedLeaveHours: round2(approvedLeaveHours), finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours };
+  return { baseRequiredHours, approvedLeaveHours: round2(approvedLeaveHours), approvedAdjustmentHours: round2(approvedAdjustmentHours), finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours };
 }
 
 /** First-ever attendance date (min hr_date) — clamps the month so days before an
@@ -114,6 +124,23 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
     from, capTo,
   ).get(employeeId) || new Map();
 
+  // Approved HOUR ADJUSTMENTS (from the Attendance Request approval system) → date → hours.
+  // HR-granted hours that reduce ONLY that day's required working hours (§2). Read-only;
+  // column is optional so this degrades to "no adjustments" until one is ever created.
+  const adjMap = new Map();
+  try {
+    const REQ = d365.constructor.entities.attendanceRequest;
+    const { data: adjustments } = await d365.getListOptional(REQ, {
+      select: 'hr_attendancedate,hr_punchtype,hr_status', optionalSelect: 'hr_adjustmenthours',
+      filter: `hr_employeeid eq '${employeeId}' and hr_status eq 'approved' and hr_punchtype eq 'hour_adjustment'`,
+    });
+    for (const a of (adjustments || [])) {
+      const ds = String(a.hr_attendancedate || '').slice(0, 10);
+      const h = Number(a.hr_adjustmenthours) || 0;
+      if (ds && h > 0) adjMap.set(ds, round2((adjMap.get(ds) || 0) + h));   // sum multiple approvals on a day
+    }
+  } catch { /* table/column not provisioned yet → no adjustments */ }
+
   const firstDate = await firstAttendanceDate(employeeId);
   let effFrom = firstDate && firstDate > from ? firstDate : from;   // clamp to first punch
   // EFFECTIVE DATE: never look at dates before the cutoff, so pre-cutoff days never
@@ -125,7 +152,7 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
 
   const fd = fullDayExpected();   // 9 (configurable via Company Settings)
   let workingDays = 0, presentDays = 0, presentWorkedHours = 0, halfDays = 0, halfWorkedHours = 0;
-  let absentDays = 0, approvedLeaveDays = 0, approvedLeaveHours = 0;
+  let absentDays = 0, approvedLeaveDays = 0, approvedLeaveHours = 0, approvedAdjustmentHours = 0, adjustedDays = 0;
   const end = new Date(`${capTo}T00:00:00Z`);
   for (let d = new Date(`${effFrom}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
@@ -154,9 +181,13 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
 
     if (worked) {
       // ATTENDED: credit ACTUAL punch hours (effective = span − breaks; open sessions
-      // count only completed IN→OUT time). A Half day still required a full 9h (via Base
-      // Required) but only credits its real hours. A PAST open session (forgotten checkout,
-      // status 'in_progress') is a completed day → bucketed by its actual worked hours.
+      // count only completed IN→OUT time). The Half Day LABEL never reduces required hours
+      // by itself (§7) — a short day only shorts if worked < its ADJUSTED requirement.
+      // An approved HOUR ADJUSTMENT reduces THIS day's required hours (capped at a full
+      // day) — applied on attended days only, so it is never double-counted with leave
+      // (already 0 required) or absent (separate LOP).
+      const adj = Math.min(num(adjMap.get(ds)), fd);
+      if (adj > 0) { approvedAdjustmentHours = round2(approvedAdjustmentHours + adj); adjustedDays++; }
       if (worked.status === 'present') { presentDays++; presentWorkedHours += num(worked.effectiveHours); }
       else { halfDays++; halfWorkedHours += num(worked.effectiveHours); }   // half_day or past in_progress
     } else {
@@ -164,14 +195,14 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
     }
   }
 
-  const summary = computeMonthlySummary({ workingDays, approvedLeaveHours, absentDays, presentWorkedHours, halfWorkedHours, fullDayExpected: fd });
+  const summary = computeMonthlySummary({ workingDays, approvedLeaveHours, approvedAdjustmentHours, absentDays, presentWorkedHours, halfWorkedHours, fullDayExpected: fd });
   return {
     year: y, month: m,
     workingDays,
     presentDays, presentWorkedHours: round2(presentWorkedHours),
     halfDays, halfWorkedHours: round2(halfWorkedHours),
-    absentDays, approvedLeaveDays,
-    ...summary,   // baseRequiredHours, approvedLeaveHours, finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours
+    absentDays, approvedLeaveDays, adjustedDays,
+    ...summary,   // baseRequiredHours, approvedLeaveHours, approvedAdjustmentHours, finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours
   };
 }
 

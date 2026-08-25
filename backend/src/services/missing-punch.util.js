@@ -21,10 +21,16 @@ const PUNCH_TYPES = {
   device_failure: 'Device Failure',
   web_checkin_issue: 'Web Check-in Issue',
   other: 'Other',
+  // Approved HOUR ADJUSTMENT: HR grants N hours that reduce THAT day's required
+  // working hours (not a punch correction — no attendance record is changed).
+  hour_adjustment: 'Hour Adjustment',
   // legacy values kept for backward compatibility with existing records:
   lunch_out: 'Missed Break Out',
   lunch_in: 'Missed Break In',
 };
+
+// Request types that DON'T insert a punch / touch the attendance record on approval.
+const NON_PUNCH_TYPES = new Set(['hour_adjustment']);
 
 /**
  * Analyse a set of punches and report likely missing punches. Signals:
@@ -69,4 +75,4 @@ function insertPunchTime(times, newTime) {
   return [...list.slice(0, idx), t, ...list.slice(idx)];
 }
 
-module.exports = { detectMissingPunches, insertPunchTime, PUNCH_TYPES };
+module.exports = { detectMissingPunches, insertPunchTime, PUNCH_TYPES, NON_PUNCH_TYPES };
