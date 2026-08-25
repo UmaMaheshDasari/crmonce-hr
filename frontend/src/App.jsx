@@ -79,7 +79,7 @@ function AppRoutes() {
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="historical-attendance" element={<ProtectedRoute roles={['super_admin','hr_manager']}><HistoricalAttendancePage /></ProtectedRoute>} />
         <Route path="attendance-requests" element={<AttendanceRequestsPage />} />
-        <Route path="early-logout" element={<AttendanceRequestsPage autoOpenKind="early_logout" />} />
+        <Route path="early-logout" element={<AttendanceRequestsPage kind="early_logout" />} />
         <Route path="historical-attendance-requests" element={<HistoricalAttendanceRequestsPage />} />
         <Route path="holidays" element={<HolidaysPage />} />
         <Route path="leave" element={<LeavePage />} />

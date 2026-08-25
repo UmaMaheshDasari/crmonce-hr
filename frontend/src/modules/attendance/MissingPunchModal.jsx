@@ -25,11 +25,13 @@ const durLabel = (mins) => `${Math.floor(Math.abs(mins) / 60)}h ${String(Math.ab
 //  • Early Logout — permitted early leave; the granted hours (shift end − requested
 //    logout) reduce ONLY that day's required hours. Both grant hours (no punch change,
 //    not a deduction) and are approved by HR before they affect the monthly balance.
-export default function MissingPunchModal({ open, onClose, defaultDate, defaultType, editRecord, defaultKind }) {
+export default function MissingPunchModal({ open, onClose, defaultDate, defaultType, editRecord, defaultKind, lockKind }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const isEdit = !!editRecord;
-  const [mode, setMode] = useState('correction');   // 'correction' | 'adjustment' | 'early_logout'
+  // lockKind forces a single kind and HIDES the toggle (Early Logout has its own page,
+  // so it is never mixed with Attendance Corrections / Hour Adjustments in one tab).
+  const [mode, setMode] = useState(lockKind || 'correction');   // 'correction' | 'adjustment' | 'early_logout'
   const [form, setForm] = useState({ attendanceDate: '', punchType: 'missing_check_out', requestedTime: '', adjustmentHours: '', reason: '' });
   const isAdjust = mode === 'adjustment';
   const isEarly = mode === 'early_logout';
@@ -52,7 +54,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
         reason: editRecord.reason || '',
       });
     } else {
-      setMode(defaultKind || 'correction');   // deep-link (e.g. Early Logout) preselects the kind
+      setMode(lockKind || defaultKind || 'correction');   // locked kind (own page) or default
       setForm(f => ({
         ...f,
         attendanceDate: defaultDate || f.attendanceDate || new Date().toISOString().slice(0, 10),
@@ -60,7 +62,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
         requestedTime: '', adjustmentHours: '',
       }));
     }
-  }, [open, defaultDate, defaultType, editRecord, defaultKind]);
+  }, [open, defaultDate, defaultType, editRecord, defaultKind, lockKind]);
 
   // Live Early Logout hours = shift end − requested logout (positive = valid).
   const elMinutes = (isEarly && shiftEnd && form.requestedTime) ? (toMin(shiftEnd) - toMin(form.requestedTime)) : null;
@@ -103,10 +105,11 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100"><XMarkIcon className="w-5 h-5 text-gray-500" /></button>
         </div>
         <div className="p-5 space-y-3.5">
-          {/* Request-kind toggle (new requests only) */}
-          {!isEdit && (
-            <div className="grid grid-cols-3 gap-2 p-1 bg-gray-100 rounded-xl">
-              {[['correction', 'Correction'], ['adjustment', 'Hour Adjustment'], ['early_logout', 'Early Logout']].map(([val, label]) => (
+          {/* Request-kind toggle — Correction vs Hour Adjustment only. Early Logout has
+              its OWN page (lockKind), so it never appears here / is never merged in. */}
+          {!isEdit && !lockKind && (
+            <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-xl">
+              {[['correction', 'Correction'], ['adjustment', 'Hour Adjustment']].map(([val, label]) => (
                 <button key={val} type="button" onClick={() => setMode(val)}
                   className={`py-2 text-xs font-semibold rounded-lg transition-all ${mode === val ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}>
                   {label}

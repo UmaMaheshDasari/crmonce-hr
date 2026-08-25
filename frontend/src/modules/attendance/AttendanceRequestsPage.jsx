@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { CheckIcon, XMarkIcon, ClockIcon, PlusIcon } from '@heroicons/react/24/outline';
@@ -12,27 +12,24 @@ const STATUS_STYLE = {
   pending: 'bg-amber-50 text-amber-700', approved: 'bg-emerald-50 text-emerald-700', rejected: 'bg-red-50 text-red-700',
 };
 
-export default function AttendanceRequestsPage({ autoOpenKind } = {}) {
+export default function AttendanceRequestsPage({ kind } = {}) {
+  const isEarlyLogout = kind === 'early_logout';   // Early Logout has its OWN page/tab
   const { isHR } = useAuth();
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [comment, setComment] = useState({});   // per-request comment
   const [modalOpen, setModalOpen] = useState(false);
   const [editRecord, setEditRecord] = useState(null);   // employee editing their own pending request
-  const [defaultKind, setDefaultKind] = useState(null); // preselect a request kind (e.g. Early Logout)
-
-  // Deep-link (e.g. the "Early Logout" nav item → /early-logout) opens the request
-  // form straight to that kind.
-  useEffect(() => {
-    if (autoOpenKind) { setEditRecord(null); setDefaultKind(autoOpenKind); setModalOpen(true); }
-  }, [autoOpenKind]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['attendance-requests', statusFilter],
     queryFn: () => attendanceRequestApi.list({ status: statusFilter || undefined }),
     placeholderData: (prev) => prev,
   });
-  const rows = data?.data?.data || [];
+  // Keep Early Logout and Attendance Corrections in SEPARATE tabs — never merged: the
+  // Early Logout page shows only early_logout rows; Attendance Requests shows the rest.
+  const rows = (data?.data?.data || []).filter(r =>
+    isEarlyLogout ? r.punchType === 'early_logout' : r.punchType !== 'early_logout');
 
   const act = useMutation({
     mutationFn: ({ id, action }) => action === 'approved'
@@ -45,11 +42,11 @@ export default function AttendanceRequestsPage({ autoOpenKind } = {}) {
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Attendance Requests</h1>
-          <p className="text-sm text-gray-400">Attendance corrections {isHR() ? '— review & approve' : '— your submitted requests'}</p>
+          <h1 className="text-xl font-bold text-gray-900">{isEarlyLogout ? 'Early Logout' : 'Attendance Requests'}</h1>
+          <p className="text-sm text-gray-400">{isEarlyLogout ? 'Early logout requests' : 'Attendance corrections'} {isHR() ? '— review & approve' : '— your submitted requests'}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button icon={PlusIcon} onClick={() => { setEditRecord(null); setDefaultKind(null); setModalOpen(true); }}>New Request</Button>
+          <Button icon={PlusIcon} onClick={() => { setEditRecord(null); setModalOpen(true); }}>{isEarlyLogout ? 'Request Early Logout' : 'New Request'}</Button>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
             className="h-9 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
             <option value="">All Status</option>
@@ -128,7 +125,7 @@ export default function AttendanceRequestsPage({ autoOpenKind } = {}) {
         </div>
       </div>
 
-      <MissingPunchModal open={modalOpen} defaultKind={defaultKind} onClose={() => { setModalOpen(false); setEditRecord(null); setDefaultKind(null); }} editRecord={editRecord} />
+      <MissingPunchModal open={modalOpen} lockKind={isEarlyLogout ? 'early_logout' : undefined} onClose={() => { setModalOpen(false); setEditRecord(null); }} editRecord={editRecord} />
     </div>
   );
 }
