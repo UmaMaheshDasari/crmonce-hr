@@ -96,6 +96,7 @@ export const compOffApi = {
   list: (params) => api.get('/attendance/comp-off', { params }),
   balance: (params) => api.get('/attendance/comp-off/balance', { params }),
   policy: () => api.get('/attendance/comp-off/policy'),
+  eligibility: (params) => api.get('/attendance/comp-off/eligibility', { params }),   // worked hours + 5h eligibility for a date
   create: (data) => api.post('/attendance/comp-off', data),
   verify: (id) => api.get(`/attendance/comp-off/${id}/verify`),
   approve: (id) => api.patch(`/attendance/comp-off/${id}/approve`),

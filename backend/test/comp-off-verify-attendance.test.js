@@ -47,7 +47,8 @@ test('1. no attendance → NOT ELIGIBLE, attendanceFound false', async () => {
 });
 
 // ── 2–7. hours thresholds on a holiday ──
-test('2. 5h → NOT ELIGIBLE', async () => { stub({ att: attRow({ hr_effectivehours: 5 }) }); const v = await verify(); assert.strictEqual(v.eligible, false); assert.strictEqual(v.eligibleDays, 0); });
+test('2a. 4h59m → NOT ELIGIBLE (below 5h)', async () => { stub({ att: attRow({ hr_effectivehours: 5 - 1 / 60 }) }); const v = await verify(); assert.strictEqual(v.eligible, false); assert.strictEqual(v.eligibleDays, 0); });
+test('2b. exactly 5h → ELIGIBLE 0.5 (new rule)', async () => { stub({ att: attRow({ hr_effectivehours: 5 }) }); const v = await verify(); assert.strictEqual(v.eligible, true); assert.strictEqual(v.eligibleDays, 0.5); });
 test('3. 5h01m → 0.5 (HALF DAY)', async () => { stub({ att: attRow({ hr_effectivehours: 5 + 1 / 60 }) }); const v = await verify(); assert.strictEqual(v.eligibleDays, 0.5); assert.strictEqual(v.eligibilityLabel, 'HALF DAY – 0.5'); });
 test('4. 6h → 0.5', async () => { stub({ att: attRow({ hr_effectivehours: 6 }) }); assert.strictEqual((await verify()).eligibleDays, 0.5); });
 test('5. 7h59m → 0.5', async () => { stub({ att: attRow({ hr_effectivehours: 7 + 59 / 60 }) }); assert.strictEqual((await verify()).eligibleDays, 0.5); });

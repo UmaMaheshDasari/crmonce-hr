@@ -102,10 +102,15 @@ test('6. normal working day → approval blocked', async () => {
 });
 
 // ── 7–10. hours thresholds on a holiday ──
-test('7. 5:00 hours → approval blocked', async () => {
-  const { ledger } = approveHarness({ row: autoRow(), attendance: [attRow({ hr_effectivehours: 5 })] });
+test('7a. 4:59 hours → approval blocked (below 5h)', async () => {
+  const { ledger } = approveHarness({ row: autoRow(), attendance: [attRow({ hr_effectivehours: 5 - 1 / 60 })] });
   await assert.rejects(() => compOff.approve('a1', { name: 'HR' }), /does not qualify/);
   assert.strictEqual(ledger.length, 0);
+});
+test('7b. exactly 5:00 hours → approve credits 0.5 (new rule)', async () => {
+  const { ledger } = approveHarness({ row: autoRow(), attendance: [attRow({ hr_effectivehours: 5 })] });
+  await compOff.approve('a1', { name: 'HR' });
+  assert.strictEqual(Number(ledger[0].days), 0.5);
 });
 test('8. 5:01 hours → approve credits 0.5', async () => {
   const { ledger } = approveHarness({ row: autoRow(), attendance: [attRow({ hr_effectivehours: 5 + 1 / 60 })] });

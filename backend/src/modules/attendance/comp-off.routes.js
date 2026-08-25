@@ -55,33 +55,60 @@ router.get('/policy', async (req, res, next) => {
   } catch (_) { res.json({ expiryDays: 90, autoEarn: true, employeeRaise: true }); }
 });
 
+// GET /eligibility?date=YYYY-MM-DD[&employeeId]  — computed worked-hours + Comp Off
+// eligibility for a date (employee: own; HR: ?employeeId). Drives the form's live
+// eligibility hint; the backend re-checks on submit (this is advisory, not the gate).
+router.get('/eligibility', async (req, res, next) => {
+  try {
+    const date = String(req.query.date || '').slice(0, 10);
+    if (!date) return res.status(400).json({ error: 'date is required.' });
+    const employeeId = isHR(req.user) ? (req.query.employeeId || req.user.id) : req.user.id;
+    const worked = await withTable(() => compOff.workedHoursForDate(employeeId, date));
+    const duplicate = await compOff.existsForDate(employeeId, date).catch(() => false);
+    res.json({ ...worked, duplicate, eligible: worked.eligible && !duplicate });
+  } catch (err) { next(err); }
+});
+
 // POST /  — HR grants comp-off (grant=true → approved immediately), or an employee
-// raises a request (always pending; only if policy allows).
+// raises a request (always pending; only if policy allows). Eligibility (attendance +
+// >= 5 worked hours + no duplicate + work report) is enforced HERE, server-side.
 router.post('/', async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.workedDate) return res.status(400).json({ error: 'Worked date is required.' });
-    const days = Number(b.days) || 1;
-    if (days <= 0) return res.status(400).json({ error: 'Comp off days must be greater than 0.' });
 
     if (isHR(req.user)) {
       if (!b.employeeId || !/^[0-9a-fA-F-]{36}$/.test(String(b.employeeId))) return res.status(400).json({ error: 'A valid employee is required.' });
+      // Prevent duplicate credits for the same employee/date (same rule as the auto scan).
+      if (await withTable(() => compOff.existsForDate(b.employeeId, String(b.workedDate).slice(0, 10)))) {
+        return res.status(409).json({ error: 'A Comp Off already exists for this date.' });
+      }
+      // Compute REAL worked hours when attendance exists (never trust typed hours). HR keeps
+      // discretion over the day amount / immediate grant, so HR is not hard-blocked on <5h.
+      const worked = await compOff.workedHoursForDate(b.employeeId, b.workedDate);
+      const days = Number(b.days) || (worked.hasAttendance ? compOff.compOffDaysForHours(worked.effectiveHours) : 1);
+      if (days <= 0) return res.status(400).json({ error: 'Comp off days must be greater than 0.' });
       const rec = await withTable(() => compOff.create({
         employeeId: b.employeeId, employeeName: b.employeeName, type: 'manual',
-        workedDate: b.workedDate, workedHours: b.workedHours, reason: b.reason, holidayName: b.holidayName,
-        days, remarks: b.remarks, createdBy: req.user.name || req.user.email || 'HR',
+        workedDate: b.workedDate, workedHours: worked.hasAttendance ? worked.effectiveHours : b.workedHours,
+        reason: b.workReport || b.reason, holidayName: b.holidayName,
+        days, remarks: b.remarks || b.evidenceUrl || '', createdBy: req.user.name || req.user.email || 'HR',
         status: b.grant ? 'approved' : 'pending',
       }));
       return res.status(201).json(rec);
     }
 
-    // Employee self-raise
+    // Employee self-raise — policy gate, then STRICT backend eligibility. workedHours is
+    // computed server-side (typed hours are ignored); a work report is mandatory.
     const { compOff: policy } = await payrollSettings.getResolved();
     if (!policy.employeeRaise) return res.status(403).json({ error: 'Comp-off requests are not enabled for employees.' });
+    const workReport = b.workReport || b.reason || '';
+    const v = await withTable(() => compOff.validateManualCompOff({ employeeId: req.user.id, workedDate: b.workedDate, workReport, requireWorkReport: true }));
+    if (!v.ok) return res.status(v.status).json({ error: v.error });
     const rec = await withTable(() => compOff.create({
       employeeId: req.user.id, employeeName: req.user.name, type: 'manual',
-      workedDate: b.workedDate, workedHours: b.workedHours, reason: b.reason,
-      days, createdBy: req.user.name || req.user.email, status: 'pending',
+      workedDate: b.workedDate, workedHours: v.worked.effectiveHours, reason: workReport,
+      days: v.days, remarks: b.evidenceUrl || '', createdBy: req.user.name || req.user.email, status: 'pending',
     }));
     res.status(201).json(rec);
   } catch (err) {

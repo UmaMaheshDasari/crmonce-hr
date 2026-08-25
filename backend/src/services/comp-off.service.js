@@ -10,6 +10,7 @@
 const d365 = require('./d365.service');
 const payrollSettings = require('./payroll-settings.service');
 const leaveEngine = require('./leave-engine.service');
+const { computeSession, punchesFromRecord } = require('./attendance.util');   // shared effective-hours calc (single source of truth)
 let attnCfg; try { attnCfg = require('./attendance.config'); } catch (_) { attnCfg = null; }
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
@@ -32,17 +33,25 @@ const pad2 = (n) => String(n).padStart(2, '0');
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (dateStr, days) => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + Number(days)); return d.toISOString().slice(0, 10); };
 
+// Minimum EFFECTIVE worked hours to be eligible for Comp Off (auto + manual). A day
+// with fewer worked hours is never eligible.
+const MIN_COMPOFF_HOURS = 5;
+
 /**
  * Comp-off days earned for a day's EFFECTIVE worked hours (break already excluded).
  * The single, shared rule for BOTH eTime-sync auto-earn and the month-end scan so
- * they can never disagree:  ≥8h → 1 · >5h and <8h → 0.5 · ≤5h → 0. Never more than 1.
+ * they can never disagree:  ≥8h → 1 · ≥5h and <8h → 0.5 · <5h → 0. Never more than 1.
+ * The 5h floor is the eligibility rule: exactly 5h qualifies (half day); below 5h does not.
  */
 function compOffDaysForHours(effectiveHours) {
   const h = Number(effectiveHours) || 0;
   if (h >= 8) return 1;
-  if (h > 5) return 0.5;
+  if (h >= MIN_COMPOFF_HOURS) return 0.5;
   return 0;
 }
+
+/** Is a day's effective worked hours enough to be eligible for Comp Off? */
+function isEligibleHours(effectiveHours) { return (Number(effectiveHours) || 0) >= MIN_COMPOFF_HOURS; }
 
 const SELECT = 'hr_compoffid,hr_employeeid,hr_employeename,hr_year,hr_type,hr_workeddate,hr_workedhours,hr_reason,hr_holidayname,hr_days,hr_expirydate,hr_status,hr_remarks,hr_approvedby,hr_approveddate,hr_createdby,hr_ledgerlinked,createdon,modifiedon';
 
@@ -208,7 +217,9 @@ async function attendanceVerification(id) {
   const day = ds ? new Date(`${ds}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }) : '';
   const base = {
     id, employeeId: empId, employeeName: row.hr_employeename || '', workedDate: ds, day,
-    type: row.hr_type || 'manual', reason: row.hr_reason || '', holidayName: holiday ? holidayName(ds) : '',
+    type: row.hr_type || 'manual', reason: row.hr_reason || '', workReport: row.hr_reason || '',
+    remarks: row.hr_remarks || '', evidenceUrl: /^(\/uploads\/|https?:\/\/)/i.test(String(row.hr_remarks || '')) ? row.hr_remarks : '',
+    holidayName: holiday ? holidayName(ds) : '',
     compOffStatus: row.hr_status || 'pending', storedDays: num(row.hr_days), holiday, weeklyOff,
   };
 
@@ -239,14 +250,23 @@ async function attendanceVerification(id) {
   let eligible, eligibleDays, reason;
   if (!(holiday || weeklyOff) && isAuto) { eligible = false; eligibleDays = 0; reason = 'The worked date is not a Holiday or Weekly-Off.'; }
   else if (!worked) { eligible = false; eligibleDays = 0; reason = 'The employee did not actually work on this date (no valid punch / not Present).'; }
-  else if (!hoursDays) { eligible = false; eligibleDays = 0; reason = `Effective hours (${fmtHours(eff)}) are 5h or less — not eligible.`; }
+  else if (!hoursDays) { eligible = false; eligibleDays = 0; reason = `Effective hours (${fmtHours(eff)}) are less than the 5h minimum — not eligible.`; }
   else { eligible = true; eligibleDays = hoursDays; reason = ''; }
   const eligibilityLabel = !eligible ? 'NOT ELIGIBLE' : eligibleDays === 1 ? 'FULL DAY – 1' : 'HALF DAY – 0.5';
 
+  // Shift EFFECTIVE on the worked date (history-aware) + first/last punch, for HR review.
+  const pt = (p) => (p && typeof p === 'object') ? (p.t || p.time || '') : p;
+  const firstPunch = att.hr_intime || pt(punches[0]) || '';
+  const lastPunch = att.hr_outtime || pt(punches[punches.length - 1]) || '';
+  let shift = null;
+  try { const s = await require('./shift-history.service').resolveShiftForDate(empId, ds); shift = s ? { name: s.name || '', start: s.start || '', end: s.end || '' } : null; } catch { shift = null; }
+
   return {
-    ...base, attendanceFound: true, effectiveHours: eff,
+    ...base, attendanceFound: true, effectiveHours: eff, minHours: MIN_COMPOFF_HOURS,
+    shift, firstPunch, lastPunch,
     attendance: {
       status: statusLabel, inTime: att.hr_intime || '', outTime: att.hr_outtime || '',
+      firstPunch, lastPunch, shift,
       punches, punchCount: Number(att.hr_punchcount) || punches.length,
       effectiveHours: eff, effectiveHoursLabel: fmtHours(eff),
       breakHours: brk, breakLabel: fmtHours(brk),
@@ -383,6 +403,59 @@ async function existsForDate(employeeId, workedDate) {
     });
     return (data || []).some((r) => !['rejected', 'cancelled'].includes(r.hr_status));
   } catch { return false; }
+}
+
+/**
+ * Actual EFFECTIVE worked hours for an employee on a date — the authoritative comp-off
+ * eligibility input. Reuses the SAME calculation as everywhere else (computeSession)
+ * with the shift EFFECTIVE ON THAT DATE (shift history), NOT the current shift. Reads
+ * the attendance record's real punches — never any hours a user typed. One query;
+ * never throws. Returns { hasAttendance, effectiveHours, firstPunch, lastPunch, shift,
+ * statusLabel, eligible, minHours }.
+ */
+async function workedHoursForDate(employeeId, date) {
+  const ds = String(date || '').slice(0, 10);
+  const out = { hasAttendance: false, effectiveHours: 0, firstPunch: null, lastPunch: null, shift: null, shiftName: '', statusLabel: '', eligible: false, minHours: MIN_COMPOFF_HOURS };
+  if (!employeeId || !ds) return out;
+  try {
+    const { data } = await d365.getList(d365.constructor.entities.attendance, {
+      select: 'hr_hrattendanceid,hr_date,hr_intime,hr_outtime,hr_allpunches,hr_punchcount,hr_status,hr_effectivehours,hr_workedhours,_hr_hremployee_value',
+      filter: `_hr_hremployee_value eq '${employeeId}' and hr_date ge '${ds}' and hr_date le '${ds}'`, top: 1,
+    });
+    const rec = (data || [])[0];
+    if (!rec) return out;
+    // Shift effective ON the worked date (history-aware; falls back to current fields).
+    let shift = null;
+    try { shift = await require('./shift-history.service').resolveShiftForDate(employeeId, ds); } catch { shift = null; }
+    const c = computeSession(punchesFromRecord(rec), shift || undefined, { date: ds });
+    const { toLabel } = require('./picklist');
+    return {
+      hasAttendance: true,
+      effectiveHours: c.effectiveHours,
+      firstPunch: c.firstPunch, lastPunch: c.lastPunch,
+      shift: c.shift, shiftName: (c.shift && c.shift.name) || '',
+      statusLabel: toLabel('hr_attendance_status', rec.hr_status) || String(rec.hr_status || ''),
+      eligible: isEligibleHours(c.effectiveHours),
+      minHours: MIN_COMPOFF_HOURS,
+    };
+  } catch (e) { global.logger?.warn?.(`[comp-off] workedHoursForDate failed: ${e.message}`); return out; }
+}
+
+/**
+ * Validate a MANUAL comp-off application server-side (never trust the client). Enforces:
+ * attendance exists, real worked hours >= 5, a work report (when required), and no
+ * duplicate for that employee/date. Returns { ok, status, error, worked, days }.
+ */
+async function validateManualCompOff({ employeeId, workedDate, workReport = '', requireWorkReport = true, requireEvidence = false, hasEvidence = false }) {
+  const ds = String(workedDate || '').slice(0, 10);
+  if (!ds) return { ok: false, status: 400, error: 'Worked date is required.' };
+  if (requireWorkReport && !String(workReport).trim()) return { ok: false, status: 400, error: 'A work report describing the work performed is required.' };
+  if (requireEvidence && !hasEvidence) return { ok: false, status: 400, error: 'Supporting evidence is required for this Comp Off request.' };
+  const worked = await workedHoursForDate(employeeId, ds);
+  if (!worked.hasAttendance) return { ok: false, status: 400, error: 'Comp Off is not available for this date. No valid attendance was found for this date.', worked };
+  if (!worked.eligible) return { ok: false, status: 400, error: 'Comp Off is not available for this date. A minimum of 5 working hours is required.', worked };
+  if (await existsForDate(employeeId, ds)) return { ok: false, status: 409, error: 'A Comp Off already exists for this date.', worked };
+  return { ok: true, worked, days: compOffDaysForHours(worked.effectiveHours) };
 }
 
 /**
@@ -561,4 +634,4 @@ async function remove(id, user) {
   return { deleted: true, id };
 }
 
-module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, remove, verifyEligibility, attendanceVerification, isCompOffUsed, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours, fmtHours };
+module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, remove, verifyEligibility, attendanceVerification, isCompOffUsed, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours, isEligibleHours, workedHoursForDate, validateManualCompOff, existsForDate, MIN_COMPOFF_HOURS, fmtHours };

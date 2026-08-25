@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { compOffApi, employeeApi, leaveApi } from '../../api/endpoints';
+import { compOffApi, employeeApi, leaveApi, documentApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import {
@@ -22,16 +22,52 @@ const STATUS = {
 const fmt = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy') : '—'; } catch { return d || '—'; } };
 const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
 
+const fmtHrs = (h) => { const n = Number(h) || 0; const m = Math.round(n * 60); return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`; };
+
 // Grant (HR) / Raise (employee) comp-off.
 function RaiseModal({ isHR, employees, onClose }) {
   const qc = useQueryClient();
-  const [f, setF] = useState({ employeeId: '', workedDate: new Date().toISOString().slice(0, 10), days: 1, workedHours: '', reason: '', holidayName: '', grant: isHR });
+  const [f, setF] = useState({ employeeId: '', workedDate: new Date().toISOString().slice(0, 10), days: 1, workReport: '', holidayName: '', grant: isHR, evidenceUrl: '' });
+  const [evidenceName, setEvidenceName] = useState('');
+  const [uploading, setUploading] = useState(false);
+
+  // Live eligibility hint (backend re-checks on submit). Employee → self; HR → selected emp.
+  const empParam = isHR ? f.employeeId : undefined;
+  const { data: elig, isFetching: eligLoading } = useQuery({
+    queryKey: ['compoff-eligibility', empParam || 'self', f.workedDate],
+    queryFn: () => compOffApi.eligibility({ date: f.workedDate, ...(empParam ? { employeeId: empParam } : {}) }).then(r => r.data),
+    enabled: !!f.workedDate && (isHR ? !!f.employeeId : true),
+  });
+
   const mut = useMutation({
     mutationFn: () => compOffApi.create(f),
     onSuccess: () => { toast.success(isHR ? 'Comp off saved' : 'Comp off requested'); qc.invalidateQueries({ queryKey: ['comp-off'] }); qc.invalidateQueries({ queryKey: ['leave-balance'] }); onClose(); },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed'),
   });
-  const invalid = (isHR && !f.employeeId) || !f.workedDate || Number(f.days) <= 0;
+
+  const uploadEvidence = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('documentType', 'Comp Off Evidence');
+      fd.append('name', `Comp Off Evidence — ${f.workedDate}`);
+      if (isHR && f.employeeId) fd.append('employeeId', f.employeeId);
+      const r = await documentApi.upload(fd);
+      const url = r.data?.fileUrl || r.data?.hr_fileurl || r.data?.url || '';
+      setF(p => ({ ...p, evidenceUrl: url })); setEvidenceName(file.name);
+      toast.success('Evidence attached');
+    } catch (e) { toast.error(e.response?.data?.error || 'Upload failed'); }
+    finally { setUploading(false); }
+  };
+
+  // Employees cannot submit unless eligible + a work report is written. HR keeps discretion.
+  const notEligible = elig && !elig.eligible;
+  const invalid = (isHR && !f.employeeId) || !f.workedDate
+    || (!isHR && (!f.workReport.trim() || !elig || !elig.eligible))
+    || uploading;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl my-8">
@@ -47,20 +83,57 @@ function RaiseModal({ isHR, employees, onClose }) {
                 {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
               </select></div>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-xs font-semibold text-gray-600 mb-1">Worked Date</label>
+          <div className={`grid ${isHR ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+            <div><label className="block text-xs font-semibold text-gray-600 mb-1">Comp Off Date</label>
               <input type="date" className={inp} value={f.workedDate} onChange={e => setF(p => ({ ...p, workedDate: e.target.value }))} /></div>
-            <div><label className="block text-xs font-semibold text-gray-600 mb-1">Comp Off Days</label>
-              <input type="number" step="0.5" min="0.5" className={inp} value={f.days} onChange={e => setF(p => ({ ...p, days: e.target.value }))} /></div>
+            {isHR && (
+              <div><label className="block text-xs font-semibold text-gray-600 mb-1">Comp Off Days (override)</label>
+                <input type="number" step="0.5" min="0.5" className={inp} value={f.days} onChange={e => setF(p => ({ ...p, days: e.target.value }))} placeholder="auto" /></div>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-xs font-semibold text-gray-600 mb-1">Worked Hours</label>
-              <input type="number" step="0.5" min="0" className={inp} value={f.workedHours} onChange={e => setF(p => ({ ...p, workedHours: e.target.value }))} placeholder="optional" /></div>
+
+          {/* Eligibility panel — computed from the actual attendance for the date */}
+          {f.workedDate && (isHR ? f.employeeId : true) && (
+            <div className={`rounded-xl border p-3 text-sm ${notEligible ? 'bg-red-50 border-red-200' : elig?.eligible ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}>
+              {eligLoading ? <p className="text-gray-500">Checking attendance…</p> : elig ? (
+                <div className="space-y-1">
+                  <div className="flex justify-between"><span className="text-gray-500">Attendance Date</span><span className="font-semibold text-gray-800">{fmt(f.workedDate)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Shift</span><span className="font-semibold text-gray-800">{elig.shiftName || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">First / Last Punch</span><span className="font-semibold text-gray-800 tabular-nums">{elig.firstPunch || '—'} / {elig.lastPunch || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Worked Hours</span><span className="font-bold text-gray-900 tabular-nums">{elig.hasAttendance ? fmtHrs(elig.effectiveHours) : '—'}</span></div>
+                  <div className="flex justify-between items-center pt-1 border-t border-gray-200/70">
+                    <span className="text-gray-500">Eligibility</span>
+                    {elig.eligible
+                      ? <span className="inline-flex items-center gap-1 font-bold text-emerald-700"><CheckCircleIcon className="w-4 h-4" /> Eligible</span>
+                      : <span className="inline-flex items-center gap-1 font-bold text-red-600"><ExclamationTriangleIcon className="w-4 h-4" /> Not Eligible</span>}
+                  </div>
+                  {!elig.eligible && (
+                    <p className="text-[11px] text-red-600 pt-0.5">
+                      {elig.duplicate ? 'A Comp Off already exists for this date.'
+                        : !elig.hasAttendance ? 'No valid attendance found for this date.'
+                        : `Minimum required: ${elig.minHours}h.`}
+                    </p>
+                  )}
+                </div>
+              ) : <p className="text-gray-400">Select a date to check eligibility.</p>}
+            </div>
+          )}
+
+          <div><label className="block text-xs font-semibold text-gray-600 mb-1">Work Performed / Work Report {!isHR && <span className="text-red-500">*</span>}</label>
+            <textarea rows={3} className={`${inp} h-auto py-2 resize-y`} value={f.workReport} onChange={e => setF(p => ({ ...p, workReport: e.target.value }))} placeholder="Describe the work completed on this date." /></div>
+
+          {isHR && (
             <div><label className="block text-xs font-semibold text-gray-600 mb-1">Holiday Name</label>
               <input className={inp} value={f.holidayName} onChange={e => setF(p => ({ ...p, holidayName: e.target.value }))} placeholder="optional" /></div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Supporting Evidence <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input type="file" className="block w-full text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:font-semibold hover:file:bg-indigo-100" onChange={e => uploadEvidence(e.target.files?.[0])} />
+            {uploading && <p className="text-[11px] text-gray-400 mt-1">Uploading…</p>}
+            {evidenceName && !uploading && <p className="text-[11px] text-emerald-600 mt-1">Attached: {evidenceName}</p>}
           </div>
-          <div><label className="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
-            <input className={inp} value={f.reason} onChange={e => setF(p => ({ ...p, reason: e.target.value }))} placeholder="e.g. Worked on deployment / holiday" /></div>
+
           {isHR && (
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input type="checkbox" checked={f.grant} onChange={e => setF(p => ({ ...p, grant: e.target.checked }))} />
@@ -146,8 +219,9 @@ function VerifyAttendanceModal({ id, onClose }) {
               {v.attendanceFound ? (
                 <>
                   <Row label="Status"><span className="capitalize">{a.status || '—'}</span></Row>
-                  <Row label="In Time">{a.inTime || '—'}</Row>
-                  <Row label="Out Time">{a.outTime || '—'}</Row>
+                  <Row label="Shift">{v.shift?.name ? `${v.shift.name}${v.shift.start ? ` (${v.shift.start}–${v.shift.end})` : ''}` : '—'}</Row>
+                  <Row label="First Punch">{v.firstPunch || a.inTime || '—'}</Row>
+                  <Row label="Last Punch">{v.lastPunch || a.outTime || '—'}</Row>
                   <Row label="All Punches">{a.punches?.length ? a.punches.join(', ') : '—'}</Row>
                   <Row label="Source">{a.source || '—'}</Row>
                 </>
@@ -155,6 +229,19 @@ function VerifyAttendanceModal({ id, onClose }) {
                 <div className="flex items-center gap-2 text-sm text-red-700"><ExclamationTriangleIcon className="w-4 h-4" /> No attendance record exists for this date.</div>
               )}
             </div>
+
+            {/* Work report + supporting evidence (manual requests) */}
+            {(v.workReport || v.evidenceUrl) && (
+              <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Work Report</p>
+                <p className="text-sm text-gray-800 whitespace-pre-wrap">{v.workReport || '—'}</p>
+                {v.evidenceUrl && (
+                  <a href={v.evidenceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-indigo-600 hover:underline">
+                    <EyeIcon className="w-4 h-4" /> View Supporting Evidence
+                  </a>
+                )}
+              </div>
+            )}
 
             {/* Working hours */}
             {v.attendanceFound && (

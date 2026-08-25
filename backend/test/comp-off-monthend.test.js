@@ -77,8 +77,9 @@ beforeEach(() => { orig = { glo: d365.getListOptional, gl: d365.getList, cr: d36
 afterEach(() => { d365.getListOptional = orig.glo; d365.getList = orig.gl; d365.create = orig.cr; payrollSettings.getResolved = orig.gr; });
 
 // ── compOffDaysForHours (pure) ──
-test('compOffDaysForHours: 5:00→0, 5:01→0.5, 6:00→0.5, 7:59→0.5, 8:00→1, 9:00→1', () => {
-  assert.strictEqual(compOff.compOffDaysForHours(5.0), 0);
+test('compOffDaysForHours: 4:59→0, 5:00→0.5, 6:00→0.5, 7:59→0.5, 8:00→1, 9:00→1', () => {
+  assert.strictEqual(compOff.compOffDaysForHours(5 - 1 / 60), 0);   // 4h 59m → not eligible
+  assert.strictEqual(compOff.compOffDaysForHours(5.0), 0.5);        // exactly 5h → eligible (new rule)
   assert.strictEqual(compOff.compOffDaysForHours(5 + 1 / 60), 0.5);
   assert.strictEqual(compOff.compOffDaysForHours(6.0), 0.5);
   assert.strictEqual(compOff.compOffDaysForHours(7 + 59 / 60), 0.5);
@@ -94,11 +95,17 @@ test('1. normal weekday + 8h → NO comp-off (regular work)', async () => {
   assert.strictEqual(s.fullCompOff + s.halfCompOff, 0);
   assert.strictEqual(store.length, 0);
 });
-test('2. Holiday + 5:00 → 0', async () => {
-  setup({ attendance: [att(HOLIDAY, { eff: 5 })] });
+test('2a. Holiday + 4:59 → 0 (below the 5h minimum)', async () => {
+  setup({ attendance: [att(HOLIDAY, { eff: 5 - 1 / 60 })] });
   const s = await compOff.scanMonthCompOff({ month: 7, year: 2026 });
   assert.strictEqual(store.length, 0);
   assert.strictEqual(s.ineligibleDays, 1);
+});
+test('2b. Holiday + 5:00 → 0.5 (exactly 5h is eligible)', async () => {
+  setup({ attendance: [att(HOLIDAY, { eff: 5 })] });
+  const s = await compOff.scanMonthCompOff({ month: 7, year: 2026 });
+  assert.strictEqual(s.halfCompOff, 1);
+  assert.strictEqual(Number(store[0].hr_days), 0.5);
 });
 test('3. Holiday + 5:01 → 0.5', async () => {
   setup({ attendance: [att(HOLIDAY, { eff: 5 + 1 / 60 })] });
