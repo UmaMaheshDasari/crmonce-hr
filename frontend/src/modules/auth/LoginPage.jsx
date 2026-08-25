@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import logoImg from '../../assets/hero.png';
+import logoImg from '../../assets/crmonce-logo.png';
 
 const MicrosoftIcon = () => (
   <svg width="20" height="20" viewBox="0 0 21 21" fill="none">
@@ -52,8 +52,8 @@ export default function LoginPage() {
         {/* Content */}
         <div className="relative z-10 flex flex-col items-center text-center px-12 max-w-lg">
           {/* Logo */}
-          <div className="mb-8 w-48 h-48 flex items-center justify-center">
-            <img src={logoImg} alt="CRMONCE" className="w-full h-full object-contain drop-shadow-2xl" />
+          <div className="mb-8 bg-white rounded-2xl px-6 py-4 shadow-2xl">
+            <img src={logoImg} alt="CRMONCE" className="w-56 h-auto object-contain" />
           </div>
 
           {/* Company Name */}
@@ -102,7 +102,7 @@ export default function LoginPage() {
       <div className="flex-1 flex flex-col">
         {/* Mobile header */}
         <div className="lg:hidden flex items-center justify-center gap-3 px-6 pt-8 pb-2">
-          <img src={logoImg} alt="CRMONCE" className="w-12 h-12 object-contain" />
+          <img src={logoImg} alt="CRMONCE" className="h-9 w-auto object-contain" />
           <div>
             <div className="text-lg font-bold tracking-wide">
               <span style={{ color: '#E84C88' }}>CRM</span>
