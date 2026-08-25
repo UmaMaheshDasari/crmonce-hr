@@ -32,7 +32,7 @@ export default function MonthlyBalanceCard({ employeeId }) {
     queryFn: () => attendanceApi.monthlyBalance({ year, month, ...(employeeId ? { employeeId } : {}) }).then(r => r.data),
   });
 
-  const bal = Number(data?.monthlyBalance || 0);
+  const diff = Number(data?.monthlyDifference || 0);
   const shortage = Number(data?.shortageHours || 0);
 
   return (
@@ -55,31 +55,40 @@ export default function MonthlyBalanceCard({ employeeId }) {
         <p className="text-sm text-gray-400 py-6 text-center">Calculating…</p>
       ) : (
         <>
-          {/* Day counts — attended days feed the hour balance; absent days feed day-based LOP */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
-            <Stat label="Present Days" value={Number(data?.presentDays ?? 0)} tone="text-emerald-700" />
-            <Stat label="Half Days" value={Number(data?.halfDays ?? 0)} tone="text-amber-700" />
-            <Stat label="Absent Days" value={Number(data?.absentDays ?? 0)} tone={data?.absentDays > 0 ? 'text-red-600' : 'text-gray-800'} />
-            <Stat label="Approved Leave" value={Number(data?.approvedLeaveDays ?? 0)} tone="text-sky-700" />
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <Stat label="Required Hrs" value={hrs(data?.requiredHours)} />
-            <Stat label="Worked Hrs" value={hrs(data?.actualWorkedHours)} />
-            <Stat label="Leave Hrs" value={hrs(data?.approvedLeaveHours)} tone="text-sky-700" />
-            <Stat label="Overtime" value={hrs(data?.overtime)} tone="text-violet-700" />
-            <Stat label="Effective Hrs" value={hrs(data?.effectiveHours)} tone="text-emerald-700" />
-            <Stat label="Monthly Balance" value={signed(bal)} tone={bal < 0 ? 'text-red-600' : 'text-emerald-700'} />
+          {/* Required hours — Working Days × 9, reduced by approved leave */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <Stat label="Working Days" value={Number(data?.workingDays ?? 0)} />
+            <Stat label="Base Required" value={hrs(data?.baseRequiredHours)} />
+            <Stat label="Approved Leave" value={hrs(data?.approvedLeaveHours)} tone="text-sky-700" />
+            <Stat label="Final Required" value={hrs(data?.finalRequiredHours)} tone="text-indigo-700" />
           </div>
 
-          {/* Shortage → exact-hours salary deduction (no LOP days, no carry-forward) */}
-          <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-3 gap-2">
+          {/* Actual attendance — present + half days, ACTUAL punch hours */}
+          <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <Stat label="Present Days" value={Number(data?.presentDays ?? 0)} tone="text-emerald-700" />
+            <Stat label="Present Hours" value={hrs(data?.presentWorkedHours)} tone="text-emerald-700" />
+            <Stat label="Half Days" value={Number(data?.halfDays ?? 0)} tone="text-amber-700" />
+            <Stat label="Half-Day Hours" value={hrs(data?.halfWorkedHours)} tone="text-amber-700" />
+          </div>
+
+          {/* Total worked vs final required → the monthly difference */}
+          <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-2">
+            <Stat label="Total Worked" value={hrs(data?.totalWorkedHours)} tone="text-gray-900" />
+            <Stat label="Monthly Difference" value={signed(diff)} tone={diff < 0 ? 'text-red-600' : 'text-emerald-700'} />
+          </div>
+
+          {/* Shortage → exact-hours salary deduction (absent days are separate LOP) */}
+          <div className="mt-2 grid grid-cols-3 gap-2">
             <Stat label="Shortage Hrs" value={hrs(shortage)} tone={shortage > 0 ? 'text-red-600' : 'text-gray-800'} />
             <Stat label="Hourly Rate" value={data?.hourlyRate == null ? '—' : rupees(data.hourlyRate)} />
             <Stat label="Salary Deduction" value={rupees(data?.salaryDeduction)} tone={data?.salaryDeduction > 0 ? 'text-red-600' : 'text-gray-800'} />
           </div>
+          {data?.absentDays > 0 && (
+            <p className="text-[11px] text-red-500 mt-2">{data.absentDays} absent day(s) — handled separately as LOP (not part of the hourly shortage).</p>
+          )}
 
           <p className="text-[11px] text-gray-400 mt-3">
-            Each month is independent — no carry-forward (positive, negative or overtime never carries). Daily balance = worked − expected (Full 9h / Half 5h). Approved leave, holidays and weekly-offs expect 0h; Late Login never reduces hours; overtime is not double-counted. A negative balance is deducted as exact hours × the existing hourly rate (no half/full-day LOP); payroll computes the authoritative amount.
+            Monthly hours are calculated independently. Working days × 9 hours gives the base required hours. Approved leave reduces the required hours. Present and half-day hours use actual punch hours. The monthly difference is Total Worked Hours − Final Required Hours. Positive hours do not carry forward. Negative hours are deducted using the employee's hourly rate. Absent days are handled separately as LOP.
           </p>
         </>
       )}

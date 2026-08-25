@@ -85,10 +85,10 @@ test('July 2026 monthly balance is empty (0 carry into August); no writes', asyn
   };
   try {
     const r = await buildMonthlyBalance({ employeeId: 'e', year: 2026, month: 7 });
-    assert.equal(r.days.length, 0);      // no pre-cutoff day enters the new calc
-    assert.equal(r.effectiveHours, 0);
-    assert.equal(r.requiredHours, 0);
-    assert.equal(r.monthlyBalance, 0);   // pre-cutoff month is empty; August starts fresh
+    assert.equal(r.workingDays, 0);      // no pre-cutoff day enters the new calc
+    assert.equal(r.totalWorkedHours, 0);
+    assert.equal(r.finalRequiredHours, 0);
+    assert.equal(r.monthlyDifference, 0); // pre-cutoff month is empty; August starts fresh
     assert.equal(r.shortageHours, 0);
   } finally {
     Object.assign(d365, { getList: orig.gl, create: orig.cr, update: orig.up, delete: orig.del });
@@ -98,12 +98,12 @@ test('July 2026 monthly balance is empty (0 carry into August); no writes', asyn
 
 // ── September does NOT carry August (each month is independent — NO carry-forward) ──
 test('September is independent — August shortage is NOT carried forward', async () => {
-  const { rollupMonthlyBalance } = require('../src/services/monthly-balance.service');
+  const { computeMonthlySummary } = require('../src/services/monthly-balance.service');
   // August ended at a 3h shortage — irrelevant to September.
-  const aug = rollupMonthlyBalance([{ worked: 197, expected: 200 }]);
-  assert.equal(aug.monthlyBalance, -3);
-  // September computed on its own data only; no August balance is fed in or added.
-  const sep = rollupMonthlyBalance([{ worked: 180, expected: 180 }]);
-  assert.equal(sep.monthlyBalance, 0);          // starts fresh at 0, not -3
+  const aug = computeMonthlySummary({ workingDays: 22, presentWorkedHours: 195 });
+  assert.equal(aug.monthlyDifference, -3);      // 195 worked − 198 required
+  // September computed on its own data only; no August difference is fed in or added.
+  const sep = computeMonthlySummary({ workingDays: 20, presentWorkedHours: 180 });
+  assert.equal(sep.monthlyDifference, 0);       // starts fresh at 0, not -3
   assert.ok(!('previousCarryForward' in sep) && !('carryForward' in sep));
 });

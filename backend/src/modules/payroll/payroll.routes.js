@@ -247,7 +247,7 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       let presentDaysStore = att.presentDays, absentDaysStore = att.absentDays, payDaysStore = att.payDays;
       if (useNewRules && rules.enableMonthlyHourBalance !== false) {
         const bal = await monthlyBalance.buildMonthlyBalance({ employeeId: emp.hr_hremployeeid, year, month });
-        monthlyHourBalance = bal.monthlyBalance; shortageHours = bal.shortageHours;
+        monthlyHourBalance = bal.monthlyDifference; shortageHours = bal.shortageHours;
         // Absent LOP = truly-absent working days only (half/short attended days are NOT
         // day-LOP'd here — they flow through the hour balance instead).
         lopDaysForEngine = rules.absentCreatesLop !== false ? bal.absentDays : 0;

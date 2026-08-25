@@ -1,26 +1,26 @@
 /**
  * Monthly Attendance Hour Balance (independent per month — NO carry-forward).
  *
- * Each calendar month stands alone:
- *   Daily Balance   = Actual Effective Hours − Daily Expected Hours
- *   Monthly Balance = Σ Daily Balance  (= Effective Worked Hours − Required Hours)
- * There is NO carry-forward: a month never uses the previous or next month's balance,
- * and neither a positive surplus nor a negative shortage moves between months.
+ * SIMPLE, transparent monthly calculation from ACTUAL attendance punches:
+ *   Base Required Hours  = Working Days × 9h            (every scheduled working day = 9h)
+ *   Approved Leave Hours = full leave × 9h + half leave × 5h   (reduces the requirement)
+ *   Final Required Hours = Base Required − Approved Leave Hours − (Absent Days × 9h)
+ *   Total Worked Hours   = Σ actual punch hours of Present days + Half days
+ *   Monthly Difference   = Total Worked Hours − Final Required Hours
+ *   Shortage Hours       = max(0, −Monthly Difference)
+ *   Salary Deduction     = Shortage Hours × existing hourly rate
  *
- * Daily expected hours:
- *   - Full Day (present)   → 9h   (from computeSession.expectedHours)
- *   - Half Day (half_day)  → 5h
- *   - Approved leave day   → 0h   (requirement removed — approved leave never causes a shortage)
- *   - Holiday / Weekly-off → 0h
- *   - Absent working day   → 9h   (full-day expectation → a real shortage)
- *
- * Overtime is NOT added separately — extra hours already raise the balance through
- * (worked − expected); the Overtime figure is reporting only (never double-counted).
- * Late Login never reduces effective hours (attendance calc is unchanged).
- *
- * Salary: a NEGATIVE monthly balance is deducted as EXACT hours × the existing hourly
- * salary rate. There is NO half-day / full-day LOP conversion. A zero/positive balance
- * deducts nothing. Historical dates use the shift effective on that date (shift history).
+ * NOTES:
+ *  - "Actual punch hours" = computeSession.effectiveHours (span − breaks). Late arrival is
+ *    NEVER subtracted again — the real worked duration is used as-is.
+ *  - A Half-worked day still REQUIRES a full 9h (via Base Required); it only CREDITS its
+ *    actual punch hours — it is not forced to 5h.
+ *  - ABSENT (scheduled working day, no punch, no approved leave) is a SEPARATE day-based
+ *    LOP category (existing payroll mechanism); its hours are removed from Final Required
+ *    so an absent day is never double-counted (LOP + hourly shortage).
+ *  - NO Effective-Hours line, NO Overtime, NO carry-forward feed this calculation. Overtime
+ *    stays a separate payroll figure and does NOT affect the Monthly Difference.
+ *  - Historical dates use the shift effective on that date (shift history).
  *
  * EFFECTIVE DATE: only attendance on/after company.policy.newRulesFrom (2026-08-01) is
  * counted; pre-cutoff days never enter this calc, so August 2026 starts fresh.
@@ -42,38 +42,23 @@ const pad2 = (n) => String(n).padStart(2, '0');
 const fullDayExpected = () => policy.attendance.fullDayExpectedHours();
 
 /**
- * PURE roll-up: accumulate per-day rows into the month's independent balance. No I/O,
- * no carry-forward — the month starts at 0.
- * @param {Array<{date?:string,type?:string,worked:number,span?:number,expected:number,overtime?:number,leaveHours?:number}>} days
- *   worked     effective hours actually worked that day (0 if none)
- *   span       gross clocked hours (defaults to worked when omitted)
- *   expected   hours expected that day (0 for holiday/weekly-off/approved leave)
- *   overtime   overtime hours that day (display only — NOT re-added to the balance)
- *   leaveHours expected hours REMOVED by approved leave that day (reporting only)
+ * PURE monthly summary from already-aggregated inputs. No I/O, no carry-forward.
+ *   Base Required   = Working Days × fullDayExpected (9)
+ *   Final Required  = Base − Approved Leave Hours − (Absent Days × 9)   [absent → separate LOP]
+ *   Total Worked    = Present punch hours + Half-day punch hours
+ *   Difference      = Total Worked − Final Required
+ *   Shortage        = max(0, −Difference)
+ * @param {{workingDays:number, approvedLeaveHours:number, absentDays:number,
+ *          presentWorkedHours:number, halfWorkedHours:number, fullDayExpected?:number}} p
  */
-function rollupMonthlyBalance(days = []) {
-  let worked = 0, span = 0, expected = 0, overtime = 0, leaveHours = 0;
-  const series = [];
-  for (const d of days) {
-    const w = num(d.worked), e = num(d.expected);
-    worked = round2(worked + w);
-    span = round2(span + (d.span != null ? num(d.span) : w));
-    expected = round2(expected + e);
-    overtime = round2(overtime + num(d.overtime));
-    leaveHours = round2(leaveHours + num(d.leaveHours));
-    series.push({ date: d.date || null, type: d.type || 'working', worked: w, expected: e, overtime: num(d.overtime), dailyBalance: round2(w - e) });
-  }
-  const monthlyBalance = round2(worked - expected);
-  return {
-    requiredHours: expected,           // adjusted: approved-leave days already contribute 0
-    approvedLeaveHours: leaveHours,
-    actualWorkedHours: span,           // gross clocked
-    effectiveHours: worked,            // net — drives the balance
-    overtime,
-    monthlyBalance,                    // Effective − Required (this month only)
-    shortageHours: monthlyBalance < 0 ? round2(-monthlyBalance) : 0,   // exact hours only; no LOP days
-    days: series,
-  };
+function computeMonthlySummary({ workingDays = 0, approvedLeaveHours = 0, absentDays = 0, presentWorkedHours = 0, halfWorkedHours = 0, fullDayExpected = 9 } = {}) {
+  const fd = num(fullDayExpected) || 9;
+  const baseRequiredHours = round2(num(workingDays) * fd);
+  const finalRequiredHours = Math.max(0, round2(baseRequiredHours - num(approvedLeaveHours) - num(absentDays) * fd));
+  const totalWorkedHours = round2(num(presentWorkedHours) + num(halfWorkedHours));
+  const monthlyDifference = round2(totalWorkedHours - finalRequiredHours);
+  const shortageHours = monthlyDifference < 0 ? round2(-monthlyDifference) : 0;
+  return { baseRequiredHours, approvedLeaveHours: round2(approvedLeaveHours), finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours };
 }
 
 /** First-ever attendance date (min hr_date) — clamps the month so days before an
@@ -138,43 +123,49 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
   const graceMin = await resolveGraceMinutes();
   const nowMin = (() => { const [h, mi] = String(time.istHHMM() || '00:00').split(':').map(Number); return (h || 0) * 60 + (mi || 0); })();
 
-  const days = [];
-  let presentDays = 0, halfDays = 0, absentDays = 0, approvedLeaveDays = 0;
+  const fd = fullDayExpected();   // 9 (configurable via Company Settings)
+  let workingDays = 0, presentDays = 0, presentWorkedHours = 0, halfDays = 0, halfWorkedHours = 0;
+  let absentDays = 0, approvedLeaveDays = 0, approvedLeaveHours = 0;
   const end = new Date(`${capTo}T00:00:00Z`);
   for (let d = new Date(`${effFrom}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
     const dow = d.getUTCDay();
+
+    // Holiday / Weekly-off → NOT a scheduled working day (excluded from Working Days).
+    if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(dow)) continue;
+
     const shift = shiftResolver.forDate(ds);
     const rec = recByDate.get(ds);
     const worked = rec ? computeSession(punchesFromRecord(rec), shift, { graceMinutes: shift.grace, date: ds }) : null;
 
-    // Holiday / Weekly-off → expected 0 (never a shortage). Any work done still counts.
-    if (attnCfg.holidays.includes(ds) || attnCfg.weekOffDays.includes(dow)) {
-      days.push({ date: ds, type: attnCfg.holidays.includes(ds) ? 'holiday' : 'weekoff', worked: worked ? worked.effectiveHours : 0, span: worked ? worked.totalSpanHours : 0, expected: 0, overtime: worked ? worked.overtimeHours : 0, leaveHours: 0 });
-      continue;
-    }
-    // Approved leave → requirement removed (expected 0). Never Absent, never a shortage.
-    if (leaveMap.has(ds)) {
-      approvedLeaveDays++;
-      days.push({ date: ds, type: 'leave', worked: worked ? worked.effectiveHours : 0, span: worked ? worked.totalSpanHours : 0, expected: 0, overtime: worked ? worked.overtimeHours : 0, leaveHours: fullDayExpected() });
-      continue;
-    }
-    // ATTENDED working day (has a punch) → the day's status expected (5 or 9); its shortfall
-    // is handled by the monthly HOUR balance. ABSENT (no punch, no leave) → counted as an
-    // Absent DAY only (day-based LOP downstream) and EXCLUDED from the hour balance, so an
-    // absent day is never double-counted (day-LOP + hour-shortage). Today before shift+grace
-    // is Pending (skipped).
+    // Today, before shift-start + grace, is Pending — not yet a scheduled/countable day.
+    if (!worked && ds === today && !gracePassedToday(shift, graceMin, nowMin)) continue;
+
+    workingDays++;   // a scheduled working day (present / half / approved-leave / absent)
+
+    // Approved leave → reduces the required hours (full day 9h, half day 5h). Never worked,
+    // never Absent, never LOP. (Half-day leave, if ever introduced, would remove 5h.)
+    if (leaveMap.has(ds)) { approvedLeaveDays++; approvedLeaveHours += fd; continue; }
+
     if (worked) {
-      if (worked.status === 'half_day') halfDays++; else if (worked.status === 'present') presentDays++;
-      days.push({ date: ds, type: 'working', worked: worked.effectiveHours, span: worked.totalSpanHours, expected: worked.expectedHours, overtime: worked.overtimeHours, leaveHours: 0 });
+      // ATTENDED: credit ACTUAL punch hours (effective = span − breaks). A Half day still
+      // required a full 9h (via Base Required) but only credits its real hours.
+      if (worked.status === 'half_day') { halfDays++; halfWorkedHours += num(worked.effectiveHours); }
+      else { presentDays++; presentWorkedHours += num(worked.effectiveHours); }   // present (or any punched day)
     } else {
-      if (ds === today && !gracePassedToday(shift, graceMin, nowMin)) continue;   // pending, not yet Absent
-      absentDays++;   // day-based LOP handles this; NOT part of the hour balance
+      absentDays++;   // scheduled working day, no punch, no approved leave → day-based LOP (separate)
     }
   }
 
-  const rolled = rollupMonthlyBalance(days);
-  return { year: y, month: m, ...rolled, presentDays, halfDays, absentDays, approvedLeaveDays };
+  const summary = computeMonthlySummary({ workingDays, approvedLeaveHours, absentDays, presentWorkedHours, halfWorkedHours, fullDayExpected: fd });
+  return {
+    year: y, month: m,
+    workingDays,
+    presentDays, presentWorkedHours: round2(presentWorkedHours),
+    halfDays, halfWorkedHours: round2(halfWorkedHours),
+    absentDays, approvedLeaveDays,
+    ...summary,   // baseRequiredHours, approvedLeaveHours, finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours
+  };
 }
 
 /**
@@ -206,4 +197,4 @@ async function estimateSalaryDeduction({ employeeId, year, month, shortageHours 
   } catch { return { shortageHours: sh, hourlyRate: null, salaryDeduction: null }; }
 }
 
-module.exports = { rollupMonthlyBalance, buildMonthlyBalance, estimateSalaryDeduction, firstAttendanceDate };
+module.exports = { computeMonthlySummary, buildMonthlyBalance, estimateSalaryDeduction, firstAttendanceDate };
