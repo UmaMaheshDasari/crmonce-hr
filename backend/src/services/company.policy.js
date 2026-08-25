@@ -60,16 +60,43 @@ const envProvider = {
   },
 };
 
+// DB provider: read the attendance thresholds from the admin-configured Company/
+// Payroll Settings (source of truth). Synchronous by design — it reads the last
+// RESOLVED settings snapshot (payroll-settings.peekResolved), warmed at startup and
+// refreshed on save. Falls back to env/DEFAULTS until the snapshot is warmed, so the
+// engine never breaks. Lazy require avoids any load-order cycle.
+const dbProvider = {
+  name: 'db',
+  load() {
+    const env = envProvider.load();   // env overrides still respected as a base layer
+    try {
+      const ps = require('./payroll-settings.service');
+      const resolved = ps.peekResolved && ps.peekResolved();
+      const a = resolved && resolved.attendanceRules;
+      if (!a) return env;              // not warmed yet → env/defaults
+      return {
+        ...env,
+        fullDayMinHours: a.fullDayMinHours,
+        halfDayMinHours: a.halfDayMinHours,
+        fullDayExpectedHours: a.fullDayExpectedHours,
+        halfDayExpectedHours: a.halfDayExpectedHours,
+        newAttendanceRulesFrom: a.effectiveDate,
+        graceMinutes: (resolved.lateLogin && resolved.lateLogin.graceMinutes) || env.graceMinutes,
+      };
+    } catch { return env; }
+  },
+};
+
 let provider = envProvider;
 let cache = null;
 
-/** Swap the source (e.g. a future DbProvider). Providers may load() sync or seed the cache. */
+/** Swap the source (e.g. the DbProvider). Providers may load() sync or seed the cache. */
 function setProvider(p) { provider = p || envProvider; cache = null; }
 function reload() { cache = { ...DEFAULTS, ...(provider.load ? provider.load() : {}) }; return cache; }
 function settings() { return cache || reload(); }
 
 module.exports = {
-  setProvider, reload, settings,
+  setProvider, reload, settings, dbProvider,
   _defaults: DEFAULTS,
   // Attendance Engine reads ONLY these (thresholds; fall back to the shift).
   attendance: {

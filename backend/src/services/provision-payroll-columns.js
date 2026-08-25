@@ -24,6 +24,7 @@ const COLUMNS = [
   int('hr_Gross', 'Gross Salary'),
   int('hr_Overtime', 'Overtime Pay'),
   int('hr_LOP', 'LOP Amount'),
+  int('hr_HourDeduction', 'Hourly Shortage Deduction'),   // exact-hours attendance deduction (₹)
   int('hr_Advance', 'Advance Salary Recovery'),
   // Itemised earnings (from the Salary Structure) — payslip renders these.
   int('hr_HRA', 'House Rent Allowance'),

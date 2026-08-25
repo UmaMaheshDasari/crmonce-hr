@@ -179,6 +179,7 @@ export const payrollSettingsApi = {
   get: () => api.get('/payroll/settings'),
   update: (data) => api.put('/payroll/settings', data),
   diagnose: () => api.get('/payroll/settings/_diagnose'),
+  history: (params) => api.get('/payroll/settings/history', { params }),   // append-only setting change log
 };
 
 // ── Advance Salary (request → approve → EMI recovery) ──

@@ -1,11 +1,12 @@
 /**
- * Phase 2 — Monthly cumulative hour balance.
+ * Monthly hour balance — INDEPENDENT per month, NO carry-forward.
  *
- *   Daily Balance   = effective worked − daily expected (Full 9h / Half 5h)
- *   Running Balance = previous carry forward + Σ daily balance
+ *   Daily balance   = effective worked − daily expected (Full 9h / Half 5h)
+ *   Monthly balance = Σ daily balance  (= effective − required)  — this month only
  *   Approved leave / holiday / weekly-off → expected 0 (no shortage)
- *   Overtime raises the balance via (worked − expected) and is NOT re-added
- * No 'incomplete'. Historical dates use the shift effective on that date.
+ *   Overtime raises the balance via (worked − expected); NEVER re-added, NEVER carried
+ *   Negative balance → shortage hours (exact); deducted as hours × existing hourly rate
+ * No carry-forward, no LOP days, no 'incomplete'. Historical dates use the date's shift.
  */
 process.env.NODE_ENV = 'test';
 process.env.AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID || 'x';
@@ -15,142 +16,164 @@ process.env.AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || 'x';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const mb = require('../src/services/monthly-balance.service');
-const { rollupMonthlyBalance, buildMonthlyBalance } = mb;
+const { rollupMonthlyBalance, buildMonthlyBalance, estimateSalaryDeduction } = mb;
 
-// ── Pure roll-up — the spec's worked examples ─────────────────────────
-test('10 + 10 + 7 = 27, required 27 → balance 0', () => {
-  const r = rollupMonthlyBalance([
-    { worked: 10, expected: 9 }, { worked: 10, expected: 9 }, { worked: 7, expected: 9 },
-  ]);
+// ── Daily Full/Half examples (spec 1–4) via single-day months ─────────
+test('1. 10h Full Day → expected 9, balance +1', () => {
+  const r = rollupMonthlyBalance([{ worked: 10, expected: 9 }]);
+  assert.equal(r.monthlyBalance, 1);
+});
+test('2. 7h Full Day → expected 9, balance -2', () => {
+  const r = rollupMonthlyBalance([{ worked: 7, expected: 9 }]);
+  assert.equal(r.monthlyBalance, -2);
+  assert.equal(r.shortageHours, 2);
+});
+test('3. 6h Half Day → expected 5, balance +1', () => {
+  assert.equal(rollupMonthlyBalance([{ worked: 6, expected: 5 }]).monthlyBalance, 1);
+});
+test('4. 5h Half Day → expected 5, balance 0', () => {
+  const r = rollupMonthlyBalance([{ worked: 5, expected: 5 }]);
+  assert.equal(r.monthlyBalance, 0);
+  assert.equal(r.shortageHours, 0);
+});
+
+// ── Monthly examples (spec 5–6) ───────────────────────────────────────
+test('5. 10 + 10 + 7 → worked 27, required 27, balance 0', () => {
+  const r = rollupMonthlyBalance([{ worked: 10, expected: 9 }, { worked: 10, expected: 9 }, { worked: 7, expected: 9 }]);
   assert.equal(r.effectiveHours, 27);
   assert.equal(r.requiredHours, 27);
-  assert.equal(r.currentBalance, 0);
-  assert.equal(r.finalShortage, 0);
+  assert.equal(r.monthlyBalance, 0);
+  assert.equal(r.shortageHours, 0);
 });
-
-test('6 + 7: required 5 + 9 = 14, worked 13 → balance -1', () => {
-  const r = rollupMonthlyBalance([
-    { worked: 6, expected: 5 },   // Half Day
-    { worked: 7, expected: 9 },   // Full Day
-  ]);
+test('6. 6 + 7 → worked 13, required 14, balance -1', () => {
+  const r = rollupMonthlyBalance([{ worked: 6, expected: 5 }, { worked: 7, expected: 9 }]);
   assert.equal(r.requiredHours, 14);
   assert.equal(r.effectiveHours, 13);
-  assert.equal(r.currentBalance, -1);
-  assert.equal(r.finalShortage, 1);
+  assert.equal(r.monthlyBalance, -1);
+  assert.equal(r.shortageHours, 1);
 });
 
-test('running balance carries across days (+1, +1, -2 → 0)', () => {
+// ── Approved leave (spec 7–8) ─────────────────────────────────────────
+test('7. approved full-day leave removes 9h requirement → no shortage', () => {
+  // 21 full days worked exactly to spec + 1 leave day (expected 0).
   const r = rollupMonthlyBalance([
-    { worked: 10, expected: 9 }, { worked: 10, expected: 9 }, { worked: 7, expected: 9 },
-  ]);
-  assert.deepEqual(r.days.map((d) => d.runningBalance), [1, 2, 0]);
-});
-
-test('previous carry forward is included', () => {
-  const r = rollupMonthlyBalance([{ worked: 7, expected: 9 }], { previousCarryForward: 5 });
-  assert.equal(r.previousCarryForward, 5);
-  assert.equal(r.currentBalance, 3);   // 5 + (7 − 9)
-});
-
-test('approved leave removes expected hours → no shortage', () => {
-  const r = rollupMonthlyBalance([
+    { worked: 9, expected: 9 }, { worked: 9, expected: 9 },
+    { type: 'leave', worked: 0, expected: 0, leaveHours: 9 },
     { worked: 9, expected: 9 },
-    { worked: 9, expected: 9 },
-    { type: 'leave', worked: 0, expected: 0, leaveHours: 9 },   // requirement removed
-    { worked: 11, expected: 9 },
   ]);
   assert.equal(r.approvedLeaveHours, 9);
-  assert.equal(r.requiredHours, 27);          // the leave day contributes 0, not 9
-  assert.equal(r.effectiveHours, 29);
-  assert.equal(r.currentBalance, 2);          // +2, no shortage from the leave day
-  assert.equal(r.finalShortage, 0);
+  assert.equal(r.requiredHours, 27);        // leave day contributes 0, not 9
+  assert.equal(r.monthlyBalance, 0);
+  assert.equal(r.shortageHours, 0);
+});
+test('8. approved leave + overwork → positive, no deduction', () => {
+  const r = rollupMonthlyBalance([{ worked: 12, expected: 9 }, { type: 'leave', worked: 0, expected: 0, leaveHours: 9 }]);
+  assert.equal(r.monthlyBalance, 3);
+  assert.equal(r.shortageHours, 0);
 });
 
-test('overtime recovers a shortage and is NOT double-counted', () => {
-  const r = rollupMonthlyBalance([{ worked: 14, expected: 9, overtime: 5 }], { previousCarryForward: -3 });
-  assert.equal(r.currentBalance, 2);   // -3 + (14 − 9) = +2 (NOT +2 + 5)
-  assert.equal(r.overtime, 5);         // reported for display only
-  assert.equal(r.finalShortage, 0);
+// ── Late Login (spec 9): effective hours already exclude nothing extra ─
+test('9. late-but-8h day counts full effective hours (late never deducts)', () => {
+  const r = rollupMonthlyBalance([{ worked: 8, expected: 9 }]);   // arrived late but worked 8h effective
+  assert.equal(r.effectiveHours, 8);   // late minutes are NOT subtracted here
+  assert.equal(r.monthlyBalance, -1);
 });
 
-test('holiday / weekly-off create no shortage (expected 0)', () => {
-  const r = rollupMonthlyBalance([
-    { type: 'holiday', worked: 0, expected: 0 },
-    { type: 'weekoff', worked: 0, expected: 0 },
-    { worked: 9, expected: 9 },
-  ]);
-  assert.equal(r.requiredHours, 9);
-  assert.equal(r.currentBalance, 0);
-  assert.equal(r.finalShortage, 0);
+// ── NO carry-forward (spec 10, 11, 12, 19) ────────────────────────────
+test('10/11/12. result carries NO forward/backward balance fields', () => {
+  const r = rollupMonthlyBalance([{ worked: 15, expected: 9, overtime: 6 }]);   // +6, incl overtime
+  assert.equal(r.monthlyBalance, 6);
+  assert.equal(r.overtime, 6);
+  assert.ok(!('carryForward' in r));
+  assert.ok(!('previousCarryForward' in r));
+  assert.ok(!('lopDays' in r));           // no LOP-days mechanism
+  assert.ok(!('runningBalance' in (r.days[0] || {})));   // no cumulative running balance
+});
+test('overtime is not double-counted (balance = worked − expected only)', () => {
+  const r = rollupMonthlyBalance([{ worked: 14, expected: 9, overtime: 5 }]);
+  assert.equal(r.monthlyBalance, 5);      // 14 − 9, NOT 14 − 9 + 5
 });
 
-test('actualWorkedHours (gross) vs effectiveHours (net) tracked separately', () => {
-  const r = rollupMonthlyBalance([{ worked: 8, span: 9, expected: 9 }]);   // 1h break
-  assert.equal(r.actualWorkedHours, 9);
-  assert.equal(r.effectiveHours, 8);
-  assert.equal(r.currentBalance, -1);
+// ── Exact-hour shortage (spec 13–16) ──────────────────────────────────
+for (const [worked, expected, shortage] of [[8, 9, 1], [4, 9, 5], [2, 9, 7], [10.5 - 9 + 0, 0, 0]]) {
+  if (shortage === 0) continue;
+  test(`shortage: ${expected - worked}h → shortageHours ${shortage}`, () => {
+    assert.equal(rollupMonthlyBalance([{ worked, expected }]).shortageHours, shortage);
+  });
+}
+test('16. -10h30m balance → shortageHours 10.5', () => {
+  const r = rollupMonthlyBalance([{ worked: 0, expected: 10.5 }]);
+  assert.equal(r.monthlyBalance, -10.5);
+  assert.equal(r.shortageHours, 10.5);
 });
 
-// ── Builder integration (I/O stubbed) — shift-per-date, leave, holiday, absent ──
-test('buildMonthlyBalance: historical shift per date, leave/holiday/absent, no incomplete', async () => {
+// ── Salary deduction = exact hours × existing hourly rate ─────────────
+test('estimateSalaryDeduction: exact hours × existing hourly rate', async () => {
+  const salaryStructure = require('../src/services/salary-structure.service');
+  const payrollSettings = require('../src/services/payroll-settings.service');
+  const { perDaySalary } = require('../src/services/payroll-engine.calc');
+  const { rangeCounts } = require('../src/services/attendance-summary.util');
+  const orig = { gs: salaryStructure.getActiveStructure, ps: payrollSettings.getResolved };
+  salaryStructure.getActiveStructure = async () => ({ gross: 26000 });
+  payrollSettings.getResolved = async () => ({ lopBasis: 'salary_working_days', workingHoursPerDay: 8 });
+  try {
+    // Zero / positive → no deduction
+    assert.deepEqual(await estimateSalaryDeduction({ employeeId: 'e', year: 2026, month: 8, shortageHours: 0 }), { shortageHours: 0, hourlyRate: 0, salaryDeduction: 0 });
+    // 4.5h shortage → 4.5 × hourly rate
+    const wd = rangeCounts('2026-08-01', '2026-08-31').working;
+    const perDay = perDaySalary(26000, { lopBasis: 'salary_working_days', salaryWorkingDays: wd, calendarDays: 31 });
+    const hourly = Math.round((perDay / 8) * 100) / 100;
+    const r = await estimateSalaryDeduction({ employeeId: 'e', year: 2026, month: 8, shortageHours: 4.5 });
+    assert.equal(r.hourlyRate, hourly);
+    assert.equal(r.salaryDeduction, Math.round(4.5 * hourly));
+  } finally { salaryStructure.getActiveStructure = orig.gs; payrollSettings.getResolved = orig.ps; }
+});
+
+// ── Builder integration (I/O stubbed) — Aug 2026, no carry fields, no incomplete ──
+test('buildMonthlyBalance: Aug 2026 — historical shift, leave/holiday/absent, no carry, no incomplete', async () => {
   const d365 = require('../src/services/d365.service');
   const attnCfg = require('../src/services/attendance.config');
   const shiftHistory = require('../src/services/shift-history.service');
   const payrollSettings = require('../src/services/payroll-settings.service');
   const time = require('../src/services/time.util');
   const EMP = 'emp-1';
-  // Post-cutoff month (Aug 2026). "Today" stubbed to Sep so capTo = month end (no
-  // today-pending branch) and every day is >= the 2026-08-01 effective date.
-  const Y = 2026, M = 8;
-  // Records: 29th = 10h (present), 30th = 6h (half). 31st = no record (absent).
   const recs = [
-    { hr_hrattendanceid: 'a1', hr_date: '2026-08-29', hr_allpunches: JSON.stringify(['09:00', '19:00']), hr_punchcount: 2 },
-    { hr_hrattendanceid: 'a2', hr_date: '2026-08-30', hr_allpunches: JSON.stringify(['09:00', '15:00']), hr_punchcount: 2 },
+    { hr_hrattendanceid: 'a1', hr_date: '2026-08-29', hr_allpunches: JSON.stringify(['09:00', '19:00']), hr_punchcount: 2 },   // 10h present
+    { hr_hrattendanceid: 'a2', hr_date: '2026-08-30', hr_allpunches: JSON.stringify(['09:00', '15:00']), hr_punchcount: 2 },   // 6h half
   ];
   const orig = { gl: d365.getList, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved, ds: time.istDateStr };
-  // Restrict the working window to Aug 27–31 (firstAttendanceDate) and make 28th a holiday,
-  // 27th an approved leave day; 29 present, 30 half, 31 absent. Week-off disabled for determinism.
   attnCfg.weekOffDays = [];
   attnCfg.setDynamicHolidays(['2026-08-28']);
-  time.istDateStr = () => '2026-09-15';
+  time.istDateStr = () => '2026-09-15';   // month complete; no today-pending
   payrollSettings.getResolved = async () => ({ lateLogin: { graceMinutes: 15 } });
-  shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ code: 'GEN', name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
+  shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
   d365.getList = async (entity, opts) => {
-    if (entity === d365.constructor.entities.leave) {
-      return { data: [{ hr_fromdate: '2026-08-27', hr_todate: '2026-08-27', hr_status: 123140001 }] };   // approved leave 27th
-    }
-    // attendance entity
-    if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-27' }] };   // firstAttendanceDate
+    if (entity === d365.constructor.entities.leave) return { data: [{ hr_fromdate: '2026-08-27', hr_todate: '2026-08-27', hr_status: 123140001 }] };
+    if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-27' }] };
     return { data: recs };
   };
   try {
-    const r = await buildMonthlyBalance({ employeeId: EMP, year: Y, month: M });
+    const r = await buildMonthlyBalance({ employeeId: EMP, year: 2026, month: 8 });
     const byDate = new Map(r.days.map((d) => [d.date, d]));
-    // 27th approved leave → expected 0, counted as approved-leave hours
-    assert.equal(byDate.get('2026-08-27').type, 'leave');
+    assert.equal(byDate.get('2026-08-27').type, 'leave');        // approved leave → expected 0
     assert.equal(byDate.get('2026-08-27').expected, 0);
-    // 28th holiday → expected 0
-    assert.equal(byDate.get('2026-08-28').type, 'holiday');
-    assert.equal(byDate.get('2026-08-28').expected, 0);
-    // 29th present 10h → expected 9
-    assert.equal(byDate.get('2026-08-29').type, 'working');
+    assert.equal(byDate.get('2026-08-28').type, 'holiday');      // holiday → expected 0
     assert.equal(byDate.get('2026-08-29').worked, 10);
     assert.equal(byDate.get('2026-08-29').expected, 9);
-    // 30th half 6h → expected 5
     assert.equal(byDate.get('2026-08-30').worked, 6);
     assert.equal(byDate.get('2026-08-30').expected, 5);
-    // 31st absent → expected 9 (full-day shortage)
-    assert.equal(byDate.get('2026-08-31').type, 'absent');
-    assert.equal(byDate.get('2026-08-31').expected, 9);
-    // Aggregates: required 0+0+9+5+9 = 23 ; effective 10+6 = 16 ; balance (1)+(1)+(-9) = -7
-    assert.equal(r.requiredHours, 23);
+    assert.equal(byDate.has('2026-08-31'), false);   // ABSENT day is EXCLUDED from the hour balance (day-LOP handles it)
+    // Attended/leave/holiday only: required 0+0+9+5 = 14; effective 16; balance +2; shortage 0
+    assert.equal(r.requiredHours, 14);
     assert.equal(r.effectiveHours, 16);
     assert.equal(r.approvedLeaveHours, 9);
-    assert.equal(r.currentBalance, -7);
-    assert.equal(r.finalShortage, 7);
-    assert.equal(r.lopDays, 1);          // 7h shortage → 1 day LOP
-    assert.equal(r.carryForward, 0);     // LOP applied → nothing carried
-    // No 'incomplete' anywhere
+    assert.equal(r.monthlyBalance, 2);
+    assert.equal(r.shortageHours, 0);
+    assert.equal(r.absentDays, 1);       // 31st absent → counted separately (day-based LOP)
+    assert.equal(r.presentDays, 1);
+    assert.equal(r.halfDays, 1);
+    assert.equal(r.approvedLeaveDays, 1);
+    assert.ok(!('carryForward' in r) && !('lopDays' in r) && !('previousCarryForward' in r));
     assert.ok(r.days.every((d) => d.type !== 'incomplete'));
   } finally {
     d365.getList = orig.gl; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds;

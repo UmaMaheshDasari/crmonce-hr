@@ -34,7 +34,7 @@ function perDaySalary(gross, { lopBasis, salaryWorkingDays, calendarDays }) {
  * @param {number} [p.advance]         advance-salary recovery this month
  * @returns full itemised breakdown
  */
-function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, attendance = {}, advance = 0, professionalTax: resolvedPT = null } = {}) {
+function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, attendance = {}, advance = 0, professionalTax: resolvedPT = null, hourShortageDeduction = 0 } = {}) {
   // ── Earnings ──
   const e = {};
   for (const k of EARNING_KEYS) e[k] = round(earnings[k]);
@@ -92,15 +92,19 @@ function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, at
 
   const otherDeductions = round(overrides.otherDeductions);
   const advanceRecovery = round(advance);
+  // Hourly Shortage Deduction — the EXACT-hours attendance deduction (negative monthly
+  // hour balance × hourly rate), computed upstream (monthly-balance service) and passed
+  // in. Separate from the day-based `lop`; both are attendance-derived deductions.
+  const hourShortage = nn(hourShortageDeduction);
 
-  const totalDeductions = pf + professionalTax + incomeTax + lop + advanceRecovery + otherDeductions;
+  const totalDeductions = pf + professionalTax + incomeTax + lop + hourShortage + advanceRecovery + otherDeductions;
   const netSalary = round(gross - totalDeductions);
 
   return {
     ...e, overtimePay,
     gross,
     perDay: round(perDay),
-    pf, professionalTax, incomeTax, lop,
+    pf, professionalTax, incomeTax, lop, hourShortageDeduction: hourShortage,
     advance: advanceRecovery, otherDeductions,
     totalDeductions, netSalary,
     lopDays, salaryWorkingDays,

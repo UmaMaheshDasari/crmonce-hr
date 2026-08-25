@@ -236,6 +236,9 @@ server.listen(PORT, () => {
     require('./services/provision-profile-audit')
       .ensureProfileAuditTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] profile-audit table skipped: ${err.message}`));
+    require('./services/provision-settings-audit')
+      .ensureSettingsAuditTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] settings-audit table skipped: ${err.message}`));
     require('./services/provision-document-columns')
       .ensureDocumentColumns(logger)
       .catch(err => logger.warn(`[provision] document columns skipped: ${err.message}`));
@@ -261,6 +264,21 @@ server.listen(PORT, () => {
   const loadHolidays = () => holidaySvc.refresh(true).catch(err => logger.warn(`[holiday] calendar load failed: ${err.message}`));
   setTimeout(loadHolidays, 2000);                        // after any table provisioning above
   setInterval(loadHolidays, 10 * 60 * 1000).unref();     // every 10 min
+
+  // Wire company.policy (attendance thresholds + effective date) to the admin-configured
+  // Company/Payroll Settings so the daily/monthly engine reads DB values, not env only.
+  // Warm the resolved-settings snapshot first, then activate the DB provider.
+  const wirePolicy = async () => {
+    try {
+      const ps = require('./services/payroll-settings.service');
+      const policy = require('./services/company.policy');
+      await ps.getResolved();                 // warm peekResolved()
+      policy.setProvider(policy.dbProvider);
+      policy.reload();
+      logger.info('[policy] attendance rules wired to Company Settings');
+    } catch (e) { logger.warn(`[policy] settings wiring skipped: ${e.message}`); }
+  };
+  setTimeout(wirePolicy, 2500);
 
   // Start ZKTeco push listener
   zkPushService.start((punch) => {

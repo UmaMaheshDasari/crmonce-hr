@@ -60,6 +60,25 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   hr_lateloginapprovalrequired: 'true', // manager → HR approval required (else auto-approved)
   hr_lateloginmode: 'late_present',     // attendance label for an approved late login: present | late_present
   hr_lateloginpenalty: 'false',   // FUTURE: deduct salary for excess late logins (off by default)
+  // ── Attendance Rules (hour-based monthly calc + salary deduction). Configurable;
+  //    the effective date controls WHEN the new rules apply (by ATTENDANCE DATE). ──
+  hr_attnruleeffectivedate: '2026-08-01',   // new rules apply on/after this attendance date
+  hr_fulldayminhours: '7',                  // worked >= this → Full Day
+  hr_halfdayminhours: '5',                  // worked >= this & < Full Day min → Half Day
+  hr_fulldayexpectedhours: '9',             // monthly expected hours for a Full Day
+  hr_halfdayexpectedhours: '5',             // monthly expected hours for a Half Day
+  hr_enablemonthlyhourbalance: 'true',      // compute the monthly hour balance
+  hr_enablehourlyshortagededuction: 'true', // deduct salary for a negative monthly balance
+  hr_approvedleavededuction: 'false',       // approved leave never deducts (default)
+  hr_lateloginsalarydeduction: 'false',     // late login never deducts (default)
+  hr_overtimecarryforward: 'false',         // no overtime carry-forward
+  hr_hourbalancecarryforward: 'false',      // no positive-balance carry-forward
+  hr_negativebalancecarryforward: 'false',  // no negative-balance carry-forward
+  hr_halfdaylopfromshortage: 'false',       // do NOT convert shortage → 0.5 day LOP
+  hr_fulldaylopfromshortage: 'false',       // do NOT convert shortage → 1 day LOP
+  hr_absentcreateslop: 'true',              // an absent working day (no leave) → LOP
+  hr_hourlydeductionbasis: 'Employee Hourly Rate',
+  hr_ruleversion: 'v1',
   // ── Default salary components applied to a new employee's Salary Structure.
   //    JSON: [{ name, type: 'percent'|'fixed', value }]. percent = % of Basic. ──
   hr_defaultallowances: JSON.stringify([
@@ -190,6 +209,26 @@ function resolve(settings = null) {
     },
     defaultAllowances: parseJson(g.hr_defaultallowances, []),
     defaultDeductions: parseJson(g.hr_defaultdeductions, []),
+    // ── Attendance Rules — typed. The engine reads these via company.policy (DB provider). ──
+    attendanceRules: {
+      effectiveDate: String(g.hr_attnruleeffectivedate || '2026-08-01').slice(0, 10),
+      fullDayMinHours: num(g.hr_fulldayminhours, 7),
+      halfDayMinHours: num(g.hr_halfdayminhours, 5),
+      fullDayExpectedHours: num(g.hr_fulldayexpectedhours, 9),
+      halfDayExpectedHours: num(g.hr_halfdayexpectedhours, 5),
+      enableMonthlyHourBalance: bool(g.hr_enablemonthlyhourbalance),
+      enableHourlyShortageDeduction: bool(g.hr_enablehourlyshortagededuction),
+      approvedLeaveDeduction: bool(g.hr_approvedleavededuction),
+      lateLoginDeduction: bool(g.hr_lateloginsalarydeduction),
+      overtimeCarryForward: bool(g.hr_overtimecarryforward),
+      hourBalanceCarryForward: bool(g.hr_hourbalancecarryforward),
+      negativeBalanceCarryForward: bool(g.hr_negativebalancecarryforward),
+      halfDayLopFromShortage: bool(g.hr_halfdaylopfromshortage),
+      fullDayLopFromShortage: bool(g.hr_fulldaylopfromshortage),
+      absentCreatesLop: bool(g.hr_absentcreateslop),
+      hourlyDeductionBasis: g.hr_hourlydeductionbasis || 'Employee Hourly Rate',
+      ruleVersion: g.hr_ruleversion || 'v1',
+    },
   };
 }
 
@@ -226,10 +265,14 @@ async function getSettings() {
   return cache;
 }
 
-/** Convenience: typed config in one call. */
-async function getResolved() { return resolve(await getSettings()); }
+/** Convenience: typed config in one call. Also caches the resolved object so
+ *  synchronous consumers (company.policy DB provider) can read it without I/O. */
+let _resolvedCache = null;
+async function getResolved() { const r = resolve(await getSettings()); _resolvedCache = r; return r; }
+/** Last resolved settings (sync, no I/O). null until getResolved() has run once. */
+function peekResolved() { return _resolvedCache; }
 
 module.exports = {
-  getSettings, getResolved, resolve, merge, mergeSaved, invalidate,
+  getSettings, getResolved, resolve, merge, mergeSaved, invalidate, peekResolved,
   PAYROLL_SETTINGS_DEFAULTS, FIELDS, JSON_FIELDS, ENTITY_SET, SELECT,
 };

@@ -146,6 +146,20 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
     const effectiveName = patch.hr_name !== undefined ? patch.hr_name : current.hr_name;
     if (!String(effectiveName || '').trim()) patch.hr_name = settings.PAYROLL_SETTINGS_DEFAULTS.hr_name;
 
+    // ── Config safety (Phase 20): validate the attendance-rule numbers on the merged view. ──
+    const eff = { ...current, ...patch };
+    const fdMin = Number(eff.hr_fulldayminhours), hdMin = Number(eff.hr_halfdayminhours);
+    const fdExp = Number(eff.hr_fulldayexpectedhours), hdExp = Number(eff.hr_halfdayexpectedhours);
+    if (Number.isFinite(fdMin) && Number.isFinite(hdMin) && fdMin <= hdMin) {
+      return res.status(400).json({ error: 'Full Day Minimum Hours must be greater than Half Day Minimum Hours.' });
+    }
+    for (const [name, v] of [['Full Day Minimum', fdMin], ['Half Day Minimum', hdMin], ['Full Day Expected', fdExp], ['Half Day Expected', hdExp]]) {
+      if (Number.isFinite(v) && v <= 0) return res.status(400).json({ error: `${name} Hours must be a positive number.` });
+    }
+    if (patch.hr_attnruleeffectivedate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(patch.hr_attnruleeffectivedate))) {
+      return res.status(400).json({ error: 'Attendance Rule Effective Date must be a valid date (YYYY-MM-DD).' });
+    }
+
     // The JSON blob holds the COMPLETE merged config (new patch over the current
     // saved values) — it is the persistence source of truth, so the save survives
     // even if individual scalar columns can't be provisioned.
@@ -188,6 +202,24 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
     settings.invalidate();
     const raw = await settings.getSettings();
 
+    // Append-only Setting History for every changed field, then refresh the attendance
+    // engine's DB-backed policy so new thresholds/effective-date take effect at once.
+    // Both best-effort — a history/refresh hiccup must never fail the save.
+    try {
+      const settingsAudit = require('../../services/settings-audit.service');
+      await settingsAudit.recordDiff({
+        before: current, after: patch, fields: settings.FIELDS,
+        changedBy: req.user?.name || req.user?.email || 'Admin',
+        effectiveDate: raw.hr_attnruleeffectivedate, ruleVersion: raw.hr_ruleversion,
+        reason: req.body?.reason || '', scope: 'payroll',
+      });
+    } catch (_) { /* history best-effort */ }
+    try {
+      await settings.getResolved();                            // re-warm the sync snapshot
+      const policy = require('../../services/company.policy');
+      policy.setProvider(policy.dbProvider); policy.reload();  // attendance rules update live
+    } catch (_) { /* policy refresh best-effort */ }
+
     // Verify persistence: re-read and confirm an edited field actually round-tripped.
     // If Dataverse could persist NEITHER the JSON blob NOR the scalar columns, the
     // save silently lost data — surface it clearly instead of pretending success.
@@ -206,6 +238,16 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
     console.error('[payroll-settings/update] FAILED:', err.message);
     return res.status(err.status || 400).json({ error: err.message || 'Failed to update payroll settings' });
   }
+});
+
+// GET /history — append-only Setting History (Super Admin / HR). Read-only; append-only
+// (there is no edit/delete). Filters: ?field, ?changedBy, ?from, ?to.
+router.get('/history', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+  try {
+    const settingsAudit = require('../../services/settings-audit.service');
+    const rows = await settingsAudit.list({ field: req.query.field, changedBy: req.query.changedBy, from: req.query.from, to: req.query.to });
+    res.json({ data: rows, count: rows.length });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

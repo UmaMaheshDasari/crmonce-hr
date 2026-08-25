@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { companyApi } from '../../api/endpoints';
-import { CurrencyDollarIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
+import { CurrencyDollarIcon, GlobeAltIcon, ClockIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import PayrollSettingsPage from '../payroll/PayrollSettingsPage';
+import SettingHistoryPage from './SettingHistoryPage';
 
 // General tab = company identity + locale/calendar. Everything is company-configurable
 // and stored in hr_companysettings (single source of truth) — never hard-coded.
@@ -131,6 +132,7 @@ function GeneralTab() {
 const TABS = [
   { key: 'general', label: 'General', icon: GlobeAltIcon, render: () => <GeneralTab /> },
   { key: 'payroll', label: 'Payroll & Policies', icon: CurrencyDollarIcon, render: () => <PayrollSettingsPage /> },
+  { key: 'history', label: 'Setting History', icon: ClockIcon, render: () => <SettingHistoryPage /> },
 ];
 
 export default function CompanySettingsPage() {

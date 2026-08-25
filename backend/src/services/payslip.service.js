@@ -78,9 +78,12 @@ function computeFigures(p = {}) {
     : calculateProfessionalTax(ptBase);
   const incomeTax = Number(p.hr_incometax) || Number(p.hr_tds) || 0;
   const lop = Number(p.hr_lop) || 0;
+  // Hourly Shortage Deduction — the exact-hours attendance deduction (negative monthly
+  // hour balance × hourly rate), stored on the payroll row. Distinct from day-based LOP.
+  const hourShortage = Number(p.hr_hourdeduction) || 0;
   const advance = Number(p.hr_advance) || 0;
   const otherDeductions = Number(p.hr_deductions) || 0;
-  const deductions = pf + professionalTax + incomeTax + lop + advance + otherDeductions;
+  const deductions = pf + professionalTax + incomeTax + lop + hourShortage + advance + otherDeductions;
   const net = gross - deductions;
 
   // DYNAMIC payslip: only components with a value appear — every zero-value row is
@@ -92,6 +95,7 @@ function computeFigures(p = {}) {
   const deductionRows = [
     ['Provident Fund (PF)', pf], ['Professional Tax', professionalTax],
     ['Income Tax (TDS)', incomeTax], ['LOP Deduction', lop],
+    ['Hourly Shortage Deduction', hourShortage],
     ['Advance Salary', advance], ['Other Deductions', otherDeductions],
   ].filter(([, amt]) => amt > 0);
   return { gross, deductions, net, earnings, deductionRows };

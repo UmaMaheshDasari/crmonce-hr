@@ -725,10 +725,10 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
   } catch (err) { next(err); }
 });
 
-// GET /api/attendance/monthly-balance — cumulative monthly hour balance (Phase 2).
-// Employee sees their own; HR may pass ?employeeId=. Previous Carry Forward is the
-// prior month's ending balance (single-level look-back; month-end conversion is a
-// later phase). Reuses the Phase-1 daily engine + shift history + approved leave.
+// GET /api/attendance/monthly-balance — INDEPENDENT monthly hour balance (no carry-
+// forward). Employee sees their own; HR may pass ?employeeId=. A negative balance is
+// deducted as EXACT hours × the existing hourly rate (no LOP days). Reuses the daily
+// engine + shift history + approved leave. Only dates on/after the effective cutoff.
 router.get('/monthly-balance', requirePermission('attendance:read'), async (req, res, next) => {
   try {
     const now = new Date();
@@ -736,31 +736,17 @@ router.get('/monthly-balance', requirePermission('attendance:read'), async (req,
     const m = parseInt(req.query.month) || (now.getMonth() + 1);
     const targetId = req.user.role === 'employee' ? req.user.id : (req.query.employeeId || req.user.id);
 
-    // Previous month's CARRY-FORWARD (post month-end LOP: a shortage >= 5h is cleared
-    // to LOP and carries 0; a shortage < 5h or a surplus carries forward) → this
-    // month's carry-in. Single-level look-back (deeper chaining needs persistence).
-    // EFFECTIVE DATE: never look into a month BEFORE the cutoff — the first new-system
-    // month starts fresh with carry 0 (no July-or-earlier shortage bleeds into August).
-    const cutoff = require('../../services/company.policy').attendance.newRulesFrom();
-    const pm = m === 1 ? 12 : m - 1;
-    const py = m === 1 ? y - 1 : y;
-    const prevMonthFirst = `${py}-${String(pm).padStart(2, '0')}-01`;
-    let previousCarryForward = 0;
-    if (prevMonthFirst >= cutoff) {
-      try { previousCarryForward = (await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: py, month: pm })).carryForward; }
-      catch { previousCarryForward = 0; }
-    }
-
-    const report = await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: y, month: m, previousCarryForward });
-    // Estimated LOP deduction via the EXISTING payroll rate (read-only). Payroll still
-    // owns and computes the authoritative deduction during a run — unchanged here.
-    const estimatedSalaryDeduction = await monthlyBalance.estimateLopDeduction({ employeeId: targetId, year: y, month: m, lopDays: report.lopDays });
+    // Each month is computed independently — NO previous/next month balance.
+    const report = await monthlyBalance.buildMonthlyBalance({ employeeId: targetId, year: y, month: m });
+    // Exact-hours salary deduction for a negative balance via the EXISTING hourly rate
+    // (read-only). Payroll still owns the authoritative run — not modified here.
+    const deduction = await monthlyBalance.estimateSalaryDeduction({ employeeId: targetId, year: y, month: m, shortageHours: report.shortageHours });
 
     let employeeName = req.user.name || 'Employee';
     if (targetId !== req.user.id) {
       try { const e = await d365.getByIdOptional(EMP_ENTITY, targetId, { select: 'hr_hremployeeid', optionalSelect: 'hr_hremployee1' }); employeeName = e?.hr_hremployee1 || employeeName; } catch { /* keep default */ }
     }
-    res.json({ employeeId: targetId, employeeName, ...report, estimatedSalaryDeduction });
+    res.json({ employeeId: targetId, employeeName, ...report, hourlyRate: deduction.hourlyRate, salaryDeduction: deduction.salaryDeduction });
   } catch (err) { next(err); }
 });
 

@@ -60,7 +60,7 @@ async function empInfoMap() {
 async function fetchPayroll(year) {
   const res = await d365.getListOptional(PAYROLL, {
     select: 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,_hr_hremployee_value',
-    optionalSelect: 'hr_gross,hr_overtime,hr_lop,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_releasedby',
+    optionalSelect: 'hr_gross,hr_overtime,hr_lop,hr_hourdeduction,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_releasedby',
     filter: year ? `hr_year eq ${year}` : undefined,
     orderby: 'hr_year desc,hr_month desc', top: 5000,
   });
@@ -154,11 +154,19 @@ async function buildReport(type, { year, month } = {}) {
       { header: 'Year', key: 'year', width: 8 }, { header: 'Present', key: 'present', width: 10 },
       { header: 'Absent', key: 'absent', width: 10 }, { header: 'Salary Working Days', key: 'wd', width: 18 },
       { header: 'Payable Days', key: 'pd', width: 12 },
+      // Salary-affecting attendance deductions — read from the stored payroll row (no recompute).
+      { header: 'Absent LOP (₹)', key: 'lop', width: 14 }, { header: 'Hourly Shortage Deduction (₹)', key: 'hrded', width: 26 },
+      { header: 'Total Deduction (₹)', key: 'totded', width: 18 },
     ];
-    for (const r of rows) ws.addRow({
-      eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
-      present: r.hr_presentdays ?? '—', absent: r.hr_absentdays ?? '—', wd: r.hr_workingdays ?? '—', pd: r.hr_paydays ?? '—',
-    });
+    for (const r of rows) {
+      const gross = r.hr_gross != null ? Number(r.hr_gross) : (Number(r.hr_basic) || 0) + (Number(r.hr_allowances) || 0);
+      const totalDed = Math.max(0, Math.round(gross - (Number(r.hr_netpay) || 0)));
+      ws.addRow({
+        eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
+        present: r.hr_presentdays ?? '—', absent: r.hr_absentdays ?? '—', wd: r.hr_workingdays ?? '—', pd: r.hr_paydays ?? '—',
+        lop: r.hr_lop != null ? Number(r.hr_lop) : 0, hrded: r.hr_hourdeduction != null ? Number(r.hr_hourdeduction) : 0, totded: totalDed,
+      });
+    }
     styleHeader(ws); autoWidth(ws);
   }
 

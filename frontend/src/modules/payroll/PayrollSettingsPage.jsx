@@ -8,6 +8,32 @@ import toast from 'react-hot-toast';
 // Scalar fields, grouped. Each maps 1:1 to a hr_payrollsettings column.
 const SECTIONS = [
   {
+    title: 'Attendance Rules',
+    hint: 'Hour-based monthly attendance calculation. The Effective Date controls WHEN these rules apply (by attendance date) — historical months are never recalculated.',
+    fields: [
+      { name: 'hr_attnruleeffectivedate', label: 'Rule Effective Date', type: 'date', hint: 'New attendance calculation rules apply from this attendance date. Default 2026-08-01.' },
+      { name: 'hr_fulldayminhours', label: 'Full Day Minimum Hours', type: 'number', step: '0.5', suffix: 'h', hint: 'Employees working this many effective hours or more are a Full Day.' },
+      { name: 'hr_halfdayminhours', label: 'Half Day Minimum Hours', type: 'number', step: '0.5', suffix: 'h', hint: 'Employees working between this value and the Full Day threshold are a Half Day.' },
+      { name: 'hr_fulldayexpectedhours', label: 'Full Day Expected Hours', type: 'number', step: '0.5', suffix: 'h', hint: 'Monthly expected hours credited for a Full Day. Default 9.' },
+      { name: 'hr_halfdayexpectedhours', label: 'Half Day Expected Hours', type: 'number', step: '0.5', suffix: 'h', hint: 'Monthly expected hours credited for a Half Day. Default 5.' },
+      { name: 'hr_enablemonthlyhourbalance', label: 'Enable Monthly Hour Balance', toggle: true, hint: 'Compute each month independently as worked − expected (no carry-forward).' },
+      { name: 'hr_absentcreateslop', label: 'Absent Creates LOP', toggle: true, hint: 'An absent working day (no punch, no approved leave) becomes a day-based LOP.' },
+      { name: 'hr_ruleversion', label: 'Rule Version', hint: 'Label for the current rule set (e.g. v1). Recorded in Setting History.' },
+    ],
+  },
+  {
+    title: 'Payroll & Deductions',
+    hint: 'How the monthly hour balance affects salary. Approved leave and Late Login never deduct. A negative balance deducts EXACT hours × the hourly rate (no half/full-day LOP conversion).',
+    fields: [
+      { name: 'hr_enablehourlyshortagededuction', label: 'Enable Hourly Shortage Deduction', toggle: true, hint: 'Deduct exact shortage hours × the hourly rate when the monthly balance is negative.' },
+      { name: 'hr_approvedleavededuction', label: 'Approved Leave Salary Deduction', toggle: true, hint: 'Off (recommended): approved leave never deducts salary — it reduces required hours.' },
+      { name: 'hr_lateloginsalarydeduction', label: 'Late Login Salary Deduction', toggle: true, hint: 'Off (recommended): late login is an attendance exception only, never a deduction.' },
+      { name: 'hr_halfdaylopfromshortage', label: 'Half-Day LOP From Hour Shortage', toggle: true, hint: 'Off (recommended): a shortage is deducted as exact hours, not converted to a 0.5-day LOP.' },
+      { name: 'hr_fulldaylopfromshortage', label: 'Full-Day LOP From Hour Shortage', toggle: true, hint: 'Off (recommended): a shortage is deducted as exact hours, not converted to a 1-day LOP.' },
+      { name: 'hr_hourlydeductionbasis', label: 'Hourly Deduction Basis', hint: 'Basis for the hourly rate. Default "Employee Hourly Rate".' },
+    ],
+  },
+  {
     title: 'Provident Fund', hint: 'Statutory PF contribution',
     fields: [
       { name: 'hr_pfemployeepercent', label: 'PF Employee %', type: 'number', step: '0.01', suffix: '%' },
@@ -243,7 +269,7 @@ export default function PayrollSettingsPage() {
                         {f.suffix && <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">{f.suffix}</span>}
                       </div>
                     )}
-                    {f.hint && !f.toggle && <p className="text-xs text-gray-400">{f.hint}</p>}
+                    {f.hint && <p className="text-xs text-gray-400">{f.hint}</p>}
                   </div>
                 ))}
               </div>

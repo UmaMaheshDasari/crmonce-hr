@@ -88,24 +88,22 @@ test('July 2026 monthly balance is empty (0 carry into August); no writes', asyn
     assert.equal(r.days.length, 0);      // no pre-cutoff day enters the new calc
     assert.equal(r.effectiveHours, 0);
     assert.equal(r.requiredHours, 0);
-    assert.equal(r.currentBalance, 0);
-    assert.equal(r.carryForward, 0);     // → August starts fresh at 0
-    assert.equal(r.lopDays, 0);
+    assert.equal(r.monthlyBalance, 0);   // pre-cutoff month is empty; August starts fresh
+    assert.equal(r.shortageHours, 0);
   } finally {
     Object.assign(d365, { getList: orig.gl, create: orig.cr, update: orig.up, delete: orig.del });
     shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps;
   }
 });
 
-// ── September carries the eligible August carry-forward (chain resumes post-cutoff) ──
-test('September carries an eligible August shortage (<5h) forward', async () => {
-  const { rollupMonthlyBalance, resolveMonthEnd } = require('../src/services/monthly-balance.service');
-  // August ended at a 3h shortage (<5h) → carry -3.
-  const aug = resolveMonthEnd(rollupMonthlyBalance([{ worked: 197, expected: 200 }]).currentBalance);
-  assert.equal(aug.lopDays, 0);
-  assert.equal(aug.carryForward, -3);
-  // September opens with the -3 carry (this is what the route feeds as previousCarryForward).
-  const sep = rollupMonthlyBalance([{ worked: 180, expected: 180 }], { previousCarryForward: aug.carryForward });
-  assert.equal(sep.previousCarryForward, -3);
-  assert.equal(sep.currentBalance, -3);
+// ── September does NOT carry August (each month is independent — NO carry-forward) ──
+test('September is independent — August shortage is NOT carried forward', async () => {
+  const { rollupMonthlyBalance } = require('../src/services/monthly-balance.service');
+  // August ended at a 3h shortage — irrelevant to September.
+  const aug = rollupMonthlyBalance([{ worked: 197, expected: 200 }]);
+  assert.equal(aug.monthlyBalance, -3);
+  // September computed on its own data only; no August balance is fed in or added.
+  const sep = rollupMonthlyBalance([{ worked: 180, expected: 180 }]);
+  assert.equal(sep.monthlyBalance, 0);          // starts fresh at 0, not -3
+  assert.ok(!('previousCarryForward' in sep) && !('carryForward' in sep));
 });

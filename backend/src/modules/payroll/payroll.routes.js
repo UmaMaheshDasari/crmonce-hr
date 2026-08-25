@@ -21,6 +21,8 @@ const salaryStructure = require('../../services/salary-structure.service');
 const payrollSettings = require('../../services/payroll-settings.service');
 const ptMaster = require('../../services/pt-master.service');
 const activity = require('../../services/activity.service');
+const policy = require('../../services/company.policy');
+const monthlyBalance = require('../../services/monthly-balance.service');
 const { buildPayslipPdf, payslipModel, computeFigures } = require('../../services/payslip.service');
 const { emailPayslip } = require('../../services/payslip-notify.service');
 const { buildReport } = require('../../services/payroll-reports.service');
@@ -32,7 +34,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 // Base columns always present + computed/workflow columns that may not be
 // provisioned yet (selected/stored optionally so payroll works before migration).
 const BASE_SELECT = 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,hr_processeddate,_hr_hremployee_value';
-const OPT_SELECT = 'hr_gross,hr_overtime,hr_lop,hr_advance,hr_hra,hr_special,hr_medical,hr_conveyance,hr_pf,hr_professionaltax,hr_incometax,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_approveddate,hr_releasedby,hr_releaseddate,hr_emailsent,hr_emailsenttime,hr_locked,hr_lockedby,hr_lockeddate';
+const OPT_SELECT = 'hr_gross,hr_overtime,hr_lop,hr_hourdeduction,hr_advance,hr_hra,hr_special,hr_medical,hr_conveyance,hr_pf,hr_professionaltax,hr_incometax,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_approveddate,hr_releasedby,hr_releaseddate,hr_emailsent,hr_emailsenttime,hr_locked,hr_lockedby,hr_lockeddate';
 const OPT_FIELDS = OPT_SELECT.split(',');
 
 // create/update that retry WITHOUT the optional (computed/workflow) columns if
@@ -232,6 +234,33 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       const att = await computeMonthFacts(emp.hr_hremployeeid, month, year, settings);
       const advanceRecovery = await advanceService.applyMonthlyRecovery(emp.hr_hremployeeid, { year, month });
 
+      // ── NEW hour-based rules (from the configured effective date, by attendance MONTH). ──
+      // Legacy months keep the existing day-based LOP untouched. For new-rules months:
+      //   • ABSENT day (no punch, no leave) → day-based LOP (respecting Absent-Creates-LOP)
+      //   • ATTENDED day shortfall → EXACT hourly deduction (monthly hour balance)
+      // The two are disjoint day-sets, so an absent day is never double-counted.
+      const monthStart = `${year}-${pad2(month)}-01`;
+      const rules = settings.attendanceRules || {};
+      const useNewRules = monthStart >= (rules.effectiveDate || policy.attendance.newRulesFrom());
+      let lopDaysForEngine = att.lopDays;                 // default: legacy day-based LOP
+      let hourShortageDeduction = 0, shortageHours = 0, hourlyRate = 0, monthlyHourBalance = 0;
+      let presentDaysStore = att.presentDays, absentDaysStore = att.absentDays, payDaysStore = att.payDays;
+      if (useNewRules && rules.enableMonthlyHourBalance !== false) {
+        const bal = await monthlyBalance.buildMonthlyBalance({ employeeId: emp.hr_hremployeeid, year, month });
+        monthlyHourBalance = bal.monthlyBalance; shortageHours = bal.shortageHours;
+        // Absent LOP = truly-absent working days only (half/short attended days are NOT
+        // day-LOP'd here — they flow through the hour balance instead).
+        lopDaysForEngine = rules.absentCreatesLop !== false ? bal.absentDays : 0;
+        presentDaysStore = round2(bal.presentDays + bal.halfDays * 0.5);
+        absentDaysStore = lopDaysForEngine;
+        payDaysStore = Math.max(0, round2(att.workingDays - lopDaysForEngine));
+        if (rules.enableHourlyShortageDeduction !== false && shortageHours > 0) {
+          const ded = await monthlyBalance.estimateSalaryDeduction({ employeeId: emp.hr_hremployeeid, year, month, shortageHours });
+          hourShortageDeduction = Number(ded.salaryDeduction) || 0;
+          hourlyRate = Number(ded.hourlyRate) || 0;
+        }
+      }
+
       // Professional Tax from the MASTER (state + gross + month). The resolved
       // amount is stored on the row, so this month's payslip is immutable even if
       // slabs change later.
@@ -242,10 +271,11 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       for (const w of att.warnings) warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, ...w });
       if (!ptConfigured) warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'pt_missing', message: 'Professional Tax master has no slabs — using the built-in fallback slab.' });
 
-      // The one engine: Gross − PF − PT − TDS − LOP − Advance − Other = Net.
+      // The one engine: Gross − PF − PT − TDS − LOP − Hour-Shortage − Advance − Other = Net.
       const c = computePayrollEngine({
         earnings, settings, overrides, advance: advanceRecovery, professionalTax: ptAmount,
-        attendance: { salaryWorkingDays: att.workingDays, lopDays: att.lopDays, calendarDays: att.calendarDays, overtimeHours: att.overtimeHours },
+        attendance: { salaryWorkingDays: att.workingDays, lopDays: lopDaysForEngine, calendarDays: att.calendarDays, overtimeHours: att.overtimeHours },
+        hourShortageDeduction,
       });
 
       const record = {
@@ -253,12 +283,12 @@ async function runGeneration({ month, year, employeeIds } = {}) {
         hr_basic: round2(c.basic), hr_hra: c.hra, hr_special: c.special, hr_medical: c.medical, hr_conveyance: c.conveyance,
         hr_allowances: round2(c.otherAllowance), hr_overtime: c.overtimePay, hr_gross: c.gross,
         hr_pf: c.pf, hr_professionaltax: c.professionalTax, hr_incometax: c.incomeTax,
-        hr_lop: c.lop, hr_advance: c.advance, hr_deductions: c.otherDeductions,
+        hr_lop: c.lop, hr_hourdeduction: round2(c.hourShortageDeduction), hr_advance: c.advance, hr_deductions: c.otherDeductions,
         hr_netpay: c.netSalary,
         // Day-count columns are Edm.Int32 — round the half-day fractions for storage
-        // (the LOP money is computed on the exact fractional days inside the engine).
-        hr_presentdays: Math.round(att.presentDays), hr_absentdays: Math.round(att.absentDays),
-        hr_workingdays: Math.round(att.workingDays), hr_paydays: Math.round(att.payDays),
+        // (LOP money is computed on the exact fractional days inside the engine).
+        hr_presentdays: Math.round(presentDaysStore), hr_absentdays: Math.round(absentDaysStore),
+        hr_workingdays: Math.round(att.workingDays), hr_paydays: Math.round(payDaysStore),
         hr_status: draft, hr_locked: 'false', hr_processeddate: new Date().toISOString(),
       };
 
