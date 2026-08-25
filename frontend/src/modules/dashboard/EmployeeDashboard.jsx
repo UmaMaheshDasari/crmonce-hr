@@ -339,14 +339,10 @@ export default function EmployeeDashboard() {
               : Array.from({ length: 4 }).map((_, i) => <div key={i} className="rounded-xl bg-gray-50 h-[74px] animate-pulse" />)}
           </div>
         </div>
-        </div>
 
-        {/* Monthly cumulative hour balance (right column, full height) */}
-        <MonthlyBalanceCard />
-      </div>
-
-      {/* ── Leave Balance (allocation-based, auto-calculated) ─────────────── */}
-      {lb && (
+        {/* Leave Balance (allocation-based) — kept in the LEFT column so the stacked
+            cards fill the height beside the taller Monthly Hour Balance card. */}
+        {lb && (
         <div className="bg-white rounded-xl border border-gray-100 p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-bold text-gray-900">Leave Balance · {lb.year}</h2>
@@ -366,7 +362,12 @@ export default function EmployeeDashboard() {
             ))}
           </div>
         </div>
-      )}
+        )}
+        </div>
+
+        {/* Monthly cumulative hour balance (right column, full height) */}
+        <MonthlyBalanceCard />
+      </div>
 
       {/* ── Late Login (this month) ───────────────────────────────────────── */}
       {ll && (
