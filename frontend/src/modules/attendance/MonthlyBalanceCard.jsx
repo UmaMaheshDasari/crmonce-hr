@@ -19,6 +19,29 @@ function Stat({ label, value, tone = 'text-gray-800' }) {
   );
 }
 
+// Small uppercase section heading with a hairline rule.
+function SectionLabel({ children }) {
+  return (
+    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mt-4 mb-2 first:mt-0">{children}</p>
+  );
+}
+
+// A highlighted summary strip: label left, value right, on a soft tinted background.
+const BAND_TONE = {
+  indigo: 'bg-indigo-50 text-indigo-700',
+  slate: 'bg-gray-100 text-gray-900',
+  emerald: 'bg-emerald-50 text-emerald-700',
+  red: 'bg-red-50 text-red-700',
+};
+function Band({ label, value, tone = 'slate', big = false }) {
+  return (
+    <div className={`flex items-center justify-between rounded-lg px-3 ${big ? 'py-2.5' : 'py-2'} ${BAND_TONE[tone] || BAND_TONE.slate}`}>
+      <span className="text-[11px] font-semibold uppercase tracking-wider opacity-80">{label}</span>
+      <span className={`font-bold tabular-nums ${big ? 'text-lg' : 'text-sm'}`}>{value}</span>
+    </div>
+  );
+}
+
 /**
  * Monthly hour balance — INDEPENDENT per month, NO carry-forward. Reporting only —
  * reads GET /attendance/monthly-balance. `employeeId` omitted → the signed-in employee.
@@ -55,32 +78,29 @@ export default function MonthlyBalanceCard({ employeeId }) {
         <p className="text-sm text-gray-400 py-6 text-center">Calculating…</p>
       ) : (
         <>
-          {/* Required hours — Working Days × 9, reduced by approved leave + approved adjustments */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {/* ── Required hours — Working Days × 9, reduced by approved leave + adjustments ── */}
+          <SectionLabel>Required Hours</SectionLabel>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
             <Stat label="Working Days" value={Number(data?.workingDays ?? 0)} />
             <Stat label="Base Required" value={hrs(data?.baseRequiredHours)} />
             <Stat label="Approved Leave" value={hrs(data?.approvedLeaveHours)} tone="text-sky-700" />
             <Stat label="Approved Adjustment" value={hrs(data?.approvedAdjustmentHours)} tone="text-violet-700" />
           </div>
-          <div className="mt-2 grid grid-cols-1 gap-2">
-            <Stat label="Final Required" value={hrs(data?.finalRequiredHours)} tone="text-indigo-700" />
-          </div>
+          <Band label="Final Required" value={hrs(data?.finalRequiredHours)} tone="indigo" />
 
-          {/* Actual attendance — present + half days, ACTUAL punch hours */}
-          <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {/* ── Actual attendance — present + half days, ACTUAL punch hours ── */}
+          <SectionLabel>Actual Attendance</SectionLabel>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
             <Stat label="Present Days" value={Number(data?.presentDays ?? 0)} tone="text-emerald-700" />
             <Stat label="Present Hours" value={hrs(data?.presentWorkedHours)} tone="text-emerald-700" />
             <Stat label="Half Days" value={Number(data?.halfDays ?? 0)} tone="text-amber-700" />
             <Stat label="Half-Day Hours" value={hrs(data?.halfWorkedHours)} tone="text-amber-700" />
           </div>
+          <Band label="Total Worked" value={hrs(data?.totalWorkedHours)} tone="slate" />
 
-          {/* Total worked vs final required → the monthly difference */}
-          <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-2">
-            <Stat label="Total Worked" value={hrs(data?.totalWorkedHours)} tone="text-gray-900" />
-            <Stat label="Monthly Difference" value={signed(diff)} tone={diff < 0 ? 'text-red-600' : 'text-emerald-700'} />
-          </div>
-
-          {/* Shortage → exact-hours salary deduction (absent days are separate LOP) */}
+          {/* ── Result — Total Worked − Final Required → shortage / deduction ── */}
+          <SectionLabel>Result</SectionLabel>
+          <Band label="Monthly Difference" value={signed(diff)} tone={diff < 0 ? 'red' : 'emerald'} big />
           <div className="mt-2 grid grid-cols-3 gap-2">
             <Stat label="Shortage Hrs" value={hrs(shortage)} tone={shortage > 0 ? 'text-red-600' : 'text-gray-800'} />
             <Stat label="Hourly Rate" value={data?.hourlyRate == null ? '—' : rupees(data.hourlyRate)} />
