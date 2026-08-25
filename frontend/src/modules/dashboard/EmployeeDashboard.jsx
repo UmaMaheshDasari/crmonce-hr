@@ -287,13 +287,8 @@ export default function EmployeeDashboard() {
         )}
       </div>
 
-      {/* ── Attendance + Leave Summary (left) · Monthly Hour Balance (right) ── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 xl:items-start">
-        {/* Left column — Today's Attendance + Leave Summary stacked, so the column
-            fills the height beside the taller Monthly Hour Balance (no dead space). */}
-        <div className="xl:col-span-2 space-y-5">
-        {/* Attendance widget */}
-        <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
+      {/* ── SECTION 2 · Today's Attendance (full width) ───────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <ClockIcon className="w-5 h-5 text-indigo-500" />
@@ -349,6 +344,8 @@ export default function EmployeeDashboard() {
           )}
         </div>
 
+      {/* ── SECTION 3 · Leave Summary + Leave Balance ─────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 xl:items-start">
         {/* Leave Summary */}
         <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
           <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
@@ -407,11 +404,10 @@ export default function EmployeeDashboard() {
           </div>
         </div>
         )}
-        </div>
-
-        {/* Monthly cumulative hour balance (right column, full height) */}
-        <MonthlyBalanceCard />
       </div>
+
+      {/* ── SECTION 4 · Monthly Hour Balance (full-width panel) ───────────── */}
+      <MonthlyBalanceCard />
 
       {/* ── Late Login (this month) ───────────────────────────────────────── */}
       {ll && (
