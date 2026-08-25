@@ -436,6 +436,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
   const [cc, setCc] = useState([]);              // selected employee ids
   const [ccSearch, setCcSearch] = useState('');
   const [certDoc, setCertDoc] = useState(null);  // uploaded Medical Certificate (shaped doc)
+  const [halfDay, setHalfDay] = useState(!!editLeave && Number(editLeave.hr_days) === 0.5); // 0.5-day leave (single working day only)
 
   // Approver options — active HR Managers / Super Admins (backend-filtered)
   const { data: approversData } = useQuery({
@@ -479,6 +480,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
           hr_todate: form.to,
           hr_reason: form.reason,
           hr_days: days,
+          halfDay: applyHalfDay,                     // 0.5-day leave (backend sets hr_days = 0.5)
           hr_status: 'pending',
           approverId,
           cc,
@@ -498,7 +500,14 @@ function ApplyLeaveModal({ onClose, editLeave }) {
     enabled: validRange,
     placeholderData: (prev) => prev,
   });
-  const days = validRange ? (wdRes?.workingDays ?? 0) : 0;
+  const rawWorkingDays = validRange ? (wdRes?.workingDays ?? 0) : 0;
+  // Half Day = exactly 0.5, allowed ONLY for a single working day (from === to, 1 working
+  // day). This is what makes a 0.5-day Comp Off balance usable. Falls back to Full Day
+  // automatically for a multi-day range.
+  const canHalfDay = rawWorkingDays === 1 && form.from === form.to;
+  const applyHalfDay = halfDay && canHalfDay;
+  const days = applyHalfDay ? 0.5 : rawWorkingDays;
+  useEffect(() => { if (!canHalfDay && halfDay) setHalfDay(false); }, [canHalfDay, halfDay]);
 
   // Current leave balance (self) — shown before applying (req 5) and used to build
   // the dynamic leave-type dropdown / block exhausted types (req 6, req 3).
@@ -665,10 +674,24 @@ function ApplyLeaveModal({ onClose, editLeave }) {
                   {wdLoading && !wdRes ? '…' : days}
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-indigo-900">day{days === 1 ? '' : 's'} of leave</p>
+                  <p className="text-sm font-bold text-indigo-900">{applyHalfDay ? 'half day of leave' : `day${days === 1 ? '' : 's'} of leave`}</p>
                   <p className="text-xs text-indigo-500">{form.from && format(new Date(form.from), 'dd MMM')} - {form.to && format(new Date(form.to), 'dd-MM-yyyy')}</p>
                 </div>
               </div>
+              {/* Full Day / Half Day — only for a single working day (enables 0.5-day Comp Off) */}
+              {canHalfDay && (
+                <div className="inline-flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
+                  {[['full', 'Full Day'], ['half', 'Half Day']].map(([v, label]) => {
+                    const active = (v === 'half') === halfDay;
+                    return (
+                      <button key={v} type="button" onClick={() => setHalfDay(v === 'half')}
+                        className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${active ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}>
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {days === 0 && !wdLoading && (
                 <p className="flex items-center gap-2 text-xs font-medium text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
                   <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" /> No working days selected. Please select at least one working day — weekends and company holidays don't count.

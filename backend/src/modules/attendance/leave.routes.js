@@ -412,8 +412,9 @@ router.post('/', async (req, res, next) => {
   try {
     // approverId (required) + cc (optional) are business inputs, not D365 columns
     // that should be blindly written — pull them out and resolve them server-side.
-    const { approverId, cc, medCertDocId, ...rest } = req.body;
+    const { approverId, cc, medCertDocId, halfDay, ...rest } = req.body;
     const body = { ...rest };
+    const isHalfDay = halfDay === true || halfDay === 'true';   // 0.5-day leave (single day)
 
     // Reason may be a full enterprise-length explanation (no artificial 100-char
     // cap). Reject ONLY beyond the Dataverse column max, with a clear message — the
@@ -454,7 +455,14 @@ router.post('/', async (req, res, next) => {
     if (workingDays <= 0) {
       return res.status(400).json({ error: 'No working days in the selected range. Please select at least one working day — weekends and company holidays do not count.' });
     }
-    body.hr_days = workingDays;
+    // Half-day leave = exactly 0.5 day, and only for a single working day (any leave
+    // type — Casual/Sick/Comp Off). This is what lets a 0.5-day Comp Off balance be
+    // used: hr_days becomes 0.5, so the Comp Off balance guard (0.5 ≤ 0.5) passes and
+    // approval consumes exactly 0.5 via the existing comp_off_used ledger entry.
+    if (isHalfDay && workingDays !== 1) {
+      return res.status(400).json({ error: 'Half-day leave can be applied for a single working day only.' });
+    }
+    body.hr_days = isHalfDay ? 0.5 : workingDays;
 
     // Balance guard (req 6): block a fully-exhausted Casual/Sick leave. The UI also
     // blocks it, but never trust the client. Best-effort — a lookup failure never
