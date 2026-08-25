@@ -249,10 +249,13 @@ export default function EmployeeDashboard() {
         )}
       </div>
 
-      {/* ── Attendance widget + Leave Summary ─────────────────────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+      {/* ── Attendance + Leave Summary (left) · Monthly Hour Balance (right) ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 xl:items-start">
+        {/* Left column — Today's Attendance + Leave Summary stacked, so the column
+            fills the height beside the taller Monthly Hour Balance (no dead space). */}
+        <div className="xl:col-span-2 space-y-5">
         {/* Attendance widget */}
-        <div className="xl:col-span-2 bg-white rounded-xl border border-gray-100 p-5">
+        <div className="bg-white rounded-xl border border-gray-100 p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <ClockIcon className="w-5 h-5 text-indigo-500" />
@@ -302,9 +305,6 @@ export default function EmployeeDashboard() {
           )}
         </div>
 
-        {/* Monthly cumulative hour balance */}
-        <MonthlyBalanceCard />
-
         {/* Leave Summary */}
         <div className="bg-white rounded-xl border border-gray-100 p-5">
           <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
@@ -327,7 +327,7 @@ export default function EmployeeDashboard() {
                 className="h-8 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-700 outline-none w-full" />
             </div>
           )}
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             {leaveCards.length
               ? leaveCards.map(c => (
                 <div key={c.label} className={`rounded-xl px-3 py-2.5 ${c.tone}`}>
@@ -339,6 +339,10 @@ export default function EmployeeDashboard() {
               : Array.from({ length: 4 }).map((_, i) => <div key={i} className="rounded-xl bg-gray-50 h-[74px] animate-pulse" />)}
           </div>
         </div>
+        </div>
+
+        {/* Monthly cumulative hour balance (right column, full height) */}
+        <MonthlyBalanceCard />
       </div>
 
       {/* ── Leave Balance (allocation-based, auto-calculated) ─────────────── */}
