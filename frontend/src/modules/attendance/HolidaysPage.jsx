@@ -63,7 +63,7 @@ export default function HolidaysPage() {
           <button onClick={() => startEdit(h)} className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50" title="Edit">
             <PencilSquareIcon className="w-4 h-4" />
           </button>
-          <button onClick={() => remove.mutate(h.id)} disabled={remove.isPending}
+          <button onClick={() => { if (window.confirm(`Remove the holiday "${h.name}" (${fmt(h.date)})? This cannot be undone.`)) remove.mutate(h.id); }} disabled={remove.isPending}
             className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50" title="Remove">
             <TrashIcon className="w-4 h-4" />
           </button>

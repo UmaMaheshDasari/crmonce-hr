@@ -110,6 +110,9 @@ export default function LeaveOpeningBalancePage() {
     },
     onSuccess: () => {
       toast.success(isEdit ? 'Opening balance updated' : 'Opening balance created');
+      // Reset the form so it doesn't stay stuck in "Edit — reason required" mode for the
+      // just-saved employee (isEdit is derived from form.employeeId matching a row).
+      setForm({ employeeId: '', casualUsed: 0, sickUsed: 0, earnedUsed: 0, lopUsed: 0, compOff: 0, remarks: '', reason: '' });
       qc.invalidateQueries({ queryKey: ['leave-opening'] });
       qc.invalidateQueries({ queryKey: ['leave-balance'] });
     },
@@ -210,7 +213,7 @@ export default function LeaveOpeningBalancePage() {
                     <div className="flex items-center gap-1.5 justify-end">
                       <button onClick={() => pickEmployee(r.employeeId)} className="px-2 py-1 text-xs font-semibold text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100">Edit</button>
                       <button onClick={() => setAuditFor({ employeeId: r.employeeId, name: r.employeeName })} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"><ClockIcon className="w-3.5 h-3.5" /> History</button>
-                      <button onClick={() => del.mutate(r.id)} className="px-2 py-1 text-xs font-semibold text-red-600 bg-red-50 rounded-lg hover:bg-red-100">Delete</button>
+                      <button onClick={() => { if (window.confirm(`Delete the ${year} opening balance for ${r.employeeName || 'this employee'}? This reverses their migrated leave balance and cannot be undone.`)) del.mutate(r.id); }} className="px-2 py-1 text-xs font-semibold text-red-600 bg-red-50 rounded-lg hover:bg-red-100">Delete</button>
                     </div>
                   </td>
                 </tr>
