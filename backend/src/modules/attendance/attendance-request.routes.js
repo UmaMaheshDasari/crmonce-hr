@@ -16,7 +16,7 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
 const { toValue } = require('../../services/picklist');   // only hr_attendance_status (a real Choice) uses this
-const { computeSession, punchesFromRecord } = require('../../services/attendance.util');
+const { computeSession, punchesFromRecord, earlyLogoutHours } = require('../../services/attendance.util');
 const { insertPunchTime, detectMissingPunches, PUNCH_TYPES, NON_PUNCH_TYPES } = require('../../services/missing-punch.util');
 const attnCfg = require('../../services/attendance.config');
 const time = require('../../services/time.util');
@@ -124,14 +124,30 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     const { attendanceDate, punchType, requestedTime, reason, remarks, attachmentUrl, adjustmentHours } = req.body;
     const dateOnly = String(attendanceDate || '').slice(0, 10);
     const isAdjustment = punchType === 'hour_adjustment';
-    if (!PUNCH_TYPES[punchType]) return res.status(400).json({ error: 'Invalid correction type' });
+    const isEarlyLogout = punchType === 'early_logout';
+    const fullDay = require('../../services/company.policy').attendance.fullDayExpectedHours();
+    let computedHours = 0;   // approved hours to store (adjustment / early logout)
+    if (!PUNCH_TYPES[punchType]) return res.status(400).json({ error: 'Invalid request type' });
     if (isAdjustment) {
       // Hour Adjustment: needs date + hours (0 < h ≤ full-day) + reason. No punch time.
-      const fullDay = require('../../services/company.policy').attendance.fullDayExpectedHours();
       const hrs = Number(adjustmentHours);
       if (!attendanceDate) return res.status(400).json({ error: 'Attendance date is required' });
       if (!Number.isFinite(hrs) || hrs <= 0) return res.status(400).json({ error: 'Adjustment hours must be greater than 0' });
       if (hrs > fullDay) return res.status(400).json({ error: `Adjustment hours cannot exceed the full-day requirement (${fullDay}h)` });
+      computedHours = hrs;
+    } else if (isEarlyLogout) {
+      // Early Logout: needs date + requested LOGOUT time + reason. Hours are computed
+      // automatically = scheduled shift end − requested logout, under the shift EFFECTIVE
+      // on that date (shift-history aware) — the employee never types hours (§3/§4).
+      if (!(await require('../../services/payroll-settings.service').getResolved()).attendanceRules?.enableEarlyLogout) {
+        return res.status(403).json({ error: 'Early Logout requests are disabled in Company Settings.' });
+      }
+      if (!attendanceDate || !requestedTime) return res.status(400).json({ error: 'Attendance date and requested logout time are required' });
+      if (!/^\d{1,2}:\d{2}$/.test(requestedTime)) return res.status(400).json({ error: 'Requested logout time must be HH:MM' });
+      const shift = await require('../../services/shift-history.service').resolveShiftForDate(req.user.id, dateOnly);
+      const el = earlyLogoutHours(shift, requestedTime);
+      if (!(el > 0)) return res.status(400).json({ error: 'Early Logout time must be before your scheduled shift end time.' });
+      computedHours = Math.min(el, fullDay);   // cap at a full day (safety)
     } else {
       if (!attendanceDate || !requestedTime) {
         return res.status(400).json({ error: 'Attendance date, correction type and correct time are required' });
@@ -152,13 +168,17 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
 
     // Every value is a STRING — hr_punchtype and hr_status are Edm.String (Text)
     // columns in Dataverse, so we store the string code, never an option-set int.
+    const kindTitle = isAdjustment ? 'Hour Adjustment' : isEarlyLogout ? 'Early Logout' : 'Attendance Correction';
+    const grantsHours = isAdjustment || isEarlyLogout;   // stores hours, no punch time correction
     const body = {
-      hr_name: `${isAdjustment ? 'Hour Adjustment' : 'Attendance Correction'} — ${req.user.name} — ${dateOnly}`,
+      hr_name: `${kindTitle} — ${req.user.name} — ${dateOnly}`,
       hr_employeeid: req.user.id, hr_employeename: req.user.name, hr_employeeemail: req.user.email || '',
       hr_attendancedate: String(attendanceDate).slice(0, 10),
-      hr_punchtype: String(punchType),          // 'hour_adjustment' | 'missing_check_out' | …  (Text)
-      hr_requestedtime: isAdjustment ? '' : String(requestedTime),  // 'HH:MM' (Text); N/A for an adjustment
-      hr_adjustmenthours: isAdjustment ? String(Number(adjustmentHours)) : '',   // approved hours (Text) for adjustments
+      hr_punchtype: String(punchType),          // 'hour_adjustment' | 'early_logout' | 'missing_check_out' | …
+      // For Early Logout, hr_requestedtime holds the requested LOGOUT time (HH:MM); for a
+      // correction it is the punch time; for a plain adjustment it is unused.
+      hr_requestedtime: grantsHours && !isEarlyLogout ? '' : String(requestedTime || ''),
+      hr_adjustmenthours: grantsHours ? String(computedHours) : '',   // granted hours (Text)
       hr_reason: reason || '', hr_remarks: remarks || '', hr_attachmenturl: attachmentUrl || '',
       hr_status: 'pending',                     // Text
     };
@@ -171,19 +191,20 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
     const created = await robustCreateRequest(body);
 
     // Activity + emails (best-effort, never block the response).
-    const detailValue = isAdjustment ? `${Number(adjustmentHours)}h adjustment` : `@ ${requestedTime}`;
-    const moduleTitle = isAdjustment ? 'Hour Adjustment' : 'Attendance Correction';
-    activity.record({ category: 'Attendance', type: 'correction_submitted', title: `${moduleTitle} Request`,
+    const detailValue = isEarlyLogout ? `logout ${requestedTime} (${computedHours}h)`
+      : isAdjustment ? `${computedHours}h adjustment` : `@ ${requestedTime}`;
+    activity.record({ category: 'Attendance', type: 'correction_submitted', title: `${kindTitle} Request`,
       name: req.user.name, meta: `${PUNCH_TYPES[punchType]} ${detailValue} on ${dateOnly}` });
-    // Employee acknowledgement — FROM the employee's own mailbox. (moduleTitle overrides
+    // Employee acknowledgement — FROM the employee's own mailbox. (kindTitle overrides
     // the display name for THIS email only; the DECISION email keeps its wording.)
-    requestNotify.emailApplyAcknowledgement({ type: 'missing_punch', moduleTitle: `${moduleTitle}`, toEmail: req.user.email, employeeName: req.user.name, approverName: 'HR' });
+    requestNotify.emailApplyAcknowledgement({ type: 'missing_punch', moduleTitle: kindTitle, toEmail: req.user.email, employeeName: req.user.name, approverName: 'HR' });
     // ONE actionable email to the WHOLE authorized HR queue (all active Super Admin +
     // HR Manager) on the TO line, no CC. FROM = the employee's own mailbox.
+    const detailRow = isEarlyLogout ? ['Requested Logout', `${requestedTime} · ${computedHours}h early`]
+      : isAdjustment ? ['Adjustment Hours', `${computedHours}h`] : ['Requested Time', requestedTime];
     requestNotify.emailCorrectionRequestToHR({
       recordId: created.hr_attendancerequestid, actor: req.user,
-      details: [['Date', time.fmtDate(attendanceDate)], ['Type', PUNCH_TYPES[punchType]],
-        [isAdjustment ? 'Adjustment Hours' : 'Requested Time', isAdjustment ? `${Number(adjustmentHours)}h` : requestedTime],
+      details: [['Date', time.fmtDate(attendanceDate)], ['Type', PUNCH_TYPES[punchType]], detailRow,
         ['Reason', reason || '—']],
       applyTime: new Date().toISOString(),
     }).catch(() => {});

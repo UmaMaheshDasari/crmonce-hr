@@ -78,13 +78,16 @@ export default function MonthlyBalanceCard({ employeeId }) {
         <p className="text-sm text-gray-400 py-6 text-center">Calculating…</p>
       ) : (
         <>
-          {/* ── Required hours — Working Days × 9, reduced by approved leave + adjustments ── */}
+          {/* ── Required hours — Working Days × 9, reduced by leave + adjustments + early logout ── */}
           <SectionLabel>Required Hours</SectionLabel>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
             <Stat label="Working Days" value={Number(data?.workingDays ?? 0)} />
             <Stat label="Base Required" value={hrs(data?.baseRequiredHours)} />
             <Stat label="Approved Leave" value={hrs(data?.approvedLeaveHours)} tone="text-sky-700" />
-            <Stat label="Approved Adjustment" value={hrs(data?.approvedAdjustmentHours)} tone="text-violet-700" />
+            <Stat label="Approved Adjustment" value={hrs(data?.approvedHourAdjustmentHours)} tone="text-violet-700" />
+            {Number(data?.approvedEarlyLogoutHours) > 0 && (
+              <Stat label="Approved Early Logout" value={hrs(data?.approvedEarlyLogoutHours)} tone="text-violet-700" />
+            )}
           </div>
           <Band label="Final Required" value={hrs(data?.finalRequiredHours)} tone="indigo" />
 
@@ -111,7 +114,7 @@ export default function MonthlyBalanceCard({ employeeId }) {
           )}
 
           <p className="text-[11px] text-gray-400 mt-3">
-            Monthly hours are calculated independently. Working days × 9 hours gives the base required hours. Approved leave and HR-approved hour adjustments reduce the required hours for the days they apply to (an approved adjustment is not a deduction). Present and half-day hours use actual punch hours. The monthly difference is Total Worked Hours − Final Required Hours; a surplus on one day offsets a shortage on another within the same month. Positive hours do not carry forward. Only a negative monthly balance is deducted, using the employee's hourly rate. Absent days are handled separately as LOP.
+            Monthly hours are calculated independently. Working days × 9 hours gives the base required hours. Approved leave, HR-approved hour adjustments, and approved early logouts reduce the required hours for the days they apply to (none of these is a salary deduction, and actual worked hours are never changed). Present and half-day hours use actual punch hours. The monthly difference is Total Worked Hours − Final Required Hours; a surplus on one day offsets a shortage on another within the same month. Positive hours do not carry forward. Only a negative monthly balance is deducted, using the employee's hourly rate. Absent days are handled separately as LOP.
           </p>
         </>
       )}

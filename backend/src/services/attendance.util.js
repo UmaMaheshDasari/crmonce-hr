@@ -76,6 +76,24 @@ function classifyStatus(effectiveHours, punchCount, { fullDayMinHours = 7, openS
  */
 function statusForStorage(status) { return status === 'in_progress' ? 'incomplete' : status; }
 
+/**
+ * EARLY LOGOUT hours = scheduled shift end − requested logout time, under the given
+ * shift. Returns a positive number of hours when the requested logout is BEFORE shift
+ * end; 0 or negative means "not before shift end" (the caller rejects it — §5).
+ * Night-shift aware (an end past midnight, or a logout past midnight, add 1440).
+ * @param {object|string} shiftInput  shift object ({start,end,isNight}) or a shift code
+ * @param {string} requestedLogout    "HH:MM"
+ * @returns {number} hours (round2); <= 0 → invalid (not before shift end)
+ */
+function earlyLogoutHours(shiftInput, requestedLogout) {
+  const shift = (shiftInput && shiftInput.durationHours) ? shiftInput : cfg.resolveShift(shiftInput);
+  const startMin = toMin(shift.start);
+  const endMin = toMin(shift.end) + ((shift.isNight && toMin(shift.end) <= startMin) ? 1440 : 0);
+  let reqMin = toMin(requestedLogout);
+  if (shift.isNight && reqMin < startMin) reqMin += 1440;   // logout after midnight on a night shift
+  return round2((endMin - reqMin) / 60);
+}
+
 /** Expected credited hours for a day's status (monthly-balance preparation). */
 function expectedHoursFor(status, { fullDayExpectedHours = 9, halfDayExpectedHours = 5 } = {}) {
   if (status === 'present') return fullDayExpectedHours;
@@ -265,4 +283,4 @@ function computeFromPunches(rawPunches, shiftCode) {
   };
 }
 
-module.exports = { normalizePunches, punchesFromRecord, breakHours, buildSessions, computeSession, computeFromPunches, classifyStatus, classifyStatusLegacy, expectedHoursFor, statusForStorage, LATE_ENTRY_GRACE_MIN };
+module.exports = { normalizePunches, punchesFromRecord, breakHours, buildSessions, computeSession, computeFromPunches, classifyStatus, classifyStatusLegacy, expectedHoursFor, statusForStorage, earlyLogoutHours, LATE_ENTRY_GRACE_MIN };

@@ -243,3 +243,64 @@ test('buildMonthlyBalance: an OPEN session today is excluded (pending), no mid-d
     d365.getList = orig.gl; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds; time.istHHMM = orig.hh;
   }
 });
+
+// Shared harness for Early Logout / adjustment builder tests: one working day (Aug 25),
+// worked 6h49m, plus the approved Attendance-Requests returned by getListOptional.
+async function runEarlyLogoutCase(reqRows) {
+  const d365 = require('../src/services/d365.service');
+  const attnCfg = require('../src/services/attendance.config');
+  const shiftHistory = require('../src/services/shift-history.service');
+  const payrollSettings = require('../src/services/payroll-settings.service');
+  const time = require('../src/services/time.util');
+  const orig = { gl: d365.getList, glo: d365.getListOptional, woff: attnCfg.weekOffDays, sr: shiftHistory.shiftResolverFor, ps: payrollSettings.getResolved, ds: time.istDateStr, hh: time.istHHMM };
+  attnCfg.weekOffDays = []; attnCfg.setDynamicHolidays([]);
+  time.istDateStr = () => '2026-08-26'; time.istHHMM = () => '08:00';   // Aug 25 finalized
+  payrollSettings.getResolved = async () => ({ lateLogin: { graceMinutes: 15 } });
+  shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
+  d365.getListOptional = async () => ({ data: reqRows });
+  d365.getList = async (entity, opts) => {
+    if (entity === d365.constructor.entities.leave) return { data: [] };
+    if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-25' }] };
+    // Aug 25: 09:00–13:00, 13:49–16:38 → 6h49m worked (effective 6.81 after rounding).
+    return { data: [{ hr_hrattendanceid: 'c1', hr_date: '2026-08-25', hr_allpunches: JSON.stringify(['09:00', '13:00', '13:49', '16:38']), hr_punchcount: 4 }] };
+  };
+  try { return await buildMonthlyBalance({ employeeId: 'emp-el', year: 2026, month: 8 }); }
+  finally { d365.getList = orig.gl; d365.getListOptional = orig.glo; attnCfg.weekOffDays = orig.woff; shiftHistory.shiftResolverFor = orig.sr; payrollSettings.getResolved = orig.ps; time.istDateStr = orig.ds; time.istHHMM = orig.hh; }
+}
+
+// ── §29 TEST 5: approved Early Logout reduces required hours → no deduction ──
+test('buildMonthlyBalance: 6h49m + APPROVED 3h Early Logout → +49m, no deduction', async () => {
+  const r = await runEarlyLogoutCase([{ hr_attendancedate: '2026-08-25', hr_punchtype: 'early_logout', hr_status: 'approved', hr_adjustmenthours: '3' }]);
+  assert.equal(r.approvedEarlyLogoutHours, 3);
+  assert.equal(r.approvedHourAdjustmentHours, 0);
+  assert.equal(r.approvedAdjustmentHours, 3);     // total reduction feeding Final Required
+  assert.equal(r.finalRequiredHours, 6);          // 9 − 3 early logout
+  assert.equal(r.totalWorkedHours, 6.81);         // ACTUAL worked (unchanged by early logout)
+  assert.equal(r.monthlyDifference, 0.81);        // +49m
+  assert.equal(r.shortageHours, 0);
+});
+
+// ── §29 TEST 6/7: pending or rejected Early Logout does NOT reduce required hours ──
+test('buildMonthlyBalance: PENDING/REJECTED Early Logout → no reduction, shortage stands', async () => {
+  // The builder filters hr_status eq 'approved'; a non-approved row is never returned.
+  const r = await runEarlyLogoutCase([]);           // nothing approved
+  assert.equal(r.approvedEarlyLogoutHours, 0);
+  assert.equal(r.finalRequiredHours, 9);          // full 9h required
+  assert.equal(r.totalWorkedHours, 6.81);
+  assert.equal(r.monthlyDifference, -2.19);       // −2h11m shortage
+  assert.equal(r.shortageHours, 2.19);
+});
+
+// ── §29 TEST 8: Late Login (as hour adjustment) + Early Logout stack on required ──
+test('buildMonthlyBalance: 1h hour-adjustment + 2h early logout → 3h off required (§11)', async () => {
+  const r = await runEarlyLogoutCase([
+    { hr_attendancedate: '2026-08-25', hr_punchtype: 'hour_adjustment', hr_status: 'approved', hr_adjustmenthours: '1' },
+    { hr_attendancedate: '2026-08-25', hr_punchtype: 'early_logout', hr_status: 'approved', hr_adjustmenthours: '2' },
+  ]);
+  assert.equal(r.approvedHourAdjustmentHours, 1);
+  assert.equal(r.approvedEarlyLogoutHours, 2);
+  assert.equal(r.approvedAdjustmentHours, 3);     // 1 + 2 both reduce required
+  assert.equal(r.finalRequiredHours, 6);          // 9 − 3
+  assert.equal(r.monthlyDifference, 0.81);        // 6.81 − 6 → +49m, no shortage
+  assert.equal(r.shortageHours, 0);
+});

@@ -1,10 +1,27 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { computeSession, computeFromPunches, punchesFromRecord, normalizePunches } = require('../src/services/attendance.util');
+const { computeSession, computeFromPunches, punchesFromRecord, normalizePunches, earlyLogoutHours } = require('../src/services/attendance.util');
 
 // Default shift = GENERAL 09:00–18:00 (9h). Daily rule (fixed): >=7h Full Day,
 // >0 & <7h Half Day, no punch Absent. No 'incomplete' status.
 const S = (start, end, dur, night = false) => ({ code: 'X', name: 'X', start, end, durationHours: dur, isNight: night });
+
+// ── Early Logout hours = shift end − requested logout (§29 TEST 1–4) ───────────
+test('§29 Early Logout: shift 09:00-18:00, logout 15:00 → 3h', () => {
+  assert.strictEqual(earlyLogoutHours(S('09:00', '18:00', 9), '15:00'), 3);
+});
+test('§29 Early Logout: logout 16:30 → 1.5h (1h30m)', () => {
+  assert.strictEqual(earlyLogoutHours(S('09:00', '18:00', 9), '16:30'), 1.5);
+});
+test('§29 Early Logout: logout 18:00 (= shift end) → 0 → invalid/reject', () => {
+  assert.ok(earlyLogoutHours(S('09:00', '18:00', 9), '18:00') <= 0);
+});
+test('§29 Early Logout: logout 19:00 (after shift end) → negative → invalid/reject', () => {
+  assert.ok(earlyLogoutHours(S('09:00', '18:00', 9), '19:00') <= 0);
+});
+test('Early Logout respects the employee shift (10:00-19:00, logout 17:30 → 1.5h)', () => {
+  assert.strictEqual(earlyLogoutHours(S('10:00', '19:00', 9), '17:30'), 1.5);
+});
 
 test('single punch (open session) → IN, in_progress (NOT Half Day, NOT Absent)', () => {
   const c = computeSession(['09:00']);

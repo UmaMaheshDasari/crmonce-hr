@@ -24,13 +24,18 @@ const PUNCH_TYPES = {
   // Approved HOUR ADJUSTMENT: HR grants N hours that reduce THAT day's required
   // working hours (not a punch correction — no attendance record is changed).
   hour_adjustment: 'Hour Adjustment',
+  // Approved EARLY LOGOUT: employee is permitted to leave before shift end; the
+  // granted hours (shift end − requested logout) reduce THAT day's required hours.
+  // Same effect as an hour adjustment; no punch/attendance record is changed.
+  early_logout: 'Early Logout',
   // legacy values kept for backward compatibility with existing records:
   lunch_out: 'Missed Break Out',
   lunch_in: 'Missed Break In',
 };
 
-// Request types that DON'T insert a punch / touch the attendance record on approval.
-const NON_PUNCH_TYPES = new Set(['hour_adjustment']);
+// Request types that DON'T insert a punch / touch the attendance record on approval —
+// they only grant hours that reduce the day's required working hours.
+const NON_PUNCH_TYPES = new Set(['hour_adjustment', 'early_logout']);
 
 /**
  * Analyse a set of punches and report likely missing punches. Signals:

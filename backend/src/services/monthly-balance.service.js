@@ -4,7 +4,7 @@
  * SIMPLE, transparent monthly calculation from ACTUAL attendance punches:
  *   Base Required Hours  = Working Days × 9h            (every scheduled working day = 9h)
  *   Approved Leave Hours = full leave × 9h + half leave × 5h   (reduces the requirement)
- *   Approved Adjustment  = Σ HR-approved hour adjustments for the days they apply to
+ *   Approved Adjustment  = Σ approved hour-adjustments + approved early-logouts (the days they apply to)
  *   Final Required Hours = Base Required − Approved Leave − Approved Adjustment − (Absent Days × 9h)
  *   Total Worked Hours   = Σ actual punch hours of Present days + Half days
  *   Monthly Difference   = Total Worked Hours − Final Required Hours
@@ -124,20 +124,26 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
     from, capTo,
   ).get(employeeId) || new Map();
 
-  // Approved HOUR ADJUSTMENTS (from the Attendance Request approval system) → date → hours.
-  // HR-granted hours that reduce ONLY that day's required working hours (§2). Read-only;
-  // column is optional so this degrades to "no adjustments" until one is ever created.
+  // Approved required-hour REDUCTIONS (from the Attendance Request approval system) →
+  // date → { adj, el }. Two kinds both reduce ONLY that day's required working hours:
+  //   • hour_adjustment — HR-granted hours (§2)
+  //   • early_logout    — permitted early leave; granted hours = shift end − requested logout
+  // Read-only; the hours column is optional so this degrades to "none" until one exists.
   const adjMap = new Map();
   try {
     const REQ = d365.constructor.entities.attendanceRequest;
-    const { data: adjustments } = await d365.getListOptional(REQ, {
+    const { data: reqs } = await d365.getListOptional(REQ, {
       select: 'hr_attendancedate,hr_punchtype,hr_status', optionalSelect: 'hr_adjustmenthours',
-      filter: `hr_employeeid eq '${employeeId}' and hr_status eq 'approved' and hr_punchtype eq 'hour_adjustment'`,
+      filter: `hr_employeeid eq '${employeeId}' and hr_status eq 'approved' and (hr_punchtype eq 'hour_adjustment' or hr_punchtype eq 'early_logout')`,
     });
-    for (const a of (adjustments || [])) {
+    for (const a of (reqs || [])) {
       const ds = String(a.hr_attendancedate || '').slice(0, 10);
       const h = Number(a.hr_adjustmenthours) || 0;
-      if (ds && h > 0) adjMap.set(ds, round2((adjMap.get(ds) || 0) + h));   // sum multiple approvals on a day
+      if (!ds || !(h > 0)) continue;
+      const cur = adjMap.get(ds) || { adj: 0, el: 0 };
+      if (a.hr_punchtype === 'early_logout') cur.el = round2(cur.el + h);
+      else cur.adj = round2(cur.adj + h);
+      adjMap.set(ds, cur);
     }
   } catch { /* table/column not provisioned yet → no adjustments */ }
 
@@ -153,6 +159,7 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
   const fd = fullDayExpected();   // 9 (configurable via Company Settings)
   let workingDays = 0, presentDays = 0, presentWorkedHours = 0, halfDays = 0, halfWorkedHours = 0;
   let absentDays = 0, approvedLeaveDays = 0, approvedLeaveHours = 0, approvedAdjustmentHours = 0, adjustedDays = 0;
+  let approvedHourAdjustmentHours = 0, approvedEarlyLogoutHours = 0;   // breakdown of the reduction (display)
   const end = new Date(`${capTo}T00:00:00Z`);
   for (let d = new Date(`${effFrom}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
@@ -186,8 +193,14 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
       // An approved HOUR ADJUSTMENT reduces THIS day's required hours (capped at a full
       // day) — applied on attended days only, so it is never double-counted with leave
       // (already 0 required) or absent (separate LOP).
-      const adj = Math.min(num(adjMap.get(ds)), fd);
-      if (adj > 0) { approvedAdjustmentHours = round2(approvedAdjustmentHours + adj); adjustedDays++; }
+      const cur = adjMap.get(ds) || { adj: 0, el: 0 };
+      const combined = Math.min(round2(cur.adj + cur.el), fd);   // total reduction for the day, capped
+      if (combined > 0) {
+        approvedAdjustmentHours = round2(approvedAdjustmentHours + combined);   // feeds Final Required
+        approvedHourAdjustmentHours = round2(approvedHourAdjustmentHours + cur.adj);
+        approvedEarlyLogoutHours = round2(approvedEarlyLogoutHours + cur.el);
+        adjustedDays++;
+      }
       if (worked.status === 'present') { presentDays++; presentWorkedHours += num(worked.effectiveHours); }
       else { halfDays++; halfWorkedHours += num(worked.effectiveHours); }   // half_day or past in_progress
     } else {
@@ -202,7 +215,9 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
     presentDays, presentWorkedHours: round2(presentWorkedHours),
     halfDays, halfWorkedHours: round2(halfWorkedHours),
     absentDays, approvedLeaveDays, adjustedDays,
-    ...summary,   // baseRequiredHours, approvedLeaveHours, approvedAdjustmentHours, finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours
+    approvedHourAdjustmentHours: round2(approvedHourAdjustmentHours),
+    approvedEarlyLogoutHours: round2(approvedEarlyLogoutHours),
+    ...summary,   // baseRequiredHours, approvedLeaveHours, approvedAdjustmentHours (total), finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours
   };
 }
 

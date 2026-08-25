@@ -80,7 +80,9 @@ export default function AttendanceRequestsPage() {
                   <td className="px-4 py-3 text-gray-600">{r.date}</td>
                   <td className="px-4 py-3 text-gray-600">{r.punchTypeLabel}</td>
                   <td className="px-4 py-3 font-semibold text-gray-800 tabular-nums">
-                    {r.punchType === 'hour_adjustment' ? `${r.adjustmentHours}h adjustment` : r.requestedTime}
+                    {r.punchType === 'hour_adjustment' ? `${r.adjustmentHours}h adjustment`
+                      : r.punchType === 'early_logout' ? `${r.requestedTime} · ${r.adjustmentHours}h early`
+                      : r.requestedTime}
                   </td>
                   <td className="px-4 py-3 text-gray-500 max-w-[220px] truncate" title={r.reason}>{r.reason}</td>
                   <td className="px-4 py-3">

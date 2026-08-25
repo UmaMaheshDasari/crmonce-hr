@@ -77,6 +77,7 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   hr_halfdaylopfromshortage: 'false',       // do NOT convert shortage → 0.5 day LOP
   hr_fulldaylopfromshortage: 'false',       // do NOT convert shortage → 1 day LOP
   hr_absentcreateslop: 'true',              // an absent working day (no leave) → LOP
+  hr_enableearlylogout: 'true',             // allow Early Logout requests (approved → reduces required hours)
   hr_hourlydeductionbasis: 'Employee Hourly Rate',
   hr_ruleversion: 'v1',
   // ── Default salary components applied to a new employee's Salary Structure.
@@ -226,6 +227,7 @@ function resolve(settings = null) {
       halfDayLopFromShortage: bool(g.hr_halfdaylopfromshortage),
       fullDayLopFromShortage: bool(g.hr_fulldaylopfromshortage),
       absentCreatesLop: bool(g.hr_absentcreateslop),
+      enableEarlyLogout: bool(g.hr_enableearlylogout),
       hourlyDeductionBasis: g.hr_hourlydeductionbasis || 'Employee Hourly Rate',
       ruleVersion: g.hr_ruleversion || 'v1',
     },
