@@ -15,6 +15,7 @@
  */
 const cfg = require('./attendance.config');
 const policy = require('./company.policy');
+const time = require('./time.util');   // company-timezone (IST) "today" — IN PROGRESS is today-only
 
 const toMin = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -200,10 +201,15 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   const dateStr = opts.date ? String(opts.date).slice(0, 10) : null;
   const useNewRules = !dateStr || dateStr >= policy.attendance.newRulesFrom();
   const legacyHalfThreshold = Number.isFinite(opts.halfDayThreshold) ? opts.halfDayThreshold : policy.attendance.halfDayThreshold(shift.durationHours);
-  // An OPEN session (last punch is a check-IN) means the employee is still working —
-  // the day is NOT finalized, so it is 'in_progress', never Half Day / Present / Absent.
-  // Legacy (pre-cutoff) days keep the historical 'incomplete' for an odd punch.
-  const openSession = state === 'in';
+  // IN PROGRESS is a LIVE state for TODAY ONLY. An open session (last punch is a
+  // check-IN) is 'in_progress' only when the attendance date is today (company IST) —
+  // or when NO date is supplied (a live/current computation, e.g. web check-in). A
+  // PREVIOUS date with an open / missing-OUT punch is FINALIZED by its actual worked
+  // hours (present / half / below-half), never 'in_progress' (§3/§6); the missing OUT
+  // is surfaced separately via attendanceIssue / Missed Punch. Legacy (pre-cutoff)
+  // days keep the historical 'incomplete' for an odd punch.
+  const isToday = !dateStr || dateStr === time.istDateStr();
+  const openSession = state === 'in' && isToday;
   const status = useNewRules
     ? classifyStatus(effectiveHours, count, { fullDayMinHours, openSession })
     : classifyStatusLegacy(effectiveHours, count, legacyHalfThreshold);
