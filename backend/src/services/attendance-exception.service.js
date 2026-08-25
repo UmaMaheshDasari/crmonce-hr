@@ -189,6 +189,81 @@ async function approvedLeaveEmployees(date) {
   return set;
 }
 
+/** Employees with a VALID leave covering `date` — APPROVED or PENDING (anything except
+ *  rejected/cancelled) → suppress the absent notice (respects the existing HR rule that a
+ *  pending or approved leave request means the employee did apply leave for that day). */
+async function validLeaveEmployees(date) {
+  const set = new Set();
+  try {
+    const { toLabel } = require('./picklist');
+    const { data } = await d365.getList(LEAVE, { select: '_hr_hremployee_value,hr_fromdate,hr_todate,hr_status', top: 5000 });
+    for (const l of data || []) {
+      const st = String(toLabel('hr_leave_status', l.hr_status) || '').toLowerCase();
+      if (st === 'rejected' || st === 'cancelled' || st === 'canceled') continue;   // not a valid leave
+      const lf = String(l.hr_fromdate || '').slice(0, 10), lt = String(l.hr_todate || '').slice(0, 10) || lf;
+      if (lf && lf <= date && lt >= date) set.add(l._hr_hremployee_value);
+    }
+  } catch (_) { /* best-effort — a leave read failure never blocks the sweep */ }
+  return set;
+}
+
+/** PURE decision (unit-testable, no I/O): notify only for a WORKING day where the employee
+ *  was employed & active, has NO punch, and has NO valid leave covering the date. */
+function shouldNotifyAbsentNoLeave({ isWorkingDay, employed = true, hasPunch, onValidLeave }) {
+  return !!isWorkingDay && !!employed && !hasPunch && !onValidLeave;
+}
+
+/** Previous IST civil day for `dateStr` (default: yesterday) — safe date math, no UTC shift. */
+function previousBusinessDate(dateStr) {
+  const base = dateStr || time.istDateStr();
+  return String(new Date(new Date(`${base}T00:00:00Z`).getTime() - 86400000).toISOString()).slice(0, 10);
+}
+
+/**
+ * NEXT-DAY "Absent + no leave applied" sweep. Runs once daily and judges the PREVIOUS
+ * working day (IST civil date). For every ACTIVE employee who was employed that day, had
+ * NO punch (absent) and has NO valid leave (approved/pending) covering it, send ONE email
+ * — deduped by the notification ledger (employee + date + ABSENT_LEAVE_NOT_APPLIED), so
+ * re-runs / a restart / multiple PM2 workers never duplicate. Skips weekly-off & holidays
+ * (not a working day → nobody is "absent"). This ONLY notifies — it never marks LOP.
+ */
+async function sweepAbsentNoLeave({ date } = {}) {
+  if (!ecfg.notify.absentNoLeaveNotice) return { skipped: 'disabled' };
+  const d = date || previousBusinessDate();                 // the day being judged (yesterday)
+  if (!isWorkingDayFor(d)) return { skipped: 'non_working_day', date: d };
+
+  let emps = [], recs = [], leaveSet = new Set();
+  try {
+    const activeVal = require('./picklist').toValue('hr_employee_status', 'active');
+    const [e, r, lv] = await Promise.all([
+      d365.getListOptional(EMP, { select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_joiningdate', optionalSelect: 'hr_relievingdate', filter: `hr_status eq ${activeVal}`, top: 5000 }),
+      d365.getList(ATT, { select: PUNCH_SELECT, filter: `hr_date eq ${d}`, top: 5000 }),   // that day's records
+      validLeaveEmployees(d),
+    ]);
+    emps = e.data || []; recs = r.data || []; leaveSet = lv;
+  } catch (err) { global.logger?.error?.(`[absent-no-leave] read failed: ${err.message}`); return { scanned: 0, notified: 0, date: d }; }
+
+  // An employee is present if they have ANY punch that day; otherwise absent.
+  const hasPunchByEmp = new Map();
+  for (const rec of recs) hasPunchByEmp.set(rec._hr_hremployee_value, punchesFromRecord(rec).length > 0);
+
+  let scanned = 0, notified = 0;
+  for (const emp of emps) {
+    scanned++;
+    const id = emp.hr_hremployeeid;
+    const employed = !(emp.hr_joiningdate && d < String(emp.hr_joiningdate).slice(0, 10))
+      && !(emp.hr_relievingdate && d > String(emp.hr_relievingdate).slice(0, 10));
+    if (!shouldNotifyAbsentNoLeave({ isWorkingDay: true, employed, hasPunch: !!hasPunchByEmp.get(id), onValidLeave: leaveSet.has(id) })) continue;
+    const to = emp.hr_email;
+    if (!to || requestNotify.isPlaceholderEmail(to)) continue;
+    const { subject, html } = templates.absentNoLeaveNotice({ employeeName: emp.hr_hremployee1, date: time.fmtDate(d) });
+    const res = await ledger.sendOnce({ employeeId: id, date: d, type: 'ABSENT_LEAVE_NOT_APPLIED', to, subject, html, entity: 'attendance' });
+    if (!res?.skipped) notified++;
+  }
+  global.logger?.info?.(`[absent-no-leave] ${d}: scanned ${scanned}, notified ${notified}`);
+  return { scanned, notified, date: d };
+}
+
 /**
  * Same-day Late Login sweep. Run frequently (cron every 15 min). For every active employee
  * whose late-entry deadline (shift start + grace) has passed TODAY, send today's
@@ -322,4 +397,4 @@ async function runScan({ days = 3, reminder = false } = {}) {
   return { scanned: recs.length, notified };
 }
 
-module.exports = { openExceptionsForEmployee, runScan, notifyException, sendLateLoginNotice, sweepTodayLateLogins, shouldNotifyLateLogin };
+module.exports = { openExceptionsForEmployee, runScan, notifyException, sendLateLoginNotice, sweepTodayLateLogins, shouldNotifyLateLogin, sweepAbsentNoLeave, shouldNotifyAbsentNoLeave, validLeaveEmployees, previousBusinessDate };

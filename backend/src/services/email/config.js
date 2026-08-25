@@ -37,6 +37,10 @@ module.exports = {
     // the ledger) when a check-in is past the 5-minute grace. ON by default; set
     // NOTIFY_LATE_LOGIN=false to disable. Dedupe always applies (§9).
     lateLoginNotice: process.env.NOTIFY_LATE_LOGIN !== 'false',
+    // Next-day "Absent + no leave applied" email to the EMPLOYEE (ONE per employee/date
+    // via the ledger): when a working day is marked Absent and no leave request covers it,
+    // remind them to apply leave or the day is LOP. ON by default; NOTIFY_ABSENT_NO_LEAVE=false disables.
+    absentNoLeaveNotice: process.env.NOTIFY_ABSENT_NO_LEAVE !== 'false',
   },
   teams: {
     enabled:    !!process.env.TEAMS_WEBHOOK_URL,

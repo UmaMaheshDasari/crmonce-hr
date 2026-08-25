@@ -42,6 +42,16 @@ function initJobs() {
       cron.schedule('*/15 * * * *', () => exceptions.sweepTodayLateLogins().catch(e => global.logger?.error(`[late-login-sweep] ${e.message}`)), opts);
       global.logger?.info('Same-day Late Login sweep scheduled (every 15 min, IST)');
     }
+    // NEXT-DAY "Absent + no leave applied": once daily at 09:30 IST, judge YESTERDAY —
+    // every active employee marked Absent on a working day with no valid leave gets ONE
+    // email to apply leave (or the day is LOP). Deduped by the notification ledger, so a
+    // re-run / restart / multiple PM2 workers never duplicate. Disable with NOTIFY_ABSENT_NO_LEAVE=false.
+    if (process.env.NOTIFY_ABSENT_NO_LEAVE !== 'false') {
+      cron.schedule('30 9 * * *', () => exceptions.sweepAbsentNoLeave()
+        .then(r => { if (r?.notified) global.logger?.info(`[absent-no-leave] ${r.date}: notified ${r.notified}/${r.scanned}`); })
+        .catch(e => global.logger?.error(`[absent-no-leave] ${e.message}`)), opts);
+      global.logger?.info('Absent-without-leave next-day notice scheduled (09:30 IST daily, previous day)');
+    }
     global.logger?.info('Attendance exception scans scheduled (21:30 nightly, 09:00 reminders, IST)');
   }
 

@@ -398,6 +398,30 @@ function lateLoginApplyPrompt(d) {
 }
 
 /**
+ * Absent + no leave applied — informational notice sent to the EMPLOYEE the NEXT day.
+ * Marked Absent on a working day with no leave request → apply leave or the day may be
+ * LOP. Deduped by the notification ledger (ONE per employee + attendance date).
+ * d: { employeeName, date (DD-MM-YYYY) }
+ */
+function absentNoLeaveNotice(d) {
+  const subject = `Leave Not Applied – Attendance Marked Absent`;
+  const applyUrl = `${cfg.brand.appUrl}/leave`;
+  const content =
+    greet(d.employeeName) +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">You were marked <strong>Absent</strong> on <strong>${esc(d.date)}</strong> because <strong>no leave request</strong> was applied for that day.</p>` +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Please apply your leave request for <strong>${esc(d.date)}</strong>. Otherwise, the day will be considered as <strong>LOP</strong> (Loss of Pay) according to HR policy.</p>` +
+    summaryCard('Attendance', [
+      ['Employee', esc(d.employeeName || '—')],
+      ['Date', esc(d.date)],
+      ['Attendance Status', statusBadge('Absent')],
+      ['Leave Applied', 'No'],
+    ]) +
+    `<div style="text-align:center;margin:22px 0 6px;">${button('Apply for Leave', applyUrl)}</div>` +
+    banner('If you have already applied leave, or you actually worked that day, please raise it with HR (an Attendance Correction) so your attendance can be updated.', 'warn');
+  return { subject, html: layout({ title: subject, preheader: `Absent on ${d.date} — leave not applied`, content }) };
+}
+
+/**
  * Late Login INFORMATION email to HR (manual Late Login Request — NOT the automatic
  * Late Entry notice above, and NOT an approval). No Approve/Reject, no link, no token.
  * d: { employeeName, employeeId, department, date, expectedTime, actualTime, lateBy, reason, remarks }
@@ -476,6 +500,6 @@ module.exports = {
   statusBadge, button, profileCard, summaryCard, banner, layout, card, statBlock, header, footer,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
-  missingPunch, lateLoginNotice, lateLoginApplyPrompt, lateLoginInfo, lateLoginLeaveRequired, goalAssigned,
+  missingPunch, lateLoginNotice, lateLoginApplyPrompt, absentNoLeaveNotice, lateLoginInfo, lateLoginLeaveRequired, goalAssigned,
   _esc: esc, _longText: longText,
 };
