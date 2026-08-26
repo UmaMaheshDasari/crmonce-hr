@@ -6,6 +6,7 @@ import {
   ExclamationTriangleIcon, DocumentDuplicateIcon, ArrowPathIcon, TableCellsIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 
 const EXPORTS = [
   { id: 'attendance', label: 'Attendance', desc: 'Present / absent / working days' },
@@ -31,6 +32,8 @@ function downloadBlob(blob, filename) {
 
 // ── Import panel ──
 function ImportPanel() {
+  const { hasPermission } = useAuth();
+  const canImport = hasPermission('reports.export');   // RBAC Phase D (page also route-gated to HR)
   const { data: typesRes } = useQuery({ queryKey: ['import-types'], queryFn: () => importExportApi.types() });
   const types = typesRes?.data?.types || [];
   const [type, setType] = useState('');
@@ -135,10 +138,10 @@ function ImportPanel() {
 
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-400">{s.errors > 0 || s.duplicates > 0 ? 'Rows with errors or duplicates are skipped.' : 'All rows are valid.'}</p>
-                <button onClick={() => commitMut.mutate({ type, file })} disabled={commitMut.isPending || importable === 0}
+                {canImport && <button onClick={() => commitMut.mutate({ type, file })} disabled={commitMut.isPending || importable === 0}
                   className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-50 shadow-lg shadow-indigo-500/25">
                   {commitMut.isPending ? 'Importing…' : `Import ${importable} row${importable === 1 ? '' : 's'}`}
-                </button>
+                </button>}
               </div>
             </div>
           )}

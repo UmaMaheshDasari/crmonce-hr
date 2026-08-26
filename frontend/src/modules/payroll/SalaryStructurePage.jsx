@@ -281,10 +281,11 @@ function SalaryCard({ record, canEdit, canDelete, onEdit, onDelete, onHistory })
 }
 
 export default function SalaryStructurePage() {
-  const { user } = useAuth();
+  const { isHR: isHRRole, isSuperAdmin: isSuperAdminRole, hasPermission } = useAuth();
   const qc = useQueryClient();
-  const isHR = ['super_admin', 'hr_manager'].includes(user?.role);
-  const isSuperAdmin = user?.role === 'super_admin';
+  const isHR = isHRRole();                                 // HR scope (see-all / employee picker) — unchanged
+  const canEditSalary = hasPermission('salary.edit');      // RBAC Phase D — create / update
+  const isSuperAdmin = isSuperAdminRole();                 // delete stays super-admin-only (retained rule)
 
   const [showForm, setShowForm] = useState(false);
   const [editRecord, setEditRecord] = useState(null);
@@ -333,7 +334,7 @@ export default function SalaryStructurePage() {
             <p className="text-sm text-gray-400">{isHR ? 'Manage employee salary components. Every revision is versioned — history is never overwritten.' : 'Your current salary structure and revision history.'}</p>
           </div>
         </div>
-        {isHR && (
+        {canEditSalary && (
           <button onClick={openCreate} className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 shadow-lg shadow-indigo-500/25 self-start">
             <PlusIcon className="w-4.5 h-4.5" /> New Salary Structure
           </button>
@@ -382,7 +383,7 @@ export default function SalaryStructurePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
           {active.map(r => (
             <SalaryCard key={r.id} record={r}
-              canEdit={isHR} canDelete={isSuperAdmin}
+              canEdit={canEditSalary} canDelete={isSuperAdmin}
               onEdit={openEdit} onDelete={handleDelete} onHistory={setHistoryFor} />
           ))}
         </div>

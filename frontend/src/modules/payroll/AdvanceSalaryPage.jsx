@@ -132,7 +132,7 @@ function RejectModal({ record, onClose }) {
   );
 }
 
-function AdvanceCard({ record, isHR, onApprove, onReject, onDelete, onEdit }) {
+function AdvanceCard({ record, isHR, canApprove, onApprove, onReject, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
   const e = record._employee || {};
   return (
@@ -181,7 +181,7 @@ function AdvanceCard({ record, isHR, onApprove, onReject, onDelete, onEdit }) {
 
       {record.status === 'rejected' && record.remarks && <p className="text-xs text-red-500 mt-2">Rejected: {record.remarks}</p>}
 
-      {(isHR && record.status === 'pending') && (
+      {(canApprove && record.status === 'pending') && (
         <div className="flex gap-2 mt-4 pt-3 border-t border-gray-50">
           <button onClick={() => onApprove(record)} className="flex-1 py-2 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg flex items-center justify-center gap-1.5"><CheckIcon className="w-4 h-4" /> Approve</button>
           <button onClick={() => onReject(record)} className="flex-1 py-2 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg flex items-center justify-center gap-1.5"><XMarkIcon className="w-4 h-4" /> Reject</button>
@@ -201,9 +201,10 @@ function AdvanceCard({ record, isHR, onApprove, onReject, onDelete, onEdit }) {
 }
 
 export default function AdvanceSalaryPage() {
-  const { user, isHR } = useAuth();
+  const { isHR, hasPermission } = useAuth();
   const qc = useQueryClient();
-  const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
+  const hr = isHR();   // HR scope (tabs, pending list, employee picker) — role concept, unchanged
+  const canApproveAdvance = hasPermission('payroll.process');   // RBAC Phase D — approve/reject advance
 
   const [showApply, setShowApply] = useState(false);
   const [editRec, setEditRec] = useState(null);
@@ -269,7 +270,7 @@ export default function AdvanceSalaryPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
-          {rows.map(r => <AdvanceCard key={r.id} record={r} isHR={hr} onApprove={setApproveRec} onReject={setRejectRec} onDelete={handleDelete} onEdit={setEditRec} />)}
+          {rows.map(r => <AdvanceCard key={r.id} record={r} isHR={hr} canApprove={canApproveAdvance} onApprove={setApproveRec} onReject={setRejectRec} onDelete={handleDelete} onEdit={setEditRec} />)}
         </div>
       )}
 

@@ -189,7 +189,10 @@ function StatCard({ icon: Icon, label, value, accent }) {
 const RATINGS = [['', 'Any rating'], ['5', '5 ★'], ['4', '4 ★ & up'], ['3', '3 ★ & up'], ['2', '2 ★ & up'], ['1', '1 ★ & up']];
 
 export default function PerformancePage() {
-  const { isHR } = useAuth();
+  const { hasPermission } = useAuth();
+  const canCreateReview = hasPermission('performance.create');   // RBAC Phase D
+  const canEditReview = hasPermission('performance.edit');
+  const canDeleteReview = hasPermission('performance.delete');
   const qc = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [editReview, setEditReview] = useState(null);
@@ -247,7 +250,7 @@ export default function PerformancePage() {
           <h1 className="text-2xl font-bold text-[#17223B] tracking-tight">Performance</h1>
           <p className="text-gray-500 text-sm mt-1">Manage employee performance reviews, evaluations and feedback.</p>
         </div>
-        {isHR() && (
+        {canCreateReview && (
           <button onClick={() => setShowModal(true)} aria-label="Create a new performance review"
             className="btn-primary flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20 hover:shadow-xl hover:shadow-indigo-500/30 transition-all duration-200 whitespace-nowrap">
             <PlusIcon className="w-4 h-4" /> New Review
@@ -336,7 +339,7 @@ export default function PerformancePage() {
             </p>
             {reviews.length ? (
               <button onClick={clearFilters} className="btn-secondary mt-5">Clear filters</button>
-            ) : (isHR() && (
+            ) : (canCreateReview && (
               <button onClick={() => setShowModal(true)} className="btn-primary mt-5 inline-flex items-center gap-2">
                 <PlusIcon className="w-4 h-4" /> New Review
               </button>
@@ -390,18 +393,18 @@ export default function PerformancePage() {
                   )}
                 </div>
 
-                {/* 5. Footer action (HR only — existing update endpoint, handlers unchanged) */}
-                {isHR() && (
+                {/* 5. Footer action (RBAC Phase D — performance.delete / performance.edit; handlers unchanged) */}
+                {(canDeleteReview || canEditReview) && (
                   <div className="px-4 sm:px-5 py-2.5 border-t border-gray-100 flex items-center justify-between">
-                    <button onClick={() => setDeleteTarget(r)} aria-label={`Delete performance review for ${name}`}
+                    {canDeleteReview && <button onClick={() => setDeleteTarget(r)} aria-label={`Delete performance review for ${name}`}
                       className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-red-500 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors">
                       <TrashIcon className="w-4 h-4" /> Delete
-                    </button>
-                    <button onClick={() => setEditReview(r)} aria-label={`Edit performance review for ${name}`}
+                    </button>}
+                    {canEditReview && <button onClick={() => setEditReview(r)} aria-label={`Edit performance review for ${name}`}
                       className="inline-flex items-center gap-1.5 text-sm font-medium text-[#EC4899] hover:text-[#D81B60] px-2.5 py-1 rounded-lg hover:bg-pink-50 transition-colors">
                       <PencilSquareIcon className="w-4 h-4" />
                       {r.hr_status === 'completed' ? 'View / Edit' : r.hr_status === 'in-review' ? 'Continue Review' : 'Edit'}
-                    </button>
+                    </button>}
                   </div>
                 )}
               </div>

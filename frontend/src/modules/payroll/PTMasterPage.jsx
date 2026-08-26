@@ -8,6 +8,7 @@ import {
 import { fmtDate } from '../../utils/format';
 import Dialog, { ModalBody, ModalFooter } from '../../components/Modal';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
 const band = (s) => `${inr(s.salaryFrom)} – ${s.salaryTo > 0 ? inr(s.salaryTo) : '∞'}`;
@@ -89,6 +90,8 @@ function Tester() {
 }
 
 export default function PTMasterPage() {
+  const { hasPermission } = useAuth();
+  const canEditPt = hasPermission('payroll.edit');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const [modal, setModal] = useState(null);   // { slab } | 'new'
   const { data, isLoading } = useQuery({ queryKey: ['pt-slabs'], queryFn: () => ptMasterApi.list() });
@@ -116,7 +119,7 @@ export default function PTMasterPage() {
             <p className="text-sm text-gray-400">Configurable, effective-dated PT slabs by state & salary band. Payroll picks the right slab automatically — never hardcoded.</p>
           </div>
         </div>
-        <button onClick={() => setModal('new')} className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 shadow-lg shadow-indigo-500/25 self-start"><PlusIcon className="w-4.5 h-4.5" /> Add Slab</button>
+        {canEditPt && <button onClick={() => setModal('new')} className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 shadow-lg shadow-indigo-500/25 self-start"><PlusIcon className="w-4.5 h-4.5" /> Add Slab</button>}
       </div>
 
       <Tester />
@@ -152,12 +155,12 @@ export default function PTMasterPage() {
                         <td className="px-5 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ring-1 ${s.status === 'active' ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-gray-100 text-gray-500 ring-gray-500/10'}`}>{s.status}</span></td>
                         <td className="px-5 py-3 text-gray-500">{s.remarks || '—'}</td>
                         <td className="px-5 py-3">
-                          <div className="flex items-center justify-end gap-1">
+                          {canEditPt && <div className="flex items-center justify-end gap-1">
                             <button onClick={() => setModal({ slab: s })} title="Edit" className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><PencilSquareIcon className="w-4 h-4" /></button>
                             {s.status === 'active'
                               ? <button onClick={() => statusMut.mutate({ id: s.id, status: 'inactive' })} title="Deactivate" className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><NoSymbolIcon className="w-4 h-4" /></button>
                               : <button onClick={() => statusMut.mutate({ id: s.id, status: 'active' })} title="Activate" className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg"><CheckCircleIcon className="w-4 h-4" /></button>}
-                          </div>
+                          </div>}
                         </td>
                       </tr>
                     ))}

@@ -115,8 +115,10 @@ function RaiseModal({ isHR, employees, monthsBack, editRecord, onClose }) {
 }
 
 export default function HistoricalAttendanceRequestsPage() {
-  const { user, isHR } = useAuth();
-  const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
+  const { user, isHR, hasPermission } = useAuth();
+  const hr = isHR();   // HR scope (see-all vs own, columns, employee picker) — role concept, unchanged
+  const canApprove = hasPermission('attendance.approve_request');   // RBAC Phase D — approve / more-info
+  const canReject = hasPermission('attendance.reject_request');
   const qc = useQueryClient();
   const [show, setShow] = useState(false);
   const [editRecord, setEditRecord] = useState(null);   // employee editing their own pending request
@@ -210,11 +212,11 @@ export default function HistoricalAttendanceRequestsPage() {
                   <td className="px-4 py-3"><span className={`inline-flex text-[11px] font-semibold border px-2 py-0.5 rounded-full ${STATUS[r.status] || STATUS.pending}`}>{STATUS_LABEL[r.status] || r.status}</span></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 justify-end flex-wrap">
-                      {hr && r.status === 'pending' && (
+                      {(canApprove || canReject) && r.status === 'pending' && (
                         <>
-                          <button onClick={() => act(r.id, 'approved')} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckIcon className="w-3.5 h-3.5" /> Approve</button>
-                          <button onClick={() => act(r.id, 'rejected')} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XMarkIcon className="w-3.5 h-3.5" /> Reject</button>
-                          <button onClick={() => act(r.id, 'more_info')} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100"><InformationCircleIcon className="w-3.5 h-3.5" /> More Info</button>
+                          {canApprove && <button onClick={() => act(r.id, 'approved')} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckIcon className="w-3.5 h-3.5" /> Approve</button>}
+                          {canReject && <button onClick={() => act(r.id, 'rejected')} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XMarkIcon className="w-3.5 h-3.5" /> Reject</button>}
+                          {canApprove && <button onClick={() => act(r.id, 'more_info')} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100"><InformationCircleIcon className="w-3.5 h-3.5" /> More Info</button>}
                         </>
                       )}
                       {r.approverComment && <span title={r.approverComment} className="inline-flex items-center text-gray-400"><ClockIcon className="w-3.5 h-3.5" /></span>}

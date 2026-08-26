@@ -14,7 +14,9 @@ const STATUS_STYLE = {
 
 export default function AttendanceRequestsPage({ kind } = {}) {
   const isEarlyLogout = kind === 'early_logout';   // Early Logout has its OWN page/tab
-  const { isHR } = useAuth();
+  const { isHR, hasPermission } = useAuth();
+  const canApprove = hasPermission('attendance.approve_request');   // RBAC Phase D
+  const canReject = hasPermission('attendance.reject_request');
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [comment, setComment] = useState({});   // per-request comment
@@ -93,15 +95,15 @@ export default function AttendanceRequestsPage({ kind } = {}) {
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${STATUS_STYLE[r.status] || 'bg-gray-100 text-gray-500'}`}>{r.status}</span>
                   </td>
                   <td className="px-4 py-3">
-                    {isHR() ? (
+                    {(canApprove || canReject) ? (
                       r.status === 'pending' ? (
                         <div className="flex items-center gap-2 justify-end">
                           <input value={comment[r.id] || ''} onChange={e => setComment(c => ({ ...c, [r.id]: e.target.value }))} placeholder="Comment"
                             className="w-28 px-2 py-1 text-xs border border-gray-200 rounded-lg bg-gray-50 outline-none" />
-                          <button onClick={() => act.mutate({ id: r.id, action: 'approved' })} disabled={act.isPending}
-                            className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 disabled:opacity-50" title="Approve"><CheckIcon className="w-4 h-4" /></button>
-                          <button onClick={() => act.mutate({ id: r.id, action: 'rejected' })} disabled={act.isPending}
-                            className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50" title="Reject"><XMarkIcon className="w-4 h-4" /></button>
+                          {canApprove && <button onClick={() => act.mutate({ id: r.id, action: 'approved' })} disabled={act.isPending}
+                            className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 disabled:opacity-50" title="Approve"><CheckIcon className="w-4 h-4" /></button>}
+                          {canReject && <button onClick={() => act.mutate({ id: r.id, action: 'rejected' })} disabled={act.isPending}
+                            className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50" title="Reject"><XMarkIcon className="w-4 h-4" /></button>}
                         </div>
                       ) : (
                         <span className="text-xs text-gray-400 flex justify-end">{r.approvedBy ? `by ${r.approvedBy}` : '—'}</span>

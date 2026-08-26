@@ -151,7 +151,7 @@ function SubmitModal({ isHR, employees, policy, editRecord, onClose }) {
 
 export default function LateLoginPage() {
   const { user, isHR } = useAuth();
-  const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
+  const hr = isHR();   // HR scope (see-all vs own) — role concept; no HR mutation actions on this page
   const [show, setShow] = useState(false);
   const [editRec, setEditRec] = useState(null);   // the record being edited (employee, own)
   const [period, setPeriod] = useState('this_month');

@@ -8,8 +8,11 @@ import {
 import { fmtVal, fmtDate } from '../../utils/format';
 import { useDocumentViewer } from '../../components/DocumentViewer';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 
 function PendingDocuments() {
+  const { hasPermission } = useAuth();
+  const canVerifyDocs = hasPermission('documents.verify');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const { view, download, viewer } = useDocumentViewer();   // authenticated view/download
   const { data, isLoading } = useQuery({ queryKey: ['pending-documents'], queryFn: () => documentApi.pending(), refetchInterval: 90000 });
@@ -48,9 +51,11 @@ function PendingDocuments() {
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <button onClick={() => view(d)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="View"><EyeIcon className="w-4 h-4" /></button>
                     <button onClick={() => download(d)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Download"><ArrowDownTrayIcon className="w-4 h-4" /></button>
+                    {canVerifyDocs && <>
                     <button onClick={() => verify.mutate({ id: d.id, action: 'approve' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckCircleIcon className="w-3.5 h-3.5" /> Approve</button>
                     <button onClick={() => verify.mutate({ id: d.id, action: 'reject', hrRemarks: window.prompt('Reason for rejection:') || '' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XCircleIcon className="w-3.5 h-3.5" /> Reject</button>
                     <button onClick={() => verify.mutate({ id: d.id, action: 'reupload', hrRemarks: window.prompt('What needs re-uploading?') || '' })} disabled={verify.isPending} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-orange-700 bg-orange-50 rounded-lg hover:bg-orange-100"><ArrowPathIcon className="w-3.5 h-3.5" /> Re-upload</button>
+                    </>}
                   </div>
                 </td>
               </tr>
@@ -109,6 +114,8 @@ function ChangesModal({ row, onClose, onDecision, busy }) {
 }
 
 export default function HRVerificationPage() {
+  const { hasPermission } = useAuth();
+  const canVerifyEmp = hasPermission('employees.edit');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const [selected, setSelected] = useState(null);
   const [vtab, setVtab] = useState('profiles');
@@ -150,10 +157,10 @@ export default function HRVerificationPage() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">HR Verification</h1>
           <p className="text-sm text-gray-400">{rows.length} profile{rows.length === 1 ? '' : 's'} awaiting verification</p>
         </div>
-        <button onClick={() => backfill.mutate()} disabled={backfill.isPending}
+        {canVerifyEmp && <button onClick={() => backfill.mutate()} disabled={backfill.isPending}
           className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50">
           {backfill.isPending ? 'Assigning…' : 'Assign Employee IDs'}
-        </button>
+        </button>}
       </div>
 
       {/* Sub-tabs: Profiles | Documents */}

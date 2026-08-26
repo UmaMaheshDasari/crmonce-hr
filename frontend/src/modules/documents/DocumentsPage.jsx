@@ -210,7 +210,8 @@ function UploadModal({ onClose }) {
 }
 
 export default function DocumentsPage() {
-  const { isHR, user } = useAuth();
+  const { isHR, user, hasPermission } = useAuth();
+  const canVerifyDocs = hasPermission('documents.verify');   // RBAC Phase D — verify / reject / delete on the HR Documents page
   const qc = useQueryClient();
   const { view, download, viewer } = useDocumentViewer();
   const [showModal, setShowModal] = useState(false);
@@ -388,19 +389,19 @@ export default function DocumentsPage() {
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-all">
                     <ArrowDownTrayIcon className="w-4 h-4" /> Download
                   </button>
-                  {isHR() && st !== 'verified' && (
+                  {canVerifyDocs && st !== 'verified' && (
                     <button onClick={() => verifyMutation.mutate({ id: doc.id, action: 'approve' })} title="Verify"
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-all">
                       Verify
                     </button>
                   )}
-                  {isHR() && st !== 'rejected' && (
+                  {canVerifyDocs && st !== 'rejected' && (
                     <button onClick={() => { const r = window.prompt('Reason for rejection (optional):', ''); if (r !== null) verifyMutation.mutate({ id: doc.id, action: 'reject', hrRemarks: r }); }} title="Reject"
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all">
                       Reject
                     </button>
                   )}
-                  {isHR() && (
+                  {canVerifyDocs && (
                     <button title="Delete" onClick={() => { if (confirm('Delete this document?')) deleteMutation.mutate(doc.id); }}
                       className="p-1.5 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-all ml-auto">
                       <TrashIcon className="w-4 h-4" />

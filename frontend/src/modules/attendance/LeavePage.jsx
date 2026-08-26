@@ -195,7 +195,7 @@ function RemarksDialog({ title, actionLabel, actionColor, onConfirm, onCancel, i
 }
 
 // -- Leave Card Action Buttons --
-function LeaveActions({ leave, user, isHR }) {
+function LeaveActions({ leave, user, canOverride }) {
   const qc = useQueryClient();
   const [remarksAction, setRemarksAction] = useState(null); // { type: 'l1_approve' | 'l1_reject' | 'l2_approve' | 'l2_reject' | 'hr_approve' | 'hr_reject' }
 
@@ -297,7 +297,6 @@ function LeaveActions({ leave, user, isHR }) {
   const isAnyLoading = l1Mutation.isPending || l2Mutation.isPending || hrMutation.isPending;
   const l1 = leave.hr_l1status;
   const l2 = leave.hr_l2status;
-  const isSuperAdmin = user?.role === 'super_admin';
   // You can never approve your own leave — hide L1/L2 buttons on your own request.
   // (Backend already enforces this; this only corrects the button visibility.)
   const isOwnLeave = user?.id && leave._hr_hremployee_value === user.id;
@@ -353,7 +352,7 @@ function LeaveActions({ leave, user, isHR }) {
   }
 
   // HR / super_admin override buttons (existing behavior)
-  if ((isHR() || isSuperAdmin) && leave.hr_status !== 'approved' && leave.hr_status !== 'rejected' && leave.hr_status !== 'cancelled') {
+  if (canOverride && leave.hr_status !== 'approved' && leave.hr_status !== 'rejected' && leave.hr_status !== 'cancelled') {
     buttons.push(
       <button
         key="hr-approve"
@@ -829,7 +828,10 @@ function getOverallStatusLabel(leave) {
 }
 
 export default function LeavePage() {
-  const { isHR, user } = useAuth();
+  const { isHR, user, hasPermission } = useAuth();
+  // HR override approve/reject → leave.approve / leave.reject (RBAC Phase D). L1/L2 manager
+  // workflow below stays status-driven and is NOT changed.
+  const canOverrideLeave = hasPermission('leave.approve') || hasPermission('leave.reject');
   const [showModal, setShowModal] = useState(false);
   const [editLeave, setEditLeave] = useState(null);   // employee editing their own pending/rejected leave
   const [filter, setFilter] = useState('pending');
@@ -978,7 +980,7 @@ export default function LeavePage() {
 
                     {/* Approve / Reject actions (managers / HR) */}
                     <div className="flex flex-col items-end gap-2">
-                      <LeaveActions leave={leave} user={user} isHR={isHR} />
+                      <LeaveActions leave={leave} user={user} canOverride={canOverrideLeave} />
                       {/* Employee self-service on their OWN leave: pending → Edit/Delete;
                           rejected → Edit&Resubmit/Delete; approved → Request Cancellation. */}
                       {user?.id && leave._hr_hremployee_value === user.id && (

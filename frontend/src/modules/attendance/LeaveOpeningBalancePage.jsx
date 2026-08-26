@@ -8,6 +8,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 
 const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
 const nowYear = new Date().getFullYear();
@@ -42,6 +43,8 @@ function AuditModal({ employeeId, year, employeeName, onClose }) {
 }
 
 export default function LeaveOpeningBalancePage() {
+  const { hasPermission } = useAuth();
+  const canManageOpening = hasPermission('leave.manage_balance');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const [year, setYear] = useState(nowYear);
   const [form, setForm] = useState({ employeeId: '', casualUsed: 0, sickUsed: 0, earnedUsed: 0, lopUsed: 0, compOff: 0, remarks: '', reason: '' });
@@ -175,7 +178,7 @@ export default function LeaveOpeningBalancePage() {
         </div>
         <div className="flex items-center justify-between mt-4">
           <p className="text-xs text-gray-400 flex items-center gap-1.5"><InformationCircleIcon className="w-4 h-4" /> Default allocation: 12 Casual + 6 Sick. Remaining = Allocated − (Opening Used + in-system leaves).</p>
-          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={invalid}>{isEdit ? 'Update' : 'Create'} Opening Balance</Button>
+          {canManageOpening && <Button onClick={() => save.mutate()} loading={save.isPending} disabled={invalid}>{isEdit ? 'Update' : 'Create'} Opening Balance</Button>}
         </div>
       </div>
 
@@ -213,7 +216,7 @@ export default function LeaveOpeningBalancePage() {
                     <div className="flex items-center gap-1.5 justify-end">
                       <button onClick={() => pickEmployee(r.employeeId)} className="px-2 py-1 text-xs font-semibold text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100">Edit</button>
                       <button onClick={() => setAuditFor({ employeeId: r.employeeId, name: r.employeeName })} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"><ClockIcon className="w-3.5 h-3.5" /> History</button>
-                      <button onClick={() => { if (window.confirm(`Delete the ${year} opening balance for ${r.employeeName || 'this employee'}? This reverses their migrated leave balance and cannot be undone.`)) del.mutate(r.id); }} className="px-2 py-1 text-xs font-semibold text-red-600 bg-red-50 rounded-lg hover:bg-red-100">Delete</button>
+                      {canManageOpening && <button onClick={() => { if (window.confirm(`Delete the ${year} opening balance for ${r.employeeName || 'this employee'}? This reverses their migrated leave balance and cannot be undone.`)) del.mutate(r.id); }} className="px-2 py-1 text-xs font-semibold text-red-600 bg-red-50 rounded-lg hover:bg-red-100">Delete</button>}
                     </div>
                   </td>
                 </tr>

@@ -6,6 +6,7 @@ import Button from '../../components/Button';
 import { ArrowUpTrayIcon, ExclamationTriangleIcon, CheckCircleIcon, ClockIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 
 const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -14,6 +15,8 @@ const STATUS_LABEL = { present: 'Present', absent: 'Absent', half_day: 'Half Day
 
 // HR/Admin one-time entry of attendance from before the HRMS went live.
 export default function HistoricalAttendancePage() {
+  const { hasPermission } = useAuth();
+  const canEnter = hasPermission('attendance.edit');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const [f, setF] = useState({ employeeId: '', date: '', inTime: '', outTime: '', status: 'present', remarks: '' });
   const [dupWarn, setDupWarn] = useState(false);
@@ -88,7 +91,7 @@ export default function HistoricalAttendancePage() {
         )}
 
         <div className="flex justify-end mt-4">
-          <Button onClick={() => submit.mutate(false)} loading={submit.isPending && !dupWarn} disabled={invalid}>Add Entry</Button>
+          {canEnter && <Button onClick={() => submit.mutate(false)} loading={submit.isPending && !dupWarn} disabled={invalid}>Add Entry</Button>}
         </div>
       </div>
 

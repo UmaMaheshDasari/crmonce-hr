@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import { employeeApi, shiftHistoryApi } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
 
 const SHIFTS = ['Morning Shift', 'General Shift', 'Day Shift', 'Evening Shift', 'Night Shift'];
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -10,6 +11,8 @@ const dmy = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('-') : 
 const dt = (s) => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? '' : d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
 
 export default function ShiftHistoryPage() {
+  const { hasPermission } = useAuth();
+  const canChangeShift = hasPermission('employees.edit');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const [employeeId, setEmployeeId] = useState('');
 
@@ -108,10 +111,10 @@ export default function ShiftHistoryPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Reason (optional)</label>
                 <input className={inp} placeholder="e.g. moved to night operations" {...register('reason')} />
               </div>
-              <button type="submit" disabled={changeMut.isPending}
+              {canChangeShift && <button type="submit" disabled={changeMut.isPending}
                 className="w-full py-2.5 rounded-lg text-sm font-semibold text-white bg-[#1B4F72] hover:bg-[#154360] disabled:opacity-50 transition-colors">
                 {changeMut.isPending ? 'Saving…' : 'Save Shift Change'}
-              </button>
+              </button>}
               <p className="text-[11px] text-gray-400 leading-relaxed">History is never overwritten — each assignment runs until the day before the next. You can backdate an assignment; the timeline adjusts automatically. Using the same date as an existing assignment edits it.</p>
             </form>
           </div>

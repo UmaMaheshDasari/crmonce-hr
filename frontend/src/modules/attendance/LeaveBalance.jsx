@@ -110,8 +110,9 @@ function ManageModal({ employeeId, employeeName, onClose }) {
 // omit it for the Leave page, where HR gets an employee picker and the default is
 // the signed-in user.
 export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedName }) {
-  const { user, isHR } = useAuth();
-  const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
+  const { user, isHR, hasPermission } = useAuth();
+  const hr = isHR();   // HR scope (employee picker / see-all) — role concept, unchanged
+  const canManageBalance = hasPermission('leave.manage_balance');   // RBAC Phase D — Manage action
   const [selectedEmp, setSelectedEmp] = useState('');
   const [showManage, setShowManage] = useState(false);
   const nowYear = new Date().getFullYear();
@@ -165,7 +166,7 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
               {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
             </select>
           )}
-          {hr && manageEmpId && (
+          {canManageBalance && manageEmpId && (
             <button onClick={() => setShowManage(true)}
               className="inline-flex items-center gap-1.5 h-9 px-3 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700"
               title="Adjust balance / comp-off">

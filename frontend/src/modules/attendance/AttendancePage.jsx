@@ -69,7 +69,9 @@ function LiveEffective({ record }) {
 }
 
 export default function AttendancePage() {
-  const { isHR } = useAuth();
+  const { isHR, hasPermission } = useAuth();
+  const canEditAttendance = hasPermission('attendance.edit');    // RBAC Phase D — edit attendance
+  const canSyncAttendance = hasPermission('attendance.export');  // eTime sync (HR device access)
   const qc = useQueryClient();
   const today = new Date();
   // Default date filter. Admin/HR open on TODAY — they manage day-to-day attendance
@@ -392,7 +394,7 @@ export default function AttendancePage() {
                 {r.hr_lateloginlabel || 'Late Present'}
               </span>
             )}
-            {isHR() && (
+            {canEditAttendance && (
               <button onClick={() => setEditRec(r)} title="Edit attendance"
                 className="p-1 rounded-md text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">
                 <PencilSquareIcon className="w-4 h-4" />
@@ -420,7 +422,7 @@ export default function AttendancePage() {
           <Button variant="success" icon={ArrowDownTrayIcon} loading={exporting} onClick={handleExport}>
             {exporting ? 'Exporting…' : 'Export Excel'}
           </Button>
-          {isHR() && (
+          {canSyncAttendance && (
             <Button icon={ArrowPathIcon} loading={syncMutation.isPending} onClick={() => syncMutation.mutate()}>
               {syncMutation.isPending ? 'Syncing…' : 'Sync eTime'}
             </Button>

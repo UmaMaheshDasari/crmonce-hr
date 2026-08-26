@@ -4,6 +4,7 @@ import { celebrationsApi } from '../../api/endpoints';
 import Button from '../../components/Button';
 import TodaysCelebrations from '../dashboard/TodaysCelebrations';
 import { GiftIcon, PlayIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '../../context/AuthContext';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -34,6 +35,7 @@ function Toggle({ checked, onChange, label }) {
 }
 
 export default function CelebrationsPage() {
+  const { isHR } = useAuth();   // backend retains requireRole(HR); this is a role rule, not a granular perm
   const qc = useQueryClient();
   const [form, setForm] = useState(null);
 
@@ -90,10 +92,10 @@ export default function CelebrationsPage() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2"><GiftIcon className="w-6 h-6 text-indigo-500" /> Celebrations</h1>
           <p className="text-sm text-gray-500 mt-1">Automated Birthday, Marriage Anniversary and Work Anniversary wishes — email + in-app, sent daily.</p>
         </div>
-        <button onClick={() => run.mutate()} disabled={run.isPending}
+        {isHR() && <button onClick={() => run.mutate()} disabled={run.isPending}
           className="inline-flex items-center gap-2 h-10 px-4 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50">
           <PlayIcon className="w-4 h-4" /> {run.isPending ? 'Running…' : 'Run Now'}
-        </button>
+        </button>}
       </div>
 
       {/* Today's celebrations preview */}
@@ -144,7 +146,7 @@ export default function CelebrationsPage() {
         ))}
 
         <div className="flex justify-end">
-          <Button onClick={() => save.mutate()} loading={save.isPending}>Save Settings</Button>
+          {isHR() && <Button onClick={() => save.mutate()} loading={save.isPending}>Save Settings</Button>}
         </div>
       </div>
 

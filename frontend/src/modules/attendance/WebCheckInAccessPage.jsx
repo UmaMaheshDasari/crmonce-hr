@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { employeeApi } from '../../api/endpoints';
 import { ClockIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 
 const inp = 'h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
 
@@ -20,6 +21,8 @@ function Toggle({ checked, onChange, disabled }) {
 }
 
 export default function WebCheckInAccessPage() {
+  const { hasPermission } = useAuth();
+  const canToggle = hasPermission('employees.edit');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
@@ -130,17 +133,17 @@ export default function WebCheckInAccessPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-2">
-                        <Toggle checked={on} disabled={saving} onChange={(next) => toggle.mutate({ id: e.hr_hremployeeid, enabled: next })} />
+                        <Toggle checked={on} disabled={saving || !canToggle} onChange={(next) => toggle.mutate({ id: e.hr_hremployeeid, enabled: next })} />
                         <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${on ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>{on ? 'Enabled' : 'Disabled'}</span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
+                      {canToggle && <button
                         onClick={() => toggle.mutate({ id: e.hr_hremployeeid, enabled: !on })}
                         disabled={saving}
                         className={`px-3 py-1.5 text-xs font-semibold rounded-lg disabled:opacity-50 ${on ? 'text-red-600 bg-red-50 hover:bg-red-100' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}>
                         {saving ? 'Saving…' : on ? 'Disable' : 'Enable'}
-                      </button>
+                      </button>}
                     </td>
                   </tr>
                 );

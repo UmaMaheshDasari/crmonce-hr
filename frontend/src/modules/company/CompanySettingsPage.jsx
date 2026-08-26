@@ -6,6 +6,7 @@ import { CurrencyDollarIcon, GlobeAltIcon, ClockIcon } from '@heroicons/react/24
 import toast from 'react-hot-toast';
 import PayrollSettingsPage from '../payroll/PayrollSettingsPage';
 import SettingHistoryPage from './SettingHistoryPage';
+import { useAuth } from '../../context/AuthContext';
 
 // General tab = company identity + locale/calendar. Everything is company-configurable
 // and stored in hr_companysettings (single source of truth) — never hard-coded.
@@ -63,6 +64,8 @@ const SECTIONS = [
 ];
 
 function GeneralTab() {
+  const { hasPermission } = useAuth();
+  const canEditSettings = hasPermission('settings.edit');   // RBAC Phase D (page also route-gated to super_admin)
   const qc = useQueryClient();
   const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm();
   const { data, isLoading } = useQuery({ queryKey: ['company'], queryFn: companyApi.get });
@@ -112,10 +115,10 @@ function GeneralTab() {
       ))}
       <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex gap-3 justify-end rounded-b-xl">
         <button type="button" onClick={() => reset(company)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Reset</button>
-        <button type="submit" disabled={mutation.isPending || !isDirty}
+        {canEditSettings && <button type="submit" disabled={mutation.isPending || !isDirty}
           className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/25 transition-all">
           {mutation.isPending ? 'Saving…' : 'Save Changes'}
-        </button>
+        </button>}
       </div>
     </form>
   );

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { payrollSettingsApi } from '../../api/endpoints';
 import { Cog6ToothIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 
 // Scalar fields, grouped. Each maps 1:1 to a hr_payrollsettings column.
 const SECTIONS = [
@@ -158,6 +159,8 @@ function ComponentEditor({ title, subtitle, items, setItems, addLabel }) {
 }
 
 export default function PayrollSettingsPage() {
+  const { hasPermission } = useAuth();
+  const canEditSettings = hasPermission('settings.edit');   // RBAC Phase D (page also route-gated to super_admin)
   const qc = useQueryClient();
   const { register, handleSubmit, reset, watch, setValue, formState: { isDirty } } = useForm();
   const [allowances, setAllowances] = useState([]);
@@ -222,10 +225,10 @@ export default function PayrollSettingsPage() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Payroll Settings</h1>
           <p className="text-sm text-gray-400">Every payroll number comes from here — nothing is hardcoded. Configure PF, tax, LOP, overtime and leave policy.</p>
         </div>
-        <button type="button" onClick={() => diagnose.mutate()} disabled={diagnose.isPending}
+        {canEditSettings && <button type="button" onClick={() => diagnose.mutate()} disabled={diagnose.isPending}
           className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50">
           {diagnose.isPending ? 'Running…' : 'Run Diagnostics'}
-        </button>
+        </button>}
       </div>
 
       {diag && (
@@ -286,10 +289,10 @@ export default function PayrollSettingsPage() {
           <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex gap-3 justify-end rounded-b-xl">
             <button type="button" onClick={() => { reset(settings); setAllowances(settings?.resolved?.defaultAllowances || []); setDeductions(settings?.resolved?.defaultDeductions || []); setListsDirty(false); }}
               className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Reset</button>
-            <button type="submit" disabled={mutation.isPending || !dirty}
+            {canEditSettings && <button type="submit" disabled={mutation.isPending || !dirty}
               className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/25 transition-all">
               {mutation.isPending ? 'Saving…' : 'Save Changes'}
-            </button>
+            </button>}
           </div>
         </form>
       )}

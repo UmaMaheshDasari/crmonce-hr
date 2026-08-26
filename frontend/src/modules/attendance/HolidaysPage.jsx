@@ -12,7 +12,8 @@ const TYPE_COLOR = { National: 'bg-blue-50 text-blue-700', Festival: 'bg-rose-50
 const EMPTY = { date: '', name: '', description: '', type: 'Festival', department: '', status: 'active', remarks: '' };
 
 export default function HolidaysPage() {
-  const { isHR } = useAuth();
+  const { isHR, hasPermission } = useAuth();
+  const canManage = hasPermission('attendance.edit');   // holidays are attendance config (RBAC Phase D)
   const qc = useQueryClient();
   const [form, setForm] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
@@ -58,7 +59,7 @@ export default function HolidaysPage() {
         </p>
         <p className="text-xs text-gray-400">{fmt(h.date)}{h.department ? ` · ${h.department}` : ''}{h.description ? ` · ${h.description}` : ''}</p>
       </div>
-      {isHR() && (
+      {canManage && (
         <div className="flex items-center gap-1">
           <button onClick={() => startEdit(h)} className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50" title="Edit">
             <PencilSquareIcon className="w-4 h-4" />
@@ -79,7 +80,7 @@ export default function HolidaysPage() {
         <p className="text-sm text-gray-400">Company holidays {isHR() ? '— add or remove; attendance excludes these days automatically.' : '— maintained by HR.'}</p>
       </div>
 
-      {isHR() && (
+      {canManage && (
         <div className="bg-white rounded-xl border border-gray-100 p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-bold text-gray-900">{editId ? 'Edit Holiday' : 'Add Holiday'} <span className="font-normal text-gray-400">— past dates allowed (historical)</span></h2>

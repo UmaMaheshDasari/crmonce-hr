@@ -107,7 +107,9 @@ function getAvatarGradient(name) {
 }
 
 export default function EmployeeList() {
-  const { isHR } = useAuth();
+  const { hasPermission } = useAuth();
+  const canCreateEmp = hasPermission('employees.create');   // RBAC Phase D
+  const canEditEmp = hasPermission('employees.edit');        // add/edit + eTime sync
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
   const [status, setStatus] = useState('active');
@@ -138,14 +140,14 @@ export default function EmployeeList() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Employees</h1>
           <p className="text-gray-400 text-sm mt-1 font-medium">{total} total employees</p>
         </div>
-        {isHR() && (
+        {(canEditEmp || canCreateEmp) && (
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowSync(true)} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-4 bg-white text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-200">
+            {canEditEmp && <button onClick={() => setShowSync(true)} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-4 bg-white text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-200">
               <ArrowPathIcon className="w-[18px] h-[18px]" /> Sync from eTime
-            </button>
-            <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
+            </button>}
+            {canCreateEmp && <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
               <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
-            </Link>
+            </Link>}
           </div>
         )}
       </div>
@@ -218,7 +220,7 @@ export default function EmployeeList() {
                       </div>
                       <p className="text-gray-900 font-semibold mb-1">No employees found</p>
                       <p className="text-gray-400 text-sm mb-5">Try adjusting your search or filter criteria</p>
-                      {isHR() && (
+                      {canCreateEmp && (
                         <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
                           <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
                         </Link>
@@ -268,7 +270,7 @@ export default function EmployeeList() {
                         >
                           <EyeIcon className="w-4 h-4" />
                         </Link>
-                        {isHR() && (
+                        {canEditEmp && (
                           <Link
                             to={`/employees/${emp.hr_hremployeeid}/edit`}
                             className="p-2 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-all duration-150"

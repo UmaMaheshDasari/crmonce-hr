@@ -93,7 +93,10 @@ function NewJobModal({ onClose }) {
 }
 
 export default function RecruitmentPage() {
-  const { isHR } = useAuth();
+  const { isHR, hasPermission } = useAuth();
+  // Post Job stays an HR role rule (backend requireRole retained). Stage changes use the
+  // granular recruitment.edit (held by recruiter + super_admin, NOT hr_manager) — RBAC Phase D.
+  const canEditStage = hasPermission('recruitment.edit');
   const qc = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [selectedJob, setSelectedJob] = useState(null);
@@ -261,7 +264,7 @@ export default function RecruitmentPage() {
                             <p className="font-medium text-sm text-gray-800 truncate">{app.hr_candidatename}</p>
                           </div>
                           <p className="text-xs text-gray-400 truncate ml-8">{app.hr_email}</p>
-                          {isHR() && stage !== 'hired' && stage !== 'rejected' && (
+                          {canEditStage && stage !== 'hired' && stage !== 'rejected' && (
                             <div className="mt-2.5 ml-8">
                               <select className="w-full text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 outline-none transition-all"
                                 value={app.hr_stage}

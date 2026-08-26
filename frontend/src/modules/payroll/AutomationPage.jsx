@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { automationApi } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
 import {
   BoltIcon, PlayIcon, ArrowPathIcon, CheckCircleIcon, XCircleIcon, ClockIcon,
   ChevronRightIcon, XMarkIcon, TrashIcon,
@@ -124,6 +125,8 @@ function JobDrawer({ jobId, onClose }) {
 }
 
 export default function AutomationPage() {
+  const { hasPermission } = useAuth();
+  const canRunAutomation = hasPermission('payroll.process');   // RBAC Phase D (page also route-gated to HR)
   const qc = useQueryClient();
   const [showRun, setShowRun] = useState(false);
   const [openJob, setOpenJob] = useState(null);
@@ -150,7 +153,7 @@ export default function AutomationPage() {
             <p className="text-sm text-gray-400">Run the full pipeline end-to-end, track every stage, and retry failed jobs.</p>
           </div>
         </div>
-        <button onClick={() => setShowRun(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 shadow-lg shadow-indigo-500/25 self-start"><PlayIcon className="w-4.5 h-4.5" /> Run Automation</button>
+        {canRunAutomation && <button onClick={() => setShowRun(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 shadow-lg shadow-indigo-500/25 self-start"><PlayIcon className="w-4.5 h-4.5" /> Run Automation</button>}
       </div>
 
       {/* Pipeline flow */}
@@ -203,7 +206,7 @@ export default function AutomationPage() {
                       <td className="px-5 py-3 text-right">
                         <div className="flex items-center gap-1.5 justify-end">
                           <button onClick={(e) => { e.stopPropagation(); setOpenJob(j.id); }} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100">View</button>
-                          <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(j); }} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>
+                          {canRunAutomation && <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(j); }} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><TrashIcon className="w-3.5 h-3.5" /> Delete</button>}
                         </div>
                       </td>
                     </tr>

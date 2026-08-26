@@ -534,12 +534,14 @@ function GoalCard({ goal, canEdit, canDelete, canReview, onUpdateProgress, onRev
 
 // ── Main Page ───────────────────────────────────────────────────
 export default function GoalsPage() {
-  const { user } = useAuth();
+  const { isHR: isHRRole, isSuperAdmin: isSuperAdminRole, hasPermission } = useAuth();
   const qc = useQueryClient();
-  const isSuperAdmin = user?.role === 'super_admin';
-  const isHR = ['super_admin', 'hr_manager'].includes(user?.role);
-  // Permissions: super admin edits/deletes; HR edits/reviews; everyone updates progress.
-  const canEdit = isHR, canReview = isHR, canDelete = isSuperAdmin;
+  const isHR = isHRRole();   // HR scope (see-all, employee picker) — role concept, unchanged
+  // Permissions (RBAC Phase D): assign/edit/review → performance.*; delete stays super-admin-only;
+  // everyone still updates their OWN goal progress (self-service, unchanged).
+  const canAssign = hasPermission('performance.create');
+  const canEdit = hasPermission('performance.edit'), canReview = hasPermission('performance.edit');
+  const canDelete = isSuperAdminRole();
 
   const [filters, setFilters] = useState({ quarter: '', year: '', status: '', priority: '', department: '', employeeId: '' });
   const [showAssign, setShowAssign] = useState(false);
@@ -615,7 +617,7 @@ export default function GoalsPage() {
             <p className="text-sm text-gray-400">{totalCount} total goals</p>
           </div>
         </div>
-        {isHR && (
+        {canAssign && (
           <button onClick={() => setShowAssign(true)}
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 shadow-lg shadow-indigo-500/25 transition-all duration-200">
             <PlusIcon className="w-4 h-4" /> Assign Goal

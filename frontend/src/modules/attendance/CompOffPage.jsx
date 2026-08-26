@@ -288,8 +288,12 @@ function VerifyAttendanceModal({ id, onClose }) {
 }
 
 export default function CompOffPage() {
-  const { user, isHR } = useAuth();
-  const hr = typeof isHR === 'function' ? isHR() : ['super_admin', 'hr_manager'].includes(user?.role);
+  const { isHR, hasPermission } = useAuth();
+  const hr = isHR();   // HR scope (see-all vs own, columns, employee selector) — role concept, unchanged
+  const canScan = hasPermission('compoff.configure');   // RBAC Phase D — action-button visibility
+  const canApprove = hasPermission('compoff.approve');
+  const canReject = hasPermission('compoff.reject');
+  const canManageCompoff = hasPermission('compoff.edit');   // cancel / expire
   const qc = useQueryClient();
   const [selectedEmp, setSelectedEmp] = useState('');
   const [showRaise, setShowRaise] = useState(false);
@@ -339,7 +343,7 @@ export default function CompOffPage() {
               {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
             </select>
           )}
-          {hr && <Button variant="secondary" icon={MagnifyingGlassIcon} onClick={() => setShowScan(true)}>Scan Attendance</Button>}
+          {canScan && <Button variant="secondary" icon={MagnifyingGlassIcon} onClick={() => setShowScan(true)}>Scan Attendance</Button>}
           {(hr || policy.employeeRaise) && <Button icon={PlusIcon} onClick={() => setShowRaise(true)}>{hr ? 'Grant Comp Off' : 'Raise Comp Off'}</Button>}
         </div>
       </div>
@@ -394,16 +398,16 @@ export default function CompOffPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 justify-end flex-wrap">
                       {/* HR verifies the employee's actual attendance for the worked date. */}
-                      {hr && (
+                      {canApprove && (
                         <button onClick={() => setVerifyId(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100"><EyeIcon className="w-3.5 h-3.5" /> Attendance</button>
                       )}
-                      {hr && r.status === 'pending' && (
+                      {(canApprove || canReject) && r.status === 'pending' && (
                         <>
-                          <button onClick={() => approveMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckIcon className="w-3.5 h-3.5" /> Approve</button>
-                          <button onClick={() => rejectMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XMarkIcon className="w-3.5 h-3.5" /> Reject</button>
+                          {canApprove && <button onClick={() => approveMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100"><CheckIcon className="w-3.5 h-3.5" /> Approve</button>}
+                          {canReject && <button onClick={() => rejectMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-red-700 bg-red-50 rounded-lg hover:bg-red-100"><XMarkIcon className="w-3.5 h-3.5" /> Reject</button>}
                         </>
                       )}
-                      {hr && r.status === 'approved' && (
+                      {canManageCompoff && r.status === 'approved' && (
                         <>
                           <button onClick={() => cancelMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"><NoSymbolIcon className="w-3.5 h-3.5" /> Cancel</button>
                           <button onClick={() => expireMut.mutate(r.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100"><ClockIcon className="w-3.5 h-3.5" /> Expire</button>

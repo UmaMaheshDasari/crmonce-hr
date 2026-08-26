@@ -186,8 +186,10 @@ function ProcessPayrollModal({ onClose }) {
 }
 
 export default function PayrollPage() {
-  const { isHR, user } = useAuth();
-  const isSuperAdmin = user?.role === 'super_admin';
+  const { isHR, hasPermission, isSuperAdmin } = useAuth();
+  const canProcess = hasPermission('payroll.process');   // generate / approve / release (RBAC Phase D)
+  const canLock = hasPermission('payroll.edit');          // lock a processed month
+  const canReports = hasPermission('payroll.export');
   const qc = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [viewRec, setViewRec] = useState(null);
@@ -294,7 +296,7 @@ export default function PayrollPage() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{isHR() ? 'Payroll' : 'My Payslips'}</h1>
           <p className="text-sm text-gray-500 mt-1">{total} records</p>
         </div>
-        {isHR() && (
+        {canProcess && (
           <button
             onClick={() => setShowModal(true)}
             className="inline-flex items-center gap-2.5 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200"
@@ -304,8 +306,8 @@ export default function PayrollPage() {
         )}
       </div>
 
-      {/* Reports (HR only) */}
-      {isHR() && (
+      {/* Reports (payroll.export) */}
+      {canReports && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider mr-1">Reports</span>
@@ -445,25 +447,25 @@ export default function PayrollPage() {
                           className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-600 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
                           <EyeIcon className="w-3.5 h-3.5" /> View
                         </button>
-                        {isHR() && r.hr_status === 'draft' && (
+                        {canProcess && r.hr_status === 'draft' && (
                           <button onClick={() => approveMutation.mutate(r.hr_hrpayrollid)} disabled={approveMutation.isPending}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors">
                             <CheckCircleIcon className="w-3.5 h-3.5" /> Approve
                           </button>
                         )}
-                        {isHR() && r.hr_status === 'processed' && (
+                        {canProcess && r.hr_status === 'processed' && (
                           <button onClick={() => releaseMutation.mutate(r.hr_hrpayrollid)} disabled={releaseMutation.isPending}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 disabled:opacity-50 transition-colors">
                             <BanknotesIcon className="w-3.5 h-3.5" /> Release
                           </button>
                         )}
-                        {isHR() && (r.hr_status === 'processed' || r.hr_status === 'paid') && r.hr_locked !== 'true' && (
+                        {canLock && (r.hr_status === 'processed' || r.hr_status === 'paid') && r.hr_locked !== 'true' && (
                           <button onClick={() => lockMutation.mutate(r.hr_hrpayrollid)} disabled={lockMutation.isPending}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors" title="Lock so this month can never be regenerated">
                             <LockClosedIcon className="w-3.5 h-3.5" /> Lock
                           </button>
                         )}
-                        {isSuperAdmin && r.hr_locked === 'true' && (
+                        {isSuperAdmin() && r.hr_locked === 'true' && (
                           <button onClick={() => unlockMutation.mutate(r.hr_hrpayrollid)} disabled={unlockMutation.isPending}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition-colors">
                             <LockOpenIcon className="w-3.5 h-3.5" /> Unlock
