@@ -3,7 +3,7 @@ const axios = require('axios');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
 const authService = require('../../services/auth.service');
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
 const { validateCompanyEmail } = require('../../services/email/sender');
 const { validateEmployeeIdentity } = require('../../services/validators');
@@ -112,7 +112,7 @@ const createStrippingOptionalShift = (entity, data) => robustWrite('create', ent
 const updateStrippingOptionalShift = (entity, id, data) => robustWrite('update', entity, id, data);
 
 // GET /api/employees
-router.get('/', requirePermission('employee:read'), async (req, res, next) => {
+router.get('/', requireAnyPermission('employees.view'), async (req, res, next) => {
   try {
     const { search, department, status, page = 1, limit = 20 } = req.query;
     const filters = [];
@@ -146,7 +146,7 @@ router.get('/', requirePermission('employee:read'), async (req, res, next) => {
 });
 
 // GET /api/employees/:id
-router.get('/:id', requirePermission('employee:read'), async (req, res, next) => {
+router.get('/:id', requireAnyPermission('employees.view'), async (req, res, next) => {
   try {
     // Employees can only see their own record
     if (req.user.role === 'employee' && req.params.id !== req.user.id) {
@@ -274,7 +274,7 @@ async function defaultManagerId() {
 }
 
 // POST /api/employees
-router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/', requireAnyPermission('employees.create'), async (req, res, next) => {
   try {
     const { password, managerId, ...raw } = req.body;
     // Employee email must be a valid company mailbox — it is the sender of their
@@ -397,7 +397,7 @@ router.patch('/:id', async (req, res, next) => {
 // Web Check-In access. Default is DISABLED; this is the ONLY way it turns on. The
 // change is written as the string flag 'true'/'false' and durably audited
 // (hr_profileaudits): admin, employee, old→new, timestamp.
-router.patch('/:id/web-checkin', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id/web-checkin', requireAnyPermission('employees.edit'), async (req, res, next) => {
   try {
     const enabled = req.body?.enabled === true || /^(true|yes|1|on)$/i.test(String(req.body?.enabled ?? ''));
     // Read current name + prior value for the audit trail (best-effort).
@@ -424,7 +424,7 @@ router.patch('/:id/web-checkin', requireRole('super_admin', 'hr_manager'), async
 });
 
 // PATCH /api/employees/:id/verify — HR approves / rejects / requests changes.
-router.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id/verify', requireAnyPermission('employees.edit'), async (req, res, next) => {
   try {
     const { action, note } = req.body;   // approve | reject | request_changes
     const map = { approve: 'verified', reject: 'rejected', request_changes: 'changes' };
@@ -534,7 +534,7 @@ router.get('/:id/profile-audit', async (req, res, next) => {
 });
 
 // DELETE /api/employees/:id (soft delete)
-router.delete('/:id', requireRole('super_admin'), async (req, res, next) => {
+router.delete('/:id', requireAnyPermission('employees.delete'), async (req, res, next) => {
   try {
     await d365.update(ENTITY, req.params.id, { hr_status: toValue('hr_employee_status', 'inactive') });
     res.json({ message: 'Employee deactivated' });
@@ -553,7 +553,7 @@ router.get('/meta/departments', async (req, res, next) => {
 });
 
 // GET /api/employees/verifications/pending — HR queue of profiles awaiting review.
-router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/verifications/pending', requireAnyPermission('employees.edit'), async (req, res, next) => {
   try {
     const { data } = await d365.getListOptional(ENTITY, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_department,hr_etimecode',
@@ -576,7 +576,7 @@ router.get('/verifications/pending', requireRole('super_admin', 'hr_manager'), a
 // POST /api/employees/meta/backfill-codes — assign an Employee ID (EMP1001+) to
 // employees who don't have one, AND set the default Reporting Manager (CEO) for
 // employees who have none. Never overwrites existing values.
-router.post('/meta/backfill-codes', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/meta/backfill-codes', requireAnyPermission('employees.edit'), async (req, res, next) => {
   try {
     const { data } = await d365.getListOptional(ENTITY, { select: 'hr_hremployeeid,_hr_manager_value,createdon', optionalSelect: 'hr_employeeid,hr_employeecode', top: 5000, orderby: 'createdon asc' });
     let max = 0;
@@ -617,7 +617,7 @@ async function findByEtime(employeeId, empcode) {
 //   shift, status }] }. Stores BOTH Employee ID + Empcode. Matches an existing
 // employee by Employee ID then Empcode → NEVER duplicates. eTime is authoritative:
 // a provided Employee ID is never overwritten with a generated one.
-router.post('/meta/sync-etime', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/meta/sync-etime', requireAnyPermission('employees.edit'), async (req, res, next) => {
   try {
     const rows = Array.isArray(req.body?.employees) ? req.body.employees : (Array.isArray(req.body) ? req.body : []);
     if (!rows.length) return res.status(400).json({ error: 'Provide an "employees" array from the eTime export.' });

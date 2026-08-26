@@ -17,7 +17,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const lifecycle = require('../../services/request-lifecycle.service');
 require('../../services/request-adapters');   // registers all module adapters
 
@@ -25,7 +25,7 @@ const HR = ['super_admin', 'hr_manager'];
 const isHR = (u) => HR.includes(u.role);
 
 // Pending cancellation queue (HR review surface). Must be BEFORE '/:type/:id'.
-router.get('/cancellations', requireRole(...HR), async (req, res, next) => {
+router.get('/cancellations', requireAnyPermission('leave.approve', 'compoff.approve', 'attendance.approve_request'), async (req, res, next) => {
   try { res.json({ data: await lifecycle.listCancellations({ status: req.query.status || 'pending' }) }); }
   catch (err) { next(err); }
 });
@@ -90,7 +90,7 @@ router.patch('/:type/:id/cancellation/manager', async (req, res, next) => {
   } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
-router.patch('/:type/:id/cancellation/hr', requireRole(...HR), async (req, res, next) => {
+router.patch('/:type/:id/cancellation/hr', requireAnyPermission('leave.approve', 'compoff.approve', 'attendance.approve_request'), async (req, res, next) => {
   try {
     const action = req.body?.action === 'rejected' ? 'rejected' : 'approved';
     res.json(await lifecycle.cancellationHrDecide({ type: req.params.type, id: req.params.id, action, approver: req.user, remarks: req.body?.remarks }));

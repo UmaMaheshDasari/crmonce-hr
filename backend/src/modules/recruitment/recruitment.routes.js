@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { notifyNewApplicant, broadcast } = require('../../services/notification.service');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
 
@@ -29,7 +29,7 @@ router.post('/jobs', requireRole('super_admin', 'hr_manager'), async (req, res, 
 });
 
 // Applications
-router.get('/applications', requirePermission('recruitment:read'), async (req, res, next) => {
+router.get('/applications', requireAnyPermission('recruitment.view'), async (req, res, next) => {
   try {
     const { jobId, stage } = req.query;
     const filters = [];
@@ -61,7 +61,7 @@ router.post('/applications', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch('/applications/:id/stage', requirePermission('recruitment:write'), async (req, res, next) => {
+router.patch('/applications/:id/stage', requireAnyPermission('recruitment.edit'), async (req, res, next) => {
   try {
     const { stage, notes } = req.body;
     const app = await d365.update(d365.constructor.entities.application, req.params.id, {

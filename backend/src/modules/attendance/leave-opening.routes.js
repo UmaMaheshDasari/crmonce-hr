@@ -8,7 +8,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const openingSvc = require('../../services/leave-opening.service');
 const leaveEngine = require('../../services/leave-engine.service');
 const usageReport = require('../../services/leave-opening-report.service');
@@ -37,7 +37,7 @@ async function withTable(fn) {
 }
 
 // GET /  — list opening balances (?year, ?employeeId)
-router.get('/', requireRole(...HR), async (req, res, next) => {
+router.get('/', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const rows = await withTable(() => openingSvc.list({ year: req.query.year, employeeId: req.query.employeeId }));
     res.json({ data: rows, count: rows.length });
@@ -45,7 +45,7 @@ router.get('/', requireRole(...HR), async (req, res, next) => {
 });
 
 // GET /audit  — edit history for an employee/year
-router.get('/audit', requireRole(...HR), async (req, res, next) => {
+router.get('/audit', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const { employeeId, year } = req.query;
     if (!employeeId) return res.status(400).json({ error: 'employeeId is required' });
@@ -57,7 +57,7 @@ router.get('/audit', requireRole(...HR), async (req, res, next) => {
 // GET /report  — computed leave-usage report for a year (least-taken first).
 //   Reporting only: approved+pending usage, year-clamped, remaining from the real
 //   balance (pending not deducted). Reuses the leave engine + payroll LOP source.
-router.get('/report', requireRole(...HR), async (req, res, next) => {
+router.get('/report', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const rows = await withTable(() => usageReport.buildSummary({ year: req.query.year }));
     res.json({ data: rows, count: rows.length, year: Number(req.query.year) || new Date().getFullYear() });
@@ -65,7 +65,7 @@ router.get('/report', requireRole(...HR), async (req, res, next) => {
 });
 
 // GET /report/export  — same report as an Excel workbook (sorted least-taken first).
-router.get('/report/export', requireRole(...HR), async (req, res, next) => {
+router.get('/report/export', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
     const wb = await withTable(() => usageReport.buildWorkbook({ year }));
@@ -100,7 +100,7 @@ function validate(v) {
 }
 
 // POST /  — create (one-time; 409 if the year already exists)
-router.post('/', requireRole(...HR), async (req, res, next) => {
+router.post('/', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const v = parseBody(req.body);
     const err = validate(v); if (err) return res.status(400).json({ error: err });
@@ -116,7 +116,7 @@ router.post('/', requireRole(...HR), async (req, res, next) => {
 });
 
 // PUT /  — edit an existing opening balance (audited)
-router.put('/', requireRole(...HR), async (req, res, next) => {
+router.put('/', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const v = parseBody(req.body);
     const err = validate(v); if (err) return res.status(400).json({ error: err });
@@ -133,7 +133,7 @@ router.put('/', requireRole(...HR), async (req, res, next) => {
 });
 
 // DELETE /:id
-router.delete('/:id', requireRole(...HR), async (req, res, next) => {
+router.delete('/:id', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try { await openingSvc.remove(req.params.id); res.json({ message: 'Deleted' }); }
   catch (err) { next(err); }
 });

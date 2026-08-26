@@ -7,7 +7,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const compOff = require('../../services/comp-off.service');
 const payrollSettings = require('../../services/payroll-settings.service');
 const leaveEngine = require('../../services/leave-engine.service');
@@ -119,31 +119,31 @@ router.post('/', async (req, res, next) => {
 
 // GET /:id/verify — HR attendance-verification details + calculated eligibility for the
 // comp-off's worked date (authoritative; the frontend only displays this).
-router.get('/:id/verify', requireRole(...HR), async (req, res, next) => {
+router.get('/:id/verify', requireAnyPermission('compoff.approve'), async (req, res, next) => {
   try { res.json(await withTable(() => compOff.attendanceVerification(req.params.id))); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // PATCH /:id/approve
-router.patch('/:id/approve', requireRole(...HR), async (req, res, next) => {
+router.patch('/:id/approve', requireAnyPermission('compoff.approve'), async (req, res, next) => {
   try { res.json(await compOff.approve(req.params.id, req.user)); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // PATCH /:id/reject
-router.patch('/:id/reject', requireRole(...HR), async (req, res, next) => {
+router.patch('/:id/reject', requireAnyPermission('compoff.reject'), async (req, res, next) => {
   try { res.json(await compOff.reject(req.params.id, req.user, req.body?.remarks)); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // PATCH /:id/cancel
-router.patch('/:id/cancel', requireRole(...HR), async (req, res, next) => {
+router.patch('/:id/cancel', requireAnyPermission('compoff.edit'), async (req, res, next) => {
   try { res.json(await compOff.cancel(req.params.id, req.user, req.body?.remarks)); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // PATCH /:id/expire
-router.patch('/:id/expire', requireRole(...HR), async (req, res, next) => {
+router.patch('/:id/expire', requireAnyPermission('compoff.edit'), async (req, res, next) => {
   try { res.json(await compOff.expire(req.params.id)); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
@@ -157,13 +157,13 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // PATCH /:id  — edit (days / reason / remarks / expiry / holiday)
-router.patch('/:id', requireRole(...HR), async (req, res, next) => {
+router.patch('/:id', requireAnyPermission('compoff.edit'), async (req, res, next) => {
   try { res.json(await compOff.edit(req.params.id, req.body || {})); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // POST /scan  — scan attendance in [from,to] and auto-raise comp-off for holiday/weekly-off work
-router.post('/scan', requireRole(...HR), async (req, res, next) => {
+router.post('/scan', requireAnyPermission('compoff.configure'), async (req, res, next) => {
   try {
     const from = String(req.body?.from || '').slice(0, 10);
     const to = String(req.body?.to || '').slice(0, 10);
@@ -176,7 +176,7 @@ router.post('/scan', requireRole(...HR), async (req, res, next) => {
 // POST /scan-month  — MONTH-END comp-off scan for one completed month (HR manual run /
 // retry). Uses the EXACT same scanMonthCompOff() service as the month-end scheduler —
 // no business logic is duplicated here. Idempotent: re-running creates no duplicates.
-router.post('/scan-month', requireRole(...HR), async (req, res, next) => {
+router.post('/scan-month', requireAnyPermission('compoff.configure'), async (req, res, next) => {
   try {
     const month = Number(req.body?.month), year = Number(req.body?.year);
     if (!month || month < 1 || month > 12 || !year) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });

@@ -7,7 +7,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const svc = require('../../services/historical-attendance.service');
 const { ensureHistoricalAttendanceTable } = require('../../services/provision-historical-attendance');
 
@@ -26,12 +26,12 @@ async function withTable(fn) {
 }
 
 // GET /policy — the configured months-back window.
-router.get('/policy', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/policy', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try { res.json(await svc.policy()); } catch (_) { res.json({ monthsBack: 6 }); }
 });
 
 // GET /summary — counts (self, or HR ?employeeId).
-router.get('/summary', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/summary', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const employeeId = isHR(req.user) ? (req.query.employeeId || undefined) : req.user.id;
     res.json(await withTable(() => svc.summary({ employeeId, month: req.query.month })));
@@ -39,7 +39,7 @@ router.get('/summary', requirePermission('attendance:read'), async (req, res, ne
 });
 
 // GET / — employees see their own; HR sees all (filters: employeeId, status, month).
-router.get('/', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const employeeId = isHR(req.user) ? (req.query.employeeId || undefined) : req.user.id;
     const rows = await withTable(() => svc.list({ employeeId, status: req.query.status, month: req.query.month }));
@@ -48,7 +48,7 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
 });
 
 // POST / — employee raises a request (HR may raise for anyone).
-router.post('/', requirePermission('attendance:read'), async (req, res, next) => {
+router.post('/', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.date || !String(b.reason || '').trim()) return res.status(400).json({ error: 'Date and reason are required.' });
@@ -71,8 +71,8 @@ function decisionRoute(action) {
     catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
   };
 }
-router.patch('/:id/approve', requireRole(...HR), decisionRoute('approved'));
-router.patch('/:id/reject', requireRole(...HR), decisionRoute('rejected'));
-router.patch('/:id/more-info', requireRole(...HR), decisionRoute('more_info'));
+router.patch('/:id/approve', requireAnyPermission('attendance.approve_request'), decisionRoute('approved'));
+router.patch('/:id/reject', requireAnyPermission('attendance.reject_request'), decisionRoute('rejected'));
+router.patch('/:id/more-info', requireAnyPermission('attendance.approve_request', 'attendance.reject_request'), decisionRoute('more_info'));
 
 module.exports = router;

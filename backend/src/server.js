@@ -105,6 +105,11 @@ app.use('/api',      rateLimit({ windowMs: 15 * 60 * 1000, max: 500, message: { 
 // ── Health check ──────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
+// ── RBAC security audit (best-effort res 'finish' logger; never blocks) ──
+// Mounted BEFORE the route handlers so it wraps every /api request; it only records
+// RBAC-guarded mutations / denied attempts (see audit-log.service.shouldAudit).
+app.use('/api', require('./middleware/audit.middleware').auditSensitiveActions);
+
 // ── API Routes ────────────────────────────────────────────────────
 app.use('/api/auth',        authRoutes);
 app.use('/api/employees',   authenticateToken, employeeRoutes);
@@ -133,6 +138,7 @@ app.use('/api/company',     authenticateToken, require('./modules/company/compan
 app.use('/api/import-export', authenticateToken, require('./modules/shared/import-export.routes'));
 app.use('/api/celebrations', authenticateToken, require('./modules/celebrations/celebrations.routes'));
 app.use('/api/requests',    authenticateToken, require('./modules/shared/requests.routes'));
+app.use('/api/audit',       authenticateToken, require('./modules/audit/audit.routes'));
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));
@@ -239,6 +245,9 @@ server.listen(PORT, () => {
     require('./services/provision-settings-audit')
       .ensureSettingsAuditTable(logger, { retry: true })
       .catch(err => logger.warn(`[provision] settings-audit table skipped: ${err.message}`));
+    require('./services/provision-audit-log')
+      .ensureAuditLogTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] audit-log table skipped: ${err.message}`));
     require('./services/provision-document-columns')
       .ensureDocumentColumns(logger)
       .catch(err => logger.warn(`[provision] document columns skipped: ${err.message}`));

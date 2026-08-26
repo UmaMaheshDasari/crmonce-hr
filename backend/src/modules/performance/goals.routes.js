@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { resolvePhoto } = require('../../services/employee-photo.util');
 const { ensureGoalTable } = require('../../services/provision-goal');
 const { notifyGoalAssigned, notifyGoalReassigned } = require('../../services/goal-notify.service');
@@ -106,7 +106,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // POST /  — create goal (HR/manager only)
-router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/', requireAnyPermission('performance.create'), async (req, res, next) => {
   try {
     const { employeeId, hr_weightage, ...rest } = req.body;
 

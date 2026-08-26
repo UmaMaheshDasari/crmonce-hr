@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { resolvePhoto } = require('../../services/employee-photo.util');
 const advance = require('../../services/advance.service');
 const { ensureAdvanceTable, addMissingColumn } = require('../../services/provision-advance');
@@ -76,7 +76,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // ── GET /pending  — HR approval queue ──
-router.get('/pending', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/pending', requireAnyPermission('payroll.view'), async (req, res, next) => {
   try {
     const { data } = await d365.getList(ENTITY, { select: advance.SELECT, filter: `hr_status eq 'pending'`, orderby: 'createdon asc' });
     const rows = await enrich((data || []).map(advance.shape));
@@ -140,7 +140,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // ── PATCH /:id/approve  — HR approves + sets EMI / recover-from ──
-router.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id/approve', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
     const current = advance.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: advance.SELECT }));
     if (current.status !== 'pending') return res.status(409).json({ error: `This request is already ${current.status}.` });
@@ -163,7 +163,7 @@ router.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), async (re
 });
 
 // ── PATCH /:id/reject  — HR rejects ──
-router.patch('/:id/reject', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id/reject', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
     const current = advance.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: advance.SELECT }));
     if (current.status !== 'pending') return res.status(409).json({ error: `This request is already ${current.status}.` });

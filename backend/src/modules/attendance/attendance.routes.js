@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
 const etimeService = require('../../services/etime.service');
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
 const ExcelJS = require('exceljs');
 const { computeFromPunches, computeSession, punchesFromRecord, statusForStorage } = require('../../services/attendance.util');
@@ -37,7 +37,7 @@ router.use('/late-login', lateLoginRoutes);
 const ENTITY = d365.constructor.entities.attendance;
 
 // GET /api/attendance
-router.get('/', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const { employeeId, from, to, status, source, department, late, missingPunch, month, year, page = 1, limit = 30 } = req.query;
     const filters = [];
@@ -138,7 +138,7 @@ router.get('/', requirePermission('attendance:read'), async (req, res, next) => 
 });
 
 // GET /api/attendance/summary
-router.get('/summary', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/summary', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const { employeeId, month, year } = req.query;
     const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
@@ -160,7 +160,7 @@ router.get('/summary', requirePermission('attendance:read'), async (req, res, ne
 });
 
 // POST /api/attendance/sync — pull logs from ZK device and sync to D365
-router.post('/sync', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/sync', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     const { from, to } = req.body;
     const fromDate = from || new Date(Date.now() - 86400000).toISOString().split('T')[0];
@@ -178,7 +178,7 @@ router.post('/sync', requireRole('super_admin', 'hr_manager'), async (req, res, 
 });
 
 // POST /api/attendance/device/request-logs — request device to push new logs
-router.post('/device/request-logs', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/device/request-logs', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     const zkPush = require('../../services/zk-push.service');
     if (zkPush.activeSocket && !zkPush.activeSocket.destroyed) {
@@ -193,7 +193,7 @@ router.post('/device/request-logs', requireRole('super_admin', 'hr_manager'), as
 });
 
 // GET /api/attendance/device/info — get ZK device info
-router.get('/device/info', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/device/info', requireAnyPermission('attendance.export'), async (req, res, next) => {
   try {
     const info = await etimeService.getDeviceInfo();
     res.json({ device: `ZKTeco Z900 @ ${etimeService.ip}`, ...info });
@@ -201,7 +201,7 @@ router.get('/device/info', requireRole('super_admin', 'hr_manager'), async (req,
 });
 
 // GET /api/attendance/device/users — list users registered on ZK device
-router.get('/device/users', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/device/users', requireAnyPermission('attendance.export'), async (req, res, next) => {
   try {
     const users = await etimeService.fetchDeviceUsers();
     res.json({ count: users.length, data: users });
@@ -209,7 +209,7 @@ router.get('/device/users', requireRole('super_admin', 'hr_manager'), async (req
 });
 
 // GET /api/attendance/device/logs — raw attendance logs from ZK device
-router.get('/device/logs', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/device/logs', requireAnyPermission('attendance.export'), async (req, res, next) => {
   try {
     const logs = await etimeService.fetchAttendanceLogs();
     res.json({ count: logs.length, data: logs });
@@ -219,7 +219,7 @@ router.get('/device/logs', requireRole('super_admin', 'hr_manager'), async (req,
 // GET /api/attendance/etime-sync/status — Office Sync Agent status for the HR "Sync eTime"
 // panel: online/offline, last successful/attempted sync, last punch, and running totals.
 // This is the modern path (agent → HTTPS → backend). No device connection is attempted.
-router.get('/etime-sync/status', requireRole('super_admin', 'hr_manager'), (req, res) => {
+router.get('/etime-sync/status', requireAnyPermission('attendance.export'), (req, res) => {
   res.json(require('../../services/etime-sync-state').snapshot());
 });
 
@@ -378,7 +378,7 @@ async function findOpenPriorRecord(employeeId, today) {
 }
 
 // POST /api/attendance/checkin — append an IN punch (only when currently OUT/none)
-router.post('/checkin', requirePermission('attendance:read'), requireWebCheckinEnabled, async (req, res, next) => {
+router.post('/checkin', requireAnyPermission('attendance.view'), requireWebCheckinEnabled, async (req, res, next) => {
   try {
     const employeeId = req.user.id;
     const shift = await getEmployeeShift(employeeId);
@@ -417,7 +417,7 @@ router.post('/checkin', requirePermission('attendance:read'), requireWebCheckinE
 });
 
 // POST /api/attendance/checkout — append an OUT punch (only when currently IN). Session stays open.
-router.post('/checkout', requirePermission('attendance:read'), requireWebCheckinEnabled, async (req, res, next) => {
+router.post('/checkout', requireAnyPermission('attendance.view'), requireWebCheckinEnabled, async (req, res, next) => {
   try {
     const employeeId = req.user.id;
     const shift = await getEmployeeShift(employeeId);
@@ -441,7 +441,7 @@ router.post('/checkout', requirePermission('attendance:read'), requireWebCheckin
 // EDITING attendance is HR / Super Admin only. Employees must NOT edit attendance
 // directly — they submit a Missing Punch request (/attendance-requests) that HR
 // approves. This endpoint is the HR override path.
-router.post('/correction', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/correction', requireAnyPermission('attendance.add_punch'), async (req, res, next) => {
   try {
     const { attendanceId, actualCheckout, reason } = req.body;
     if (!attendanceId || !actualCheckout) {
@@ -503,7 +503,7 @@ async function writeAttendanceAudit(entry) {
 // with automatic recompute + audit. Works even after a correction request was
 // approved (attendance records carry no lock). Payroll picks up the change on the
 // next DRAFT generation of that month (locked/processed months are unaffected).
-router.put('/:id/edit', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.put('/:id/edit', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     const { inTime, outTime, breakHours, workedHours, overtime, status, lateMinutes, reason } = req.body;
     const rec = await d365.getById(ENTITY, req.params.id, { select: PUNCH_SELECT });
@@ -539,7 +539,7 @@ router.put('/:id/edit', requireRole('super_admin', 'hr_manager'), async (req, re
 
 // POST /historical — HR/Admin manual historical attendance entry for a PAST date.
 // Recomputes hours/status; warns (409) on a duplicate unless overwrite=true.
-router.post('/historical', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/historical', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     const { employeeId, date, inTime, outTime, status, remarks, overwrite } = req.body;
     if (!employeeId || !date) return res.status(400).json({ error: 'Employee and date are required.' });
@@ -572,7 +572,7 @@ router.post('/historical', requireRole('super_admin', 'hr_manager'), async (req,
 });
 
 // GET /audit — attendance edit history (HR / Super Admin). Filter by ?attendanceId / ?employeeId / ?date.
-router.get('/audit', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/audit', requireAnyPermission('attendance.export'), async (req, res, next) => {
   try {
     const { attendanceId, employeeId, date } = req.query;
     const filters = [];
@@ -623,7 +623,7 @@ function sessionView(record, shift) {
 }
 
 // GET /api/attendance/my-status — full session so the UI always offers the right next action
-router.get('/my-status', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/my-status', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const shift = await getEmployeeShift(req.user.id);
     const { today, record } = await findTodayRecord(req.user.id);
@@ -642,7 +642,7 @@ router.get('/my-status', requirePermission('attendance:read'), async (req, res, 
 // the earliest attendance record of ANY source (device / web / manual). Drives the
 // date-picker minDate and quick-filter clamping on the client. Never hardcoded;
 // null when the employee has no attendance history yet. HR may pass ?employeeId=.
-router.get('/first-date', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/first-date', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     // Employees clamp to their OWN first punch. HR/Admin clamp only when viewing a
     // SPECIFIC employee; "All Employees" (no employeeId) has no single start date,
@@ -669,7 +669,7 @@ function countWorkingDays(y, m) {
 }
 
 // GET /api/attendance/summary/monthly — Present/Half/Absent/Leave/Late/Early/Overtime (dynamic)
-router.get('/summary/monthly', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/summary/monthly', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const now = new Date();
     const y = parseInt(req.query.year) || now.getFullYear();
@@ -735,7 +735,7 @@ router.get('/summary/monthly', requirePermission('attendance:read'), async (req,
 // forward). Employee sees their own; HR may pass ?employeeId=. A negative balance is
 // deducted as EXACT hours × the existing hourly rate (no LOP days). Reuses the daily
 // engine + shift history + approved leave. Only dates on/after the effective cutoff.
-router.get('/monthly-balance', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/monthly-balance', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const now = new Date();
     const y = parseInt(req.query.year) || now.getFullYear();
@@ -757,7 +757,7 @@ router.get('/monthly-balance', requirePermission('attendance:read'), async (req,
 });
 
 // GET /api/attendance/hr/overview — HR dashboard (today), computed on read
-router.get('/hr/overview', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/hr/overview', requireAnyPermission('attendance.export'), async (req, res, next) => {
   try {
     const today = time.istDateStr();
     const { data: recs } = await d365.getList(ENTITY, {
@@ -929,7 +929,7 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
 // GET /api/attendance/stats — aggregate Present/Half/Incomplete/Absent/Leave for
 // a date range (+ optional employee/department/designation). Same math as the
 // export, so the dashboard cards and the Excel file always agree.
-router.get('/stats', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/stats', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const { department, designation } = req.query;
     const targetId = req.user.role === 'employee' ? req.user.id : req.query.employeeId;
@@ -953,7 +953,7 @@ router.get('/stats', requirePermission('attendance:read'), async (req, res, next
 // GET /api/attendance/weekly — Present/Absent per weekday (Mon–Fri) for the
 // current week, for the dashboard chart. Present = employees with a punch that
 // day; Absent = active − present − leave on a working day (0 for future days).
-router.get('/weekly', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/weekly', requireAnyPermission('attendance.export'), async (req, res, next) => {
   try {
     const today = time.istDateStr();
     const addDays = (ds, n) => { const d = new Date(`${ds}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
@@ -1002,7 +1002,7 @@ router.get('/weekly', requireRole('super_admin', 'hr_manager'), async (req, res,
 // Absent = active employee on a WORKING day (not week-off/holiday, up to today)
 // with NO punch and NO approved leave. Powers the "Absent" table view — since an
 // absent day has no attendance record, these rows are synthesized here.
-router.get('/absentees', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/absentees', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const { department, designation } = req.query;
     const targetId = req.user.role === 'employee' ? req.user.id : req.query.employeeId;
@@ -1105,7 +1105,7 @@ router.get('/absentees', requirePermission('attendance:read'), async (req, res, 
 //      Calendar Days | Working Days | Present Days | Absent Days | Salary Working Days.
 //      CRMONCE ADMIN and UmaMahesh are excluded from sheet 3 only.
 // Reuses buildRangeSummary (no change to attendance/leave calculation).
-router.get('/export', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/export', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const { employeeId, status, department, designation, source, view } = req.query;
     const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
@@ -1255,7 +1255,7 @@ router.get('/export', requirePermission('attendance:read'), async (req, res, nex
 });
 
 // PATCH /api/attendance/:id — manual correction
-router.patch('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     const record = await d365.update(ENTITY, req.params.id, {
       ...req.body,

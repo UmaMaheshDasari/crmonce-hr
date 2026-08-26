@@ -2,7 +2,7 @@
 const express = require('express');
 const payrollRouter = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { notifyPayrollProcessed, broadcast, notifyUser, sendEmail } = require('../../services/notification.service');
 const { toValue, toLabel, labelsForList } = require('../../services/picklist');
 const { resolveDays } = require('../../services/leave-summary.util');
@@ -148,7 +148,7 @@ async function computeMonthFacts(empId, month, year, settings) {
 }
 
 // GET /  — list payroll (employees scoped to their own)
-payrollRouter.get('/', requirePermission('payroll:read'), async (req, res, next) => {
+payrollRouter.get('/', requireAnyPermission('payroll.view', 'payslip.view'), async (req, res, next) => {
   try {
     const { employeeId, month, year, page = 1, limit = 20 } = req.query;
     const filters = [];
@@ -350,11 +350,11 @@ async function validateGeneration(req, res, next) {
     res.json({ month, year, ready, blocked, locked: lockedCount, checks: { salaryStructure: blocked === 0, professionalTax: ptConfigured }, warnings });
   } catch (err) { next(err); }
 }
-payrollRouter.post('/validate', requireRole('super_admin', 'hr_manager'), validateGeneration);
+payrollRouter.post('/validate', requireAnyPermission('payroll.process'), validateGeneration);
 
 // POST /remind-leave — HR reminds an employee to apply leave for absent days that
 // have available balance but no approved request (the "Leave Not Applied" warning).
-payrollRouter.post('/remind-leave', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+payrollRouter.post('/remind-leave', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
     const employeeId = odGuid(req.body.employeeId);
     if (!employeeId) return res.status(400).json({ error: 'A valid employeeId is required.' });
@@ -365,8 +365,8 @@ payrollRouter.post('/remind-leave', requireRole('super_admin', 'hr_manager'), as
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
-payrollRouter.post('/generate', requireRole('super_admin', 'hr_manager'), generatePayroll);
-payrollRouter.post('/process', requireRole('super_admin', 'hr_manager'), generatePayroll);   // backward-compat alias
+payrollRouter.post('/generate', requireAnyPermission('payroll.process'), generatePayroll);
+payrollRouter.post('/process', requireAnyPermission('payroll.process'), generatePayroll);   // backward-compat alias
 
 // Finalise a month for the Automation orchestrator: approve every DRAFT row,
 // email its payslip PDF and notify the employee. Idempotent — rows already
@@ -399,7 +399,7 @@ async function finalizeMonth({ month, year, employeeIds } = {}) {
 }
 
 // PATCH /:id/approve  — approve payroll → status 'processed' + email the payslip
-payrollRouter.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+payrollRouter.patch('/:id/approve', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
     const payroll = await d365.getByIdOptional(PAYROLL, req.params.id, { select: BASE_SELECT, optionalSelect: OPT_SELECT });
     const empId = payroll._hr_hremployee_value;
@@ -428,7 +428,7 @@ payrollRouter.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), as
 });
 
 // PATCH /:id/lock  — lock a payroll row so it can never be regenerated (HR).
-payrollRouter.patch('/:id/lock', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+payrollRouter.patch('/:id/lock', requireAnyPermission('payroll.edit'), async (req, res, next) => {
   try {
     const p = await d365.getByIdOptional(PAYROLL, req.params.id, { select: 'hr_hrpayrollid,hr_month,hr_year', optionalSelect: 'hr_status' });
     await updateOpt(req.params.id, { hr_locked: 'true', hr_lockedby: req.user?.name || req.user?.email || 'HR', hr_lockeddate: new Date().toISOString() });
@@ -448,7 +448,7 @@ payrollRouter.patch('/:id/unlock', requireRole('super_admin'), async (req, res, 
 });
 
 // POST /lock-month  — bulk-lock every APPROVED/PAID row for a month (HR).
-payrollRouter.post('/lock-month', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+payrollRouter.post('/lock-month', requireAnyPermission('payroll.edit'), async (req, res, next) => {
   try {
     const month = odInt(req.body.month), year = odInt(req.body.year);
     if (month === null || year === null) return res.status(400).json({ error: 'A valid month and year are required.' });
@@ -470,7 +470,7 @@ payrollRouter.post('/lock-month', requireRole('super_admin', 'hr_manager'), asyn
 });
 
 // PATCH /:id/release  — release payroll → status 'paid'
-payrollRouter.patch('/:id/release', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+payrollRouter.patch('/:id/release', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
     await updateOpt(req.params.id, {
       hr_status: toValue('hr_payroll_status', 'paid'),
@@ -486,7 +486,7 @@ payrollRouter.patch('/:id/release', requireRole('super_admin', 'hr_manager'), as
 
 // GET /dashboard  — aggregated payroll analytics (HR). Filters: year, month,
 // department, employeeId. Powers cards, charts and the status pipeline.
-payrollRouter.get('/dashboard', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+payrollRouter.get('/dashboard', requireAnyPermission('payroll.view'), async (req, res, next) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
     const filters = {
@@ -534,7 +534,7 @@ payrollRouter.get('/dashboard', requireRole('super_admin', 'hr_manager'), async 
 
 // GET /reports/:type  — Excel reports (HR). type ∈ payroll-register, salary-register,
 // attendance-register, employee-master, bank-transfer. ?year=&month=
-payrollRouter.get('/reports/:type', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+payrollRouter.get('/reports/:type', requireAnyPermission('payroll.export'), async (req, res, next) => {
   try {
     const wb = await buildReport(req.params.type, { year: Number(req.query.year) || undefined, month: Number(req.query.month) || undefined });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -545,7 +545,7 @@ payrollRouter.get('/reports/:type', requireRole('super_admin', 'hr_manager'), as
 });
 
 // GET /:id/payslip  — download the payslip PDF (shared generator)
-payrollRouter.get('/:id/payslip', requirePermission('payroll:read'), async (req, res, next) => {
+payrollRouter.get('/:id/payslip', requireAnyPermission('payroll.view', 'payslip.view'), async (req, res, next) => {
   try {
     const payroll = await d365.getByIdOptional(PAYROLL, req.params.id, { select: BASE_SELECT, optionalSelect: OPT_SELECT });
     if (req.user.role === 'employee' && payroll._hr_hremployee_value !== req.user.id) {
@@ -580,7 +580,7 @@ async function loadPayrollWithEmployee(id, user) {
 }
 
 // GET /:id/payslip-data  — structured payslip for the responsive on-screen view.
-payrollRouter.get('/:id/payslip-data', requirePermission('payroll:read'), async (req, res, next) => {
+payrollRouter.get('/:id/payslip-data', requireAnyPermission('payroll.view', 'payslip.view'), async (req, res, next) => {
   try {
     const { payroll, employee } = await loadPayrollWithEmployee(req.params.id, req.user);
     res.json(await payslipModel({ payroll, employee }));
@@ -589,7 +589,7 @@ payrollRouter.get('/:id/payslip-data', requirePermission('payroll:read'), async 
 
 // POST /:id/email  — email the payslip PDF to the employee (self or HR). The same
 // document as the download, reusing the approval-email service.
-payrollRouter.post('/:id/email', requirePermission('payroll:read'), async (req, res, next) => {
+payrollRouter.post('/:id/email', requireAnyPermission('payroll.view', 'payslip.view'), async (req, res, next) => {
   try {
     const { payroll, employee } = await loadPayrollWithEmployee(req.params.id, req.user);
     if (!employee?.hr_email) return res.status(400).json({ error: 'This employee has no email address on file.' });

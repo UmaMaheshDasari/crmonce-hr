@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { notifyLeaveApproval, broadcast } = require('../../services/notification.service');
 const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
 const requestNotify = require('../../services/request-notify.service');
@@ -400,7 +400,7 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
 // GET /api/attendance/leave/working-days?from=&to= — the eligible working-day count for
 // a range (weekends + company holidays excluded). The SAME calc the create uses, so the
 // form's live preview always matches what the backend will store.
-router.get('/working-days', requirePermission('attendance:read'), (req, res) => {
+router.get('/working-days', requireAnyPermission('attendance.view'), (req, res) => {
   const from = String(req.query.from || '').slice(0, 10);
   const to = String(req.query.to || '').slice(0, 10);
   const rc = (from && to && to >= from) ? rangeCounts(from, to) : { calendar: 0, holidays: 0, weeklyOff: 0, working: 0 };
@@ -832,7 +832,7 @@ router.patch('/:id/l2', async (req, res, next) => {
 });
 
 // PATCH /api/attendance/leave/:id — Single-step approval (HR / Super-Admin override, from the UI)
-router.patch('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id', requireAnyPermission('leave.approve', 'leave.reject'), async (req, res, next) => {
   try {
     const { status, remarks } = req.body;
     // UI override keeps existing behaviour (no pending-only guard).
@@ -852,7 +852,7 @@ router.patch('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, 
 //   4. token {type,id} must match the URL → no tampering
 //   5. enforcePending inside applyHrOverride → blocks duplicate approvals / replay
 //      / already-finalised requests
-router.post('/:id/email-action', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/:id/email-action', requireAnyPermission('leave.approve', 'leave.reject'), async (req, res, next) => {
   try {
     const { action, token, remarks } = req.body;
     if (!token) return res.status(400).json({ error: 'Approval token required' });
@@ -1039,7 +1039,7 @@ async function writeLedger(req, res, { kind, category, days, reason }) {
 }
 
 // POST /compoff  — grant ('earn') or consume ('use') comp-off (HR / Super Admin).
-router.post('/compoff', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/compoff', requireAnyPermission('compoff.manage_balance'), async (req, res, next) => {
   try {
     const action = req.body.action === 'use' ? 'use' : 'earn';
     const kind = action === 'use' ? 'comp_off_used' : 'comp_off_earned';
@@ -1051,7 +1051,7 @@ router.post('/compoff', requireRole('super_admin', 'hr_manager'), async (req, re
 });
 
 // POST /adjust  — manual balance adjustment, signed days (HR / Super Admin).
-router.post('/adjust', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/adjust', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const category = ['casual', 'sick', 'compoff'].includes(req.body.category) ? req.body.category : 'casual';
     await writeLedger(req, res, { kind: 'adjustment', category, days: Number(req.body.days), reason: req.body.reason });
@@ -1065,7 +1065,7 @@ router.post('/adjust', requireRole('super_admin', 'hr_manager'), async (req, res
 // employees (HR / Super Admin). carry = MIN(prev-year CL remaining, max — default 5).
 // IDEMPOTENT: re-running never double-credits. ?fromYear=2026[&toYear=2027] (toYear
 // defaults to fromYear+1). Reuses the existing leave ledger — no parallel balance system.
-router.post('/carry-forward', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/carry-forward', requireAnyPermission('leave.manage_balance'), async (req, res, next) => {
   try {
     const fromYear = Number(req.query.fromYear || req.body?.fromYear);
     const toYear = Number(req.query.toYear || req.body?.toYear) || (fromYear ? fromYear + 1 : 0);

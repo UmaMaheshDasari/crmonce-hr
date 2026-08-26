@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const pt = require('../../services/pt-master.service');
 const { ensurePtSlabTable } = require('../../services/provision-pt-slabs');
 
@@ -22,13 +22,13 @@ function validate(input) {
 }
 
 // GET /  — all slabs (HR/Admin).
-router.get('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/', requireAnyPermission('payroll.view'), async (req, res, next) => {
   try { res.json({ data: await pt.listSlabs() }); }
   catch (err) { if (tableMissing(err)) { await ensurePtSlabTable(global.logger || console).catch(() => {}); return res.json({ data: [] }); } next(err); }
 });
 
 // POST /  — add a slab.
-router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/', requireAnyPermission('payroll.edit'), async (req, res, next) => {
   try {
     const errors = validate(req.body);
     if (errors.length) return res.status(400).json({ error: errors[0], errors });
@@ -42,7 +42,7 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
 });
 
 // PATCH /:id  — edit a slab.
-router.patch('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id', requireAnyPermission('payroll.edit'), async (req, res, next) => {
   try {
     const errors = validate(req.body);
     if (errors.length) return res.status(400).json({ error: errors[0], errors });
@@ -53,7 +53,7 @@ router.patch('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, 
 });
 
 // PATCH /:id/status  — activate / deactivate (never delete — history matters).
-router.patch('/:id/status', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id/status', requireAnyPermission('payroll.edit'), async (req, res, next) => {
   try {
     const status = req.body.status === 'inactive' ? 'inactive' : 'active';
     await d365.update(pt.ENTITY, req.params.id, { hr_status: status });
@@ -63,7 +63,7 @@ router.patch('/:id/status', requireRole('super_admin', 'hr_manager'), async (req
 });
 
 // GET /preview  — resolve PT for a state/gross/date (for the UI tester + salary form).
-router.get('/preview', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/preview', requireAnyPermission('payroll.view'), async (req, res, next) => {
   try {
     const amount = await pt.getProfessionalTax(req.query.state, Number(req.query.gross) || 0, req.query.date);
     res.json({ amount });

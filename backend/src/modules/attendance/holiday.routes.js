@@ -6,7 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const holidayService = require('../../services/holiday.service');
 const { ensureHolidayTable, addMissingColumn } = require('../../services/provision-holiday');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
@@ -48,7 +48,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/holidays — HR adds a holiday (including historical / past dates).
-router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     const date = String(req.body.date || '').slice(0, 10);
     const name = String(req.body.name || '').trim();
@@ -73,7 +73,7 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
 });
 
 // PUT /api/holidays/:id — HR edits a holiday (name/date/type/department/status/remarks).
-router.put('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.put('/:id', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     const patch = {};
     if (req.body.name !== undefined) patch.hr_name = String(req.body.name).trim();
@@ -100,7 +100,7 @@ router.put('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, ne
 });
 
 // DELETE /api/holidays/:id — HR removes a holiday.
-router.delete('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.delete('/:id', requireAnyPermission('attendance.edit'), async (req, res, next) => {
   try {
     await d365.delete(HOL, req.params.id);
     await holidayService.refresh(true);

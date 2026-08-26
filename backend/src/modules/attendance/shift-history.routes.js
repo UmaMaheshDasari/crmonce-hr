@@ -7,7 +7,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const d365 = require('../../services/d365.service');
 const shiftHistory = require('../../services/shift-history.service');
 const { ensureShiftHistoryTable } = require('../../services/provision-shift-history');
@@ -28,14 +28,14 @@ async function withTable(fn) {
 }
 
 // GET /employee/:employeeId — the full shift-history timeline (newest first).
-router.get('/employee/:employeeId', requireRole(...HR), async (req, res, next) => {
+router.get('/employee/:employeeId', requireAnyPermission('employees.edit'), async (req, res, next) => {
   try { res.json({ data: await withTable(() => shiftHistory.list(req.params.employeeId)) }); }
   catch (err) { next(err); }
 });
 
 // POST / — change an employee's shift (append a new effective-dated assignment).
 // Body: { employeeId, shiftName, shiftStart, shiftEnd, graceMins?, effectiveFrom, reason? }
-router.post('/', requireRole(...HR), async (req, res, next) => {
+router.post('/', requireAnyPermission('employees.edit'), async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.employeeId || !/^[0-9a-fA-F-]{36}$/.test(String(b.employeeId))) return res.status(400).json({ error: 'A valid employee is required.' });

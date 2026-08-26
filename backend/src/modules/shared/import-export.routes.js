@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const ExcelJS = require('exceljs');
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue } = require('../../services/picklist');
 const ie = require('../../services/import-export.service');
 const salaryStructure = require('../../services/salary-structure.service');
@@ -151,10 +151,10 @@ async function buildPreview(type, buffer) {
 }
 
 // ── GET /types ── list importable types + their columns (for the UI) ──
-router.get('/types', requireRole(...HR), (req, res) => res.json({ types: ie.typeList() }));
+router.get('/types', requireAnyPermission('reports.export'), (req, res) => res.json({ types: ie.typeList() }));
 
 // ── GET /template/:type ── download a blank template with headers + a sample row ──
-router.get('/template/:type', requireRole(...HR), async (req, res, next) => {
+router.get('/template/:type', requireAnyPermission('reports.export'), async (req, res, next) => {
   try {
     if (!ie.isValidType(req.params.type)) return res.status(400).json({ error: 'Unknown import type' });
     const meta = ie.typeMeta(req.params.type);
@@ -169,7 +169,7 @@ router.get('/template/:type', requireRole(...HR), async (req, res, next) => {
 });
 
 // ── POST /import/:type/preview ── parse + validate + duplicate report (no writes) ──
-router.post('/import/:type/preview', requireRole(...HR), upload.single('file'), async (req, res, next) => {
+router.post('/import/:type/preview', requireAnyPermission('reports.export'), upload.single('file'), async (req, res, next) => {
   try {
     if (!ie.isValidType(req.params.type)) return res.status(400).json({ error: 'Unknown import type' });
     if (!req.file) return res.status(400).json({ error: 'Please attach an .xlsx file.' });
@@ -182,7 +182,7 @@ router.post('/import/:type/preview', requireRole(...HR), upload.single('file'), 
 });
 
 // ── POST /import/:type/commit ── re-validate server-side, then write good rows ──
-router.post('/import/:type/commit', requireRole(...HR), upload.single('file'), async (req, res, next) => {
+router.post('/import/:type/commit', requireAnyPermission('reports.export'), upload.single('file'), async (req, res, next) => {
   try {
     if (!ie.isValidType(req.params.type)) return res.status(400).json({ error: 'Unknown import type' });
     if (!req.file) return res.status(400).json({ error: 'Please attach an .xlsx file.' });
@@ -206,7 +206,7 @@ router.post('/import/:type/commit', requireRole(...HR), upload.single('file'), a
 
 // ── GET /export/:type ── Excel export (reuses buildReport; adds leave + payslip-register) ──
 const EXPORT_ALIAS = { attendance: 'attendance-register', payroll: 'payroll-register', 'salary-register': 'salary-register', 'bank-transfer': 'bank-transfer', leave: 'leave', 'payslip-register': 'payslip-register', 'employee-master': 'employee-master' };
-router.get('/export/:type', requireRole(...HR), async (req, res, next) => {
+router.get('/export/:type', requireAnyPermission('reports.export'), async (req, res, next) => {
   try {
     const reportType = EXPORT_ALIAS[req.params.type] || req.params.type;
     const wb = await buildReport(reportType, { year: Number(req.query.year) || undefined, month: Number(req.query.month) || undefined });

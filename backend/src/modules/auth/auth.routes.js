@@ -120,8 +120,11 @@ router.post('/refresh', async (req, res, next) => {
 });
 
 // ── GET /api/auth/me ──
+// Also returns the caller's resolved granular permission list (RBAC Phase A). Additive:
+// existing clients that read only `user` are unaffected. Enforcement is unchanged.
 router.get('/me', authenticateToken, (req, res) => {
-  res.json({ user: req.user });
+  const { permissionsForRole } = require('../../config/permissions');
+  res.json({ user: req.user, permissions: permissionsForRole(req.user?.role) });
 });
 
 // ── POST /api/auth/logout ──

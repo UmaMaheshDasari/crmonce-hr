@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { resolvePhoto } = require('../../services/employee-photo.util');
 const svc = require('../../services/salary-structure.service');
 const { ensureSalaryStructureTable, addMissingColumn } = require('../../services/provision-salary-structure');
@@ -134,7 +134,7 @@ router.get('/:id', blockEmployees, async (req, res, next) => {
 });
 
 // ── POST /  — create a new salary revision (HR / Super Admin). Never overwrites. ──
-router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/', requireAnyPermission('salary.edit'), async (req, res, next) => {
   try {
     const { ok, errors, value } = svc.validate(req.body, { requireEmployee: true });
     if (!ok) return res.status(400).json({ error: errors[0], errors });
@@ -165,7 +165,7 @@ router.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next
 });
 
 // ── PATCH /:id  — correct an existing revision (HR / Super Admin). Recomputes Gross. ──
-router.patch('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id', requireAnyPermission('salary.edit'), async (req, res, next) => {
   try {
     const current = svc.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: svc.SELECT }));
     // Merge the patch over the current revision, then validate the whole thing.

@@ -14,7 +14,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue } = require('../../services/picklist');   // only hr_attendance_status (a real Choice) uses this
 const { computeSession, punchesFromRecord, earlyLogoutHours } = require('../../services/attendance.util');
 const { insertPunchTime, detectMissingPunches, PUNCH_TYPES, NON_PUNCH_TYPES } = require('../../services/missing-punch.util');
@@ -119,7 +119,7 @@ router.post('/setup', requireRole('super_admin'), async (req, res, next) => {
 });
 
 // POST /api/attendance-requests — employee submits a Missing Punch request.
-router.post('/', requirePermission('attendance:read'), async (req, res, next) => {
+router.post('/', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const { attendanceDate, punchType, requestedTime, reason, remarks, attachmentUrl, adjustmentHours } = req.body;
     const dateOnly = String(attendanceDate || '').slice(0, 10);
@@ -214,7 +214,7 @@ router.post('/', requirePermission('attendance:read'), async (req, res, next) =>
 });
 
 // GET /api/attendance-requests — employees see their own; HR/Admin see all (?status=pending).
-router.get('/', requirePermission('attendance:read'), async (req, res, next) => {
+router.get('/', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
     const isHR = ['super_admin', 'hr_manager'].includes(req.user.role);
     const filters = [];
@@ -278,19 +278,19 @@ async function decide(user, id, decision, comment, { enforcePending = false } = 
 }
 
 // PATCH /api/attendance-requests/:id/approve  (HR / Super Admin)
-router.patch('/:id/approve', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id/approve', requireAnyPermission('attendance.approve_request'), async (req, res, next) => {
   try { const u = await decide(req.user, req.params.id, 'approved', req.body.comment); res.json({ data: view(u) }); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // PATCH /api/attendance-requests/:id/reject  (HR / Super Admin)
-router.patch('/:id/reject', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.patch('/:id/reject', requireAnyPermission('attendance.reject_request'), async (req, res, next) => {
   try { const u = await decide(req.user, req.params.id, 'rejected', req.body.comment); res.json({ data: view(u) }); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
 // POST /api/attendance-requests/:id/email-action — approve/reject from an email button.
-router.post('/:id/email-action', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.post('/:id/email-action', requireAnyPermission('attendance.approve_request', 'attendance.reject_request'), async (req, res, next) => {
   try {
     const { action, token, comment } = req.body;
     if (!token) return res.status(400).json({ error: 'Approval token required' });

@@ -223,14 +223,14 @@ router.get('/summary', async (req, res, next) => {
 // the admin's own attendance widget, leave summary and recent activity. HR/Admin
 // only. Every figure is live from Dataverse.
 // ─────────────────────────────────────────────────────────────────────────────
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const JOB = d365.constructor.entities.job;
 const PAYROLL = d365.constructor.entities.payroll;
 const DOC = d365.constructor.entities.document;
 const SHIFT_MAP = (emp) => attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime);
 const addDays = (ds, n) => { const d = new Date(`${ds}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
 
-router.get('/admin-summary', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/admin-summary', requireAnyPermission('reports.view'), async (req, res, next) => {
   try {
     const today = time.istDateStr();
     const [Y, M] = today.split('-').map(Number);

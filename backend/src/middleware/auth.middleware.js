@@ -1,4 +1,9 @@
 const jwt = require('jsonwebtoken');
+// RBAC granular catalogue (Phase A). ADDITIVE: the legacy colon PERMISSIONS map + the
+// existing requirePermission below are UNCHANGED and still drive current enforcement.
+// These new helpers use the granular 'module.action' catalogue and are wired to routes
+// only in Phase B.
+const { hasPermission, permissionsForRole, ROLE_PERMISSIONS: GRANULAR_ROLE_PERMISSIONS, CATALOGUE, ALL_PERMISSIONS } = require('../config/permissions');
 
 const ROLES = {
   SUPER_ADMIN: 'super_admin',
@@ -29,6 +34,8 @@ function authenticateToken(req, res, next) {
 
 function requireRole(...roles) {
   return (req, res, next) => {
+    // Stash what this guard checks so the audit middleware can log the action (additive; no behaviour change).
+    req._audit = { required: `role:${roles.join(',')}`, ...(req._audit || {}) };
     if (!roles.includes(req.user?.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
@@ -60,4 +67,24 @@ function requirePermission(permission) {
   };
 }
 
-module.exports = { authenticateToken, requireRole, requirePermission, ROLES, PERMISSIONS };
+// ── RBAC granular helpers (Phase A — NOT yet attached to any route) ──
+// Pass if the user's role holds ANY of the given 'module.action' permissions.
+function requireAnyPermission(...perms) {
+  return (req, res, next) => {
+    // Stash the granular permission for the audit middleware (additive; no behaviour change).
+    req._audit = { ...(req._audit || {}), action: perms[0], required: perms.join('|') };
+    if (perms.some((p) => hasPermission(req.user, p))) return next();
+    return res.status(403).json({ error: 'Permission denied' });
+  };
+}
+// Pass if the user's role holds the single granular permission.
+function requireGranular(permission) {
+  return requireAnyPermission(permission);
+}
+
+module.exports = {
+  authenticateToken, requireRole, requirePermission, ROLES, PERMISSIONS,
+  // Phase A additions (granular catalogue) — safe to import; unused by routes until Phase B.
+  hasPermission, permissionsForRole, requireAnyPermission, requireGranular,
+  GRANULAR_ROLE_PERMISSIONS, CATALOGUE, ALL_PERMISSIONS,
+};

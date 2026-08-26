@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const settings = require('../../services/payroll-settings.service');
 const { ensurePayrollSettingsTable } = require('../../services/provision-payroll-settings');
 
@@ -12,7 +12,7 @@ const LOGICAL = 'hr_payrollsetting';
 // GET /_diagnose — PROVE the persistence root cause with live evidence (Super Admin).
 // Non-destructive: it writes a sentinel to one field, reads it back, then restores
 // the original value. Answers the 7 evidence questions with exact Dataverse output.
-router.get('/_diagnose', requireRole('super_admin'), async (req, res) => {
+router.get('/_diagnose', requireAnyPermission('settings.edit'), async (req, res) => {
   const ev = {};
   const raw = (e) => e?.response?.data?.error || { message: e?.message };
   let headers;
@@ -116,7 +116,7 @@ function diagnose(ev) {
 
 // GET /  — resolved payroll settings (HR/Admin). Returns BOTH the raw row (for the
 // settings form) and the typed `resolved` config (what the engine consumes).
-router.get('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/', requireAnyPermission('settings.view'), async (req, res, next) => {
   try {
     const raw = await settings.getSettings();
     res.json({ ...raw, resolved: settings.resolve(raw) });
@@ -124,7 +124,7 @@ router.get('/', requireRole('super_admin', 'hr_manager'), async (req, res, next)
 });
 
 // PUT /  — update payroll settings (Super Admin only). Upserts the single row.
-router.put('/', requireRole('super_admin'), async (req, res, next) => {
+router.put('/', requireAnyPermission('settings.edit'), async (req, res, next) => {
   try {
     // Whitelist known fields only. Validate the JSON columns so a broken paste
     // can never corrupt the engine's config.
@@ -242,7 +242,7 @@ router.put('/', requireRole('super_admin'), async (req, res, next) => {
 
 // GET /history — append-only Setting History (Super Admin / HR). Read-only; append-only
 // (there is no edit/delete). Filters: ?field, ?changedBy, ?from, ?to.
-router.get('/history', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+router.get('/history', requireAnyPermission('settings.view'), async (req, res, next) => {
   try {
     const settingsAudit = require('../../services/settings-audit.service');
     const rows = await settingsAudit.list({ field: req.query.field, changedBy: req.query.changedBy, from: req.query.from, to: req.query.to });

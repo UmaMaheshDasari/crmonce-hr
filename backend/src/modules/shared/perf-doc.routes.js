@@ -25,13 +25,13 @@ const mimeFromName = (name) => MIME_BY_EXT[path.extname(name || '').toLowerCase(
 // accepted (the earlier .pdf/.doc/.docx/.jpg-only filter was blocking most types).
 const BLOCKED_EXT = new Set(['.exe', '.msi', '.dll', '.scr', '.com', '.bat', '.cmd', '.sh', '.php', '.php5', '.phtml', '.cgi', '.pl', '.py', '.rb', '.js', '.jar', '.vbs', '.ps1']);
 const d365 = require('../../services/d365.service');
-const { requireRole, requirePermission } = require('../../middleware/auth.middleware');
+const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
 let activity; try { activity = require('../../services/activity.service'); } catch (_) { activity = null; }
 const audit = (payload) => { try { activity?.record?.(payload); } catch (_) {} };
 
 // ── PERFORMANCE ───────────────────────────────────────────────────
-perfRouter.get('/', requirePermission('performance:read'), async (req, res, next) => {
+perfRouter.get('/', requireAnyPermission('performance.view'), async (req, res, next) => {
   try {
     const { employeeId, cycle } = req.query;
     const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
@@ -49,7 +49,7 @@ perfRouter.get('/', requirePermission('performance:read'), async (req, res, next
   } catch (err) { next(err); }
 });
 
-perfRouter.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+perfRouter.post('/', requireAnyPermission('performance.create'), async (req, res, next) => {
   try {
     // Bind the review to the SELECTED employee (employeeId from the form) so the review
     // is attributed to the person being reviewed — not the creator. `employeeId` is a
@@ -66,7 +66,7 @@ perfRouter.post('/', requireRole('super_admin', 'hr_manager'), async (req, res, 
   } catch (err) { next(err); }
 });
 
-perfRouter.patch('/:id', requirePermission('performance:write'), async (req, res, next) => {
+perfRouter.patch('/:id', requireAnyPermission('performance.edit'), async (req, res, next) => {
   try {
     const body = { ...req.body };
     if (body.hr_status) body.hr_status = toValue('hr_performance_status', body.hr_status);
@@ -76,7 +76,7 @@ perfRouter.patch('/:id', requirePermission('performance:write'), async (req, res
 });
 
 // DELETE a performance review — HR / Super Admin only (same authority as create).
-perfRouter.delete('/:id', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+perfRouter.delete('/:id', requireAnyPermission('performance.delete'), async (req, res, next) => {
   try {
     await d365.delete(d365.constructor.entities.performance, req.params.id);
     res.json({ deleted: true, id: req.params.id });
@@ -177,7 +177,7 @@ async function enrichEmployees(rows, targetId) {
 }
 
 // GET /  — list documents (employee sees own; HR passes ?employeeId=)
-docRouter.get('/', requirePermission('document:read'), async (req, res, next) => {
+docRouter.get('/', requireAnyPermission('documents.view'), async (req, res, next) => {
   try {
     const targetId = isHR(req.user) ? req.query.employeeId : req.user.id;
     const filter = targetId ? `_hr_hremployee_value eq '${targetId}'` : undefined;
@@ -188,7 +188,7 @@ docRouter.get('/', requirePermission('document:read'), async (req, res, next) =>
 });
 
 // GET /pending  — HR queue of documents awaiting verification
-docRouter.get('/pending', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+docRouter.get('/pending', requireAnyPermission('documents.verify'), async (req, res, next) => {
   try {
     const result = await d365.getListOptional(DOC, { select: DOC_SELECT, optionalSelect: DOC_OPT, orderby: 'createdon desc', top: 2000 });
     const rows = (result.data || []).map(shape).filter(d => (d.status || 'pending') === 'pending' || d.status === 'reupload');
@@ -198,7 +198,7 @@ docRouter.get('/pending', requireRole('super_admin', 'hr_manager'), async (req, 
 
 // GET /:id  — single document metadata (owner or HR). Used by the Leave module to
 // show a linked Medical Certificate's current verification status/actions.
-docRouter.get('/:id', requirePermission('document:read'), async (req, res, next) => {
+docRouter.get('/:id', requireAnyPermission('documents.view'), async (req, res, next) => {
   try {
     const doc = await d365.getByIdOptional(DOC, req.params.id, { select: DOC_SELECT, optionalSelect: DOC_OPT });
     if (!doc || !doc.hr_hrdocumentid) return res.status(404).json({ error: 'Document not found' });
@@ -208,7 +208,7 @@ docRouter.get('/:id', requirePermission('document:read'), async (req, res, next)
 });
 
 // POST /upload  — upload a document (any type). Status → pending; HR notified.
-docRouter.post('/upload', requirePermission('document:write'), upload.single('file'), async (req, res, next) => {
+docRouter.post('/upload', requireAnyPermission('documents.upload'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const { employeeId, documentType, name, remarks } = req.body;
@@ -241,7 +241,7 @@ docRouter.post('/upload', requirePermission('document:write'), upload.single('fi
 // hardcoded), Content-Length and Content-Disposition (inline for view, attachment
 // for download) preserving the ORIGINAL filename. Auth + owner/HR scoped, so it
 // does not depend on public static/nginx serving of /uploads.
-docRouter.get('/:id/file', requirePermission('document:read'), async (req, res, next) => {
+docRouter.get('/:id/file', requireAnyPermission('documents.view'), async (req, res, next) => {
   try {
     const doc = await d365.getByIdOptional(DOC, req.params.id, {
       select: 'hr_fileurl,hr_name,_hr_hremployee_value', optionalSelect: 'hr_contenttype,hr_originalname,hr_filesize',
@@ -272,7 +272,7 @@ docRouter.get('/:id/file', requirePermission('document:read'), async (req, res, 
 });
 
 // POST /:id/replace  — replace the file (owner or HR; only while NOT verified). Resets to pending.
-docRouter.post('/:id/replace', requirePermission('document:write'), upload.single('file'), async (req, res, next) => {
+docRouter.post('/:id/replace', requireAnyPermission('documents.upload'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const existing = await d365.getByIdOptional(DOC, req.params.id, { select: '_hr_hremployee_value', optionalSelect: 'hr_status' });
@@ -296,7 +296,7 @@ docRouter.post('/:id/replace', requirePermission('document:write'), upload.singl
 // POST /:id/new-version  — upload a NEW VERSION of a document (typically a verified
 // one). The previous version is KEPT; the new version starts as pending → HR
 // notified. Owner or HR.
-docRouter.post('/:id/new-version', requirePermission('document:write'), upload.single('file'), async (req, res, next) => {
+docRouter.post('/:id/new-version', requireAnyPermission('documents.upload'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const existing = await d365.getByIdOptional(DOC, req.params.id, { select: 'hr_name,_hr_hremployee_value', optionalSelect: 'hr_documenttype,hr_docgroup,hr_version' });
@@ -327,7 +327,7 @@ docRouter.post('/:id/new-version', requirePermission('document:write'), upload.s
 
 // PATCH /:id/verify  — HR approve / reject / request re-upload + HR remarks.
 // Approving a NEW version supersedes the previously-verified version in the group.
-docRouter.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (req, res, next) => {
+docRouter.patch('/:id/verify', requireAnyPermission('documents.verify'), async (req, res, next) => {
   try {
     const { action, hrRemarks } = req.body;   // approve | reject | reupload
     const map = { approve: 'verified', reject: 'rejected', reupload: 'reupload' };
@@ -360,7 +360,7 @@ docRouter.patch('/:id/verify', requireRole('super_admin', 'hr_manager'), async (
 });
 
 // DELETE /:id  — HR always; employee only their OWN and only while NOT verified.
-docRouter.delete('/:id', requirePermission('document:read'), async (req, res, next) => {
+docRouter.delete('/:id', requireAnyPermission('documents.view'), async (req, res, next) => {
   try {
     if (!isHR(req.user)) {
       const existing = await d365.getByIdOptional(DOC, req.params.id, { select: '_hr_hremployee_value', optionalSelect: 'hr_status' });

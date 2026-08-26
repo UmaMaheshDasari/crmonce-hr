@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
-const { requireRole } = require('../../middleware/auth.middleware');
+const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const company = require('../../services/company.service');
 const companyConfig = require('../../services/company-config.service');
 const { ensureCompanyTable } = require('../../services/provision-company');
@@ -23,7 +23,7 @@ router.get('/config', async (req, res, next) => {
 });
 
 // PATCH /  — update company details (Super Admin only). Upserts the single row.
-router.patch('/', requireRole('super_admin'), async (req, res, next) => {
+router.patch('/', requireAnyPermission('settings.edit'), async (req, res, next) => {
   try {
     // Whitelist only known company fields; ignore anything else.
     const patch = {};
