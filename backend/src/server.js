@@ -181,6 +181,11 @@ server.listen(PORT, () => {
   logger.info(`   Health check → http://localhost:${PORT}/health`);
   initJobs();
 
+  // RBAC Phase K: load Super-Admin role-permission overrides into the in-memory cache.
+  // Fail-safe — on any error, authorization falls back to the code-defined defaults.
+  require('./services/permission-overrides').load()
+    .catch(err => logger.warn(`[perm-overrides] initial load skipped: ${err.message}`));
+
   // Best-effort: create the Missing Punch / Holiday tables if they don't exist yet
   // (idempotent). Skipped when they exist or the app lacks customization rights.
   if (process.env.AUTO_PROVISION !== 'false') {

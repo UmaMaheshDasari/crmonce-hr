@@ -115,10 +115,25 @@ async function getCompany() {
   return cache;
 }
 
+/**
+ * Read the RAW hr_settingsjson blob (parsed) + the record id from the single company
+ * settings row. Used to store non-company keys alongside company fields (RBAC Phase K
+ * stores `rolePermissions` here). Best-effort — returns {id:null, blob:{}} on any error.
+ */
+async function getRawSettingsBlob() {
+  try {
+    const { data } = await d365.getList(ENTITY_SET, { select: 'hr_companysettingid,hr_settingsjson', top: 1, orderby: 'createdon asc' });
+    const row = (data && data[0]) || {};
+    let blob = {};
+    try { blob = JSON.parse(row.hr_settingsjson || '{}') || {}; } catch { blob = {}; }
+    return { id: row.hr_companysettingid || null, blob: (blob && typeof blob === 'object') ? blob : {} };
+  } catch { return { id: null, blob: {} }; }
+}
+
 /** Split the one-line registered office into printable lines (for payslip/email). */
 function addressLines(company) {
   const raw = company?.hr_addressline || COMPANY_DEFAULTS.hr_addressline;
   return String(raw).split(/,\s*/).map(s => s.trim()).filter(Boolean);
 }
 
-module.exports = { getCompany, invalidate, mergeSaved, addressLines, COMPANY_DEFAULTS, FIELDS, SELECT, ENTITY_SET, LOGO_FILE };
+module.exports = { getCompany, invalidate, mergeSaved, addressLines, getRawSettingsBlob, COMPANY_DEFAULTS, FIELDS, SELECT, ENTITY_SET, LOGO_FILE };

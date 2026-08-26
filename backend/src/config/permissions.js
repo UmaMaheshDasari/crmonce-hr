@@ -87,14 +87,33 @@ const ROLE_PERMISSIONS = {
   ],
 };
 
+// ── DB override overlay (RBAC Phase K — editable role permissions) ──
+// The code ROLE_PERMISSIONS above stays the DEFAULT/FALLBACK. Super Admin can persist
+// per-role overrides (stored in the hr_settingsjson blob; see permission-overrides.service);
+// permission-overrides.load() calls setOverrides() at boot and after each save. This stays
+// SYNCHRONOUS and FAIL-SAFE: if no override is loaded for a role (or the store is
+// unavailable), resolution falls back to the code default — Dataverse failure NEVER breaks
+// authorization. An override is only ever a set of catalogue permissions (validated on write).
+let _overrides = {};
+/** Replace the in-memory override map (role → string[]). Non-object clears it. */
+function setOverrides(o) { _overrides = (o && typeof o === 'object') ? o : {}; }
+/** The current override map (read-only view). */
+function getOverrides() { return _overrides; }
+/** Effective grants for a role: DB override if present, else the code default. */
+function grantsFor(role) {
+  if (Object.prototype.hasOwnProperty.call(_overrides, role) && Array.isArray(_overrides[role])) return _overrides[role];
+  return ROLE_PERMISSIONS[role] || [];
+}
+
 /**
  * Does `roleOrUser` hold `perm`? Supports '*', 'module.*', and exact match.
+ * Uses the effective grants (DB override → code default).
  * @param {string|{role?:string}} roleOrUser  a role string or a req.user-like object
  * @param {string} perm  a 'module.action' permission
  */
 function hasPermission(roleOrUser, perm) {
   const role = typeof roleOrUser === 'string' ? roleOrUser : roleOrUser?.role;
-  const grants = ROLE_PERMISSIONS[role] || [];
+  const grants = grantsFor(role);
   if (grants.includes('*')) return true;
   if (grants.includes(perm)) return true;
   const mod = String(perm || '').split('.')[0];
@@ -103,10 +122,11 @@ function hasPermission(roleOrUser, perm) {
 
 /**
  * The concrete permission list for a role, expanding wildcards. Super admin → ['*'].
- * This is what GET /auth/me returns and what the (future) frontend hasPermission uses.
+ * This is what GET /auth/me returns and what the frontend hasPermission uses.
+ * Uses the effective grants (DB override → code default).
  */
 function permissionsForRole(role) {
-  const grants = ROLE_PERMISSIONS[role] || [];
+  const grants = grantsFor(role);
   if (grants.includes('*')) return ['*'];
   const out = new Set();
   for (const g of grants) {
@@ -120,4 +140,4 @@ function permissionsForRole(role) {
   return [...out].sort();
 }
 
-module.exports = { CATALOGUE, ALL_PERMISSIONS, ROLE_PERMISSIONS, hasPermission, permissionsForRole };
+module.exports = { CATALOGUE, ALL_PERMISSIONS, ROLE_PERMISSIONS, hasPermission, permissionsForRole, setOverrides, getOverrides, grantsFor };

@@ -329,6 +329,7 @@ export const celebrationsApi = {
 export const rolesApi = {
   list: () => api.get('/roles'),                                           // roles.view
   assignRole: (employeeId, role, reason) => api.patch(`/employees/${employeeId}/role`, { role, reason }), // roles.edit
+  updatePermissions: (roleKey, permissions) => api.put(`/roles/${roleKey}/permissions`, { permissions }), // roles.edit (RBAC Phase K)
 };
 
 // ── Audit Logs (RBAC Phase C security audit; Phase E adds the export + employee filter) ──

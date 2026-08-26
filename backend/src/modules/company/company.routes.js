@@ -39,7 +39,14 @@ router.patch('/', requireAnyPermission('settings.edit'), async (req, res, next) 
     // The JSON blob holds the COMPLETE merged config (new patch over current) — the
     // persistence fallback, so a save survives even if a scalar column isn't
     // provisioned. (Same proven approach as payroll-settings.)
-    const merged = {};
+    // RBAC Phase K: PRESERVE any non-company keys already in the blob (e.g. rolePermissions)
+    // so a Company Settings save never wipes the role-permission overrides stored here.
+    let preserved = {};
+    try {
+      const { blob } = await company.getRawSettingsBlob();
+      for (const k of Object.keys(blob || {})) if (!company.FIELDS.includes(k)) preserved[k] = blob[k];
+    } catch { /* best-effort */ }
+    const merged = { ...preserved };
     for (const f of company.FIELDS) merged[f] = patch[f] !== undefined ? patch[f] : current[f];
     patch.hr_settingsjson = JSON.stringify(merged);
 
