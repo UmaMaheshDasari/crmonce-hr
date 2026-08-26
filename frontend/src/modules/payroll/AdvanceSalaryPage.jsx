@@ -8,6 +8,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate } from '../../utils/format';
 import Dialog, { ModalBody, ModalFooter } from '../../components/Modal';
+import SensitiveAmount from '../../components/SensitiveAmount';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -147,7 +148,7 @@ function AdvanceCard({ record, isHR, onApprove, onReject, onDelete, onEdit }) {
             Requested {fmtDate(record.requestedDate)}
           </p>
         </div>
-        <p className="text-xl font-bold text-gray-900 shrink-0">{inr(record.amount)}</p>
+        <p className="text-xl font-bold text-gray-900 shrink-0"><SensitiveAmount value={inr(record.amount)} label="advance amount" /></p>
       </div>
 
       {record.reason && <p className="text-sm text-gray-500 mt-2 line-clamp-2">{record.reason}</p>}
@@ -155,13 +156,13 @@ function AdvanceCard({ record, isHR, onApprove, onReject, onDelete, onEdit }) {
       {(record.status === 'approved' || record.status === 'completed') && (
         <div className="mt-3">
           <div className="flex items-center justify-between text-xs mb-1">
-            <span className="text-gray-500">Recovered {inr(record.recovered)} of {inr(record.amount)}</span>
+            <span className="text-gray-500">Recovered <SensitiveAmount value={inr(record.recovered)} label="recovered amount" /> of <SensitiveAmount value={inr(record.amount)} label="advance amount" /></span>
             <span className="font-semibold text-gray-700">{record.percent}%</span>
           </div>
           <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, record.percent)}%` }} /></div>
           <div className="flex items-center justify-between text-xs mt-1.5 text-gray-400">
-            <span>EMI {record.emi > 0 ? inr(record.emi) + '/mo' : 'one payroll'}{record.recoverFrom ? ` · from ${record.recoverFrom}` : ''}</span>
-            <span className="font-medium text-gray-600">Remaining {inr(record.remaining)}</span>
+            <span>EMI {record.emi > 0 ? <><SensitiveAmount value={inr(record.emi)} label="EMI" />/mo</> : 'one payroll'}{record.recoverFrom ? ` · from ${record.recoverFrom}` : ''}</span>
+            <span className="font-medium text-gray-600">Remaining <SensitiveAmount value={inr(record.remaining)} label="remaining amount" /></span>
           </div>
           {record.schedule?.length > 0 && (
             <button onClick={() => setOpen(o => !o)} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-indigo-600">
@@ -171,7 +172,7 @@ function AdvanceCard({ record, isHR, onApprove, onReject, onDelete, onEdit }) {
           {open && (
             <div className="mt-2 space-y-1">
               {record.schedule.map((s, i) => (
-                <div key={i} className="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-1.5"><span className="text-gray-500">{s.period}</span><span className="font-medium text-gray-700">{inr(s.amount)}</span></div>
+                <div key={i} className="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-1.5"><span className="text-gray-500">{s.period}</span><span className="font-medium text-gray-700"><SensitiveAmount value={inr(s.amount)} label="amount" /></span></div>
               ))}
             </div>
           )}
@@ -246,7 +247,7 @@ export default function AdvanceSalaryPage() {
         {[['Total Advance', bal.totalAdvance, 'text-gray-900'], ['Recovered', bal.recovered, 'text-emerald-600'], ['Remaining Balance', bal.remaining, 'text-amber-600']].map(([label, val, color]) => (
           <div key={label} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
             <p className="text-[11px] uppercase tracking-wide text-gray-400">{label}</p>
-            <p className={`text-xl font-bold ${color}`}>{inr(val)}</p>
+            <p className={`text-xl font-bold ${color}`}><SensitiveAmount value={inr(val)} label="amount" /></p>
           </div>
         ))}
       </div>

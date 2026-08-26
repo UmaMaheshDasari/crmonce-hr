@@ -12,6 +12,7 @@ import { calculateProfessionalTax } from '../../utils/professionalTax';
 import SearchSelect from '../../components/SearchSelect';
 import Modal, { ModalBody, ModalFooter } from '../../components/Modal';
 import EmployeeAvatar from '../../components/Avatar';
+import SensitiveAmount from '../../components/SensitiveAmount';
 import toast from 'react-hot-toast';
 
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
@@ -125,7 +126,7 @@ function SalaryFormModal({ record, employees, onClose }) {
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Earnings</h3>
-              <div className="text-sm"><span className="text-gray-400">Gross</span> <span className="font-bold text-indigo-600">{inr(gross)}</span></div>
+              <div className="text-sm"><span className="text-gray-400">Gross</span> <span className="font-bold text-indigo-600"><SensitiveAmount value={inr(gross)} label="gross salary" /></span></div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {EARNINGS.map(([k, label, req]) => field(k, label, req))}
@@ -160,9 +161,9 @@ function SalaryFormModal({ record, employees, onClose }) {
 
           {/* Live totals */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="bg-gray-50 rounded-xl p-3 text-center"><p className="text-[11px] uppercase tracking-wide text-gray-400">Gross</p><p className="text-lg font-bold text-gray-900">{inr(gross)}</p></div>
-            <div className="bg-gray-50 rounded-xl p-3 text-center"><p className="text-[11px] uppercase tracking-wide text-gray-400">Deductions</p><p className="text-lg font-bold text-red-600">−{inr(totalDeductions)}</p></div>
-            <div className="bg-indigo-50 rounded-xl p-3 text-center"><p className="text-[11px] uppercase tracking-wide text-indigo-400">Net Salary</p><p className="text-lg font-bold text-indigo-700">{inr(net)}</p></div>
+            <div className="bg-gray-50 rounded-xl p-3 text-center"><p className="text-[11px] uppercase tracking-wide text-gray-400">Gross</p><p className="text-lg font-bold text-gray-900"><SensitiveAmount value={inr(gross)} label="gross salary" /></p></div>
+            <div className="bg-gray-50 rounded-xl p-3 text-center"><p className="text-[11px] uppercase tracking-wide text-gray-400">Deductions</p><p className="text-lg font-bold text-red-600">−<SensitiveAmount value={inr(totalDeductions)} label="deductions" /></p></div>
+            <div className="bg-indigo-50 rounded-xl p-3 text-center"><p className="text-[11px] uppercase tracking-wide text-indigo-400">Net Salary</p><p className="text-lg font-bold text-indigo-700"><SensitiveAmount value={inr(net)} label="net salary" /></p></div>
           </div>
 
           {/* Status + remarks */}
@@ -215,12 +216,12 @@ function HistoryModal({ employeeId, employeeName, onClose }) {
                         <span className="text-sm font-bold text-gray-900">Effective {fmtDate(r.effectiveFrom)}</span>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ring-1 ${STATUS_BADGE[r.status] || STATUS_BADGE.superseded}`}>{r.status}</span>
                       </div>
-                      <span className="text-sm font-bold text-indigo-600">{inr(r.gross)}</span>
+                      <span className="text-sm font-bold text-indigo-600"><SensitiveAmount value={inr(r.gross)} label="gross salary" /></span>
                     </div>
                     <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
-                      <div><p className="text-gray-400">Gross</p><p className="font-semibold text-gray-800">{inr(r.gross)}</p></div>
-                      <div><p className="text-gray-400">Deductions</p><p className="font-semibold text-red-600">−{inr(r.totalDeductions)}</p></div>
-                      <div><p className="text-gray-400">Net</p><p className="font-semibold text-emerald-600">{inr(r.netSalary)}</p></div>
+                      <div><p className="text-gray-400">Gross</p><p className="font-semibold text-gray-800"><SensitiveAmount value={inr(r.gross)} label="gross salary" /></p></div>
+                      <div><p className="text-gray-400">Deductions</p><p className="font-semibold text-red-600">−<SensitiveAmount value={inr(r.totalDeductions)} label="deductions" /></p></div>
+                      <div><p className="text-gray-400">Net</p><p className="font-semibold text-emerald-600"><SensitiveAmount value={inr(r.netSalary)} label="net salary" /></p></div>
                     </div>
                     {r.remarks && <p className="text-xs text-gray-500 mt-2 italic">{r.remarks}</p>}
                   </div>
@@ -257,7 +258,7 @@ function SalaryCard({ record, canEdit, canDelete, onEdit, onDelete, onHistory })
         <div className="mt-4 flex items-end justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-gray-400">Net Salary / month</p>
-            <p className="text-2xl font-bold text-gray-900">{inr(record.netSalary)}</p>
+            <p className="text-2xl font-bold text-gray-900"><SensitiveAmount value={inr(record.netSalary)} label="net salary" /></p>
           </div>
           <div className="text-right text-xs text-gray-400">
             <p>Effective</p><p className="font-medium text-gray-600">{fmtDate(record.effectiveFrom)}</p>
@@ -265,8 +266,8 @@ function SalaryCard({ record, canEdit, canDelete, onEdit, onDelete, onHistory })
         </div>
 
         <div className="grid grid-cols-2 gap-2 mt-4 text-xs">
-          <div className="bg-gray-50 rounded-lg px-3 py-2"><p className="text-gray-400">Gross</p><p className="font-semibold text-gray-800">{inr(record.gross)}</p></div>
-          <div className="bg-gray-50 rounded-lg px-3 py-2"><p className="text-gray-400">Deductions</p><p className="font-semibold text-red-600">−{inr(record.totalDeductions)}</p></div>
+          <div className="bg-gray-50 rounded-lg px-3 py-2"><p className="text-gray-400">Gross</p><p className="font-semibold text-gray-800"><SensitiveAmount value={inr(record.gross)} label="gross salary" /></p></div>
+          <div className="bg-gray-50 rounded-lg px-3 py-2"><p className="text-gray-400">Deductions</p><p className="font-semibold text-red-600">−<SensitiveAmount value={inr(record.totalDeductions)} label="deductions" /></p></div>
         </div>
       </div>
 
@@ -344,12 +345,12 @@ export default function SalaryStructurePage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {[
             { label: 'Employees on Payroll', value: summary.count, icon: UserCircleIcon, color: 'text-indigo-600' },
-            { label: 'Monthly Gross', value: inr(summary.gross), icon: ArrowTrendingUpIcon, color: 'text-emerald-600' },
-            { label: 'Monthly Net Payout', value: inr(summary.net), icon: CheckBadgeIcon, color: 'text-blue-600' },
+            { label: 'Monthly Gross', value: inr(summary.gross), sensitive: true, icon: ArrowTrendingUpIcon, color: 'text-emerald-600' },
+            { label: 'Monthly Net Payout', value: inr(summary.net), sensitive: true, icon: CheckBadgeIcon, color: 'text-blue-600' },
           ].map(s => (
             <div key={s.label} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center"><s.icon className={`w-5 h-5 ${s.color}`} /></div>
-              <div><p className="text-[11px] uppercase tracking-wide text-gray-400">{s.label}</p><p className="text-xl font-bold text-gray-900">{s.value}</p></div>
+              <div><p className="text-[11px] uppercase tracking-wide text-gray-400">{s.label}</p><p className="text-xl font-bold text-gray-900">{s.sensitive ? <SensitiveAmount value={s.value} label={s.label.toLowerCase()} /> : s.value}</p></div>
             </div>
           ))}
         </div>

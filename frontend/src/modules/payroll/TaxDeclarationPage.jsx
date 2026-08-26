@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { taxDeclarationApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
+import SensitiveAmount from '../../components/SensitiveAmount';
 import {
   DocumentTextIcon, PlusIcon, XMarkIcon, PencilSquareIcon,
   EyeIcon, PaperAirplaneIcon, TrashIcon, CheckCircleIcon,
@@ -90,8 +91,7 @@ function DeclarationCard({ dec, onEdit, onView, onSubmit, onDelete, isHR }) {
         <div className="mb-4">
           <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-0.5">Total Deductions</p>
           <p className="text-2xl font-bold text-gray-900">
-            <span className="text-base font-medium text-gray-500 mr-0.5">&#8377;</span>
-            {fmt(dec.hr_totaldeductions)}
+            <SensitiveAmount value={`₹${fmt(dec.hr_totaldeductions)}`} label="total deductions" />
           </p>
         </div>
 
@@ -101,7 +101,7 @@ function DeclarationCard({ dec, onEdit, onView, onSubmit, onDelete, isHR }) {
             {sections.slice(0, 4).map(s => (
               <div key={s.key} className="flex items-center justify-between text-xs">
                 <span className="text-gray-500">{s.label}</span>
-                <span className="font-medium text-gray-700">&#8377;{fmt(dec[s.key])}</span>
+                <span className="font-medium text-gray-700"><SensitiveAmount value={`₹${fmt(dec[s.key])}`} label={s.label.toLowerCase()} /></span>
               </div>
             ))}
             {sections.length > 4 && (
@@ -408,8 +408,7 @@ function ViewDetailsModal({ declaration, onClose, isHR }) {
           <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 rounded-2xl p-4 text-center">
             <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Total Deductions</p>
             <p className="text-3xl font-bold text-indigo-900 mt-1">
-              <span className="text-xl font-medium text-indigo-500 mr-0.5">&#8377;</span>
-              {fmt(declaration.hr_totaldeductions)}
+              <SensitiveAmount value={`₹${fmt(declaration.hr_totaldeductions)}`} label="total deductions" />
             </p>
           </div>
 
@@ -428,7 +427,7 @@ function ViewDetailsModal({ declaration, onClose, isHR }) {
                       <p className="text-[10px] text-gray-400">{sec.sub}</p>
                     </div>
                   </div>
-                  <span className="text-sm font-semibold text-gray-900">&#8377;{fmt(val)}</span>
+                  <span className="text-sm font-semibold text-gray-900"><SensitiveAmount value={`₹${fmt(val)}`} label={sec.label.toLowerCase()} /></span>
                 </div>
               );
             })}
@@ -439,7 +438,7 @@ function ViewDetailsModal({ declaration, onClose, isHR }) {
                   <p className="text-sm font-medium text-gray-700">{declaration.hr_othersection}</p>
                   <p className="text-[10px] text-gray-400">Other Section</p>
                 </div>
-                <span className="text-sm font-semibold text-gray-900">&#8377;{fmt(declaration.hr_otheramount)}</span>
+                <span className="text-sm font-semibold text-gray-900"><SensitiveAmount value={`₹${fmt(declaration.hr_otheramount)}`} label="other amount" /></span>
               </div>
             )}
           </div>

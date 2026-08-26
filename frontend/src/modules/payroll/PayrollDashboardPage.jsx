@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { payrollApi, employeeApi } from '../../api/endpoints';
+import SensitiveAmount from '../../components/SensitiveAmount';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
@@ -63,13 +64,13 @@ function ChartCard({ title, subtitle, children, height = 240 }) {
   );
 }
 
-function StatCard({ icon: Icon, label, value, accent }) {
+function StatCard({ icon: Icon, label, value, accent, sensitive }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center gap-3">
       <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${accent.bg}`}><Icon className={`w-5 h-5 ${accent.text}`} /></div>
       <div className="min-w-0">
         <p className="text-[11px] uppercase tracking-wider text-gray-400">{label}</p>
-        <p className="text-xl font-bold text-gray-900 truncate">{value}</p>
+        <p className="text-xl font-bold text-gray-900 truncate">{sensitive ? <SensitiveAmount value={value} label={label.toLowerCase()} /> : value}</p>
       </div>
     </div>
   );
@@ -101,9 +102,9 @@ export default function PayrollDashboardPage() {
     { icon: UsersIcon, label: 'Total Employees', value: d?.cards.totalEmployees ?? '—', accent: { bg: 'bg-indigo-50', text: 'text-indigo-600' } },
     { icon: CheckCircleIcon, label: 'Processed Payroll', value: d?.cards.processedPayroll ?? '—', accent: { bg: 'bg-emerald-50', text: 'text-emerald-600' } },
     { icon: ClockIcon, label: 'Pending Payroll', value: d?.cards.pendingPayroll ?? '—', accent: { bg: 'bg-amber-50', text: 'text-amber-600' } },
-    { icon: BanknotesIcon, label: 'Total Gross Salary', value: d ? inr(d.cards.totalGross) : '—', accent: { bg: 'bg-sky-50', text: 'text-sky-600' } },
-    { icon: ArrowTrendingDownIcon, label: 'Total Deductions', value: d ? inr(d.cards.totalDeductions) : '—', accent: { bg: 'bg-rose-50', text: 'text-rose-600' } },
-    { icon: WalletIcon, label: 'Total Net Salary', value: d ? inr(d.cards.totalNet) : '—', accent: { bg: 'bg-violet-50', text: 'text-violet-600' } },
+    { icon: BanknotesIcon, label: 'Total Gross Salary', value: d ? inr(d.cards.totalGross) : '—', sensitive: true, accent: { bg: 'bg-sky-50', text: 'text-sky-600' } },
+    { icon: ArrowTrendingDownIcon, label: 'Total Deductions', value: d ? inr(d.cards.totalDeductions) : '—', sensitive: true, accent: { bg: 'bg-rose-50', text: 'text-rose-600' } },
+    { icon: WalletIcon, label: 'Total Net Salary', value: d ? inr(d.cards.totalNet) : '—', sensitive: true, accent: { bg: 'bg-violet-50', text: 'text-violet-600' } },
   ];
 
   const selCls = 'h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';

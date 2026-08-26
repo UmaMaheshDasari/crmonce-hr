@@ -7,6 +7,7 @@ import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, 
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import PayslipView from './PayslipView';
+import SensitiveAmount from '../../components/SensitiveAmount';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -254,6 +255,7 @@ export default function PayrollPage() {
     {
       label: 'Total Disbursed',
       value: `\u20b9${(totalNet/100000).toFixed(2)}L`,
+      sensitive: true,
       icon: BanknotesIcon,
       iconBg: 'bg-indigo-100',
       iconColor: 'text-indigo-600',
@@ -274,6 +276,7 @@ export default function PayrollPage() {
     {
       label: 'Avg Net Pay',
       value: records.length > 0 ? `\u20b9${Math.round(totalNet / records.length).toLocaleString('en-IN')}` : '\u20b90',
+      sensitive: true,
       icon: ChartBarIcon,
       iconBg: 'bg-violet-100',
       iconColor: 'text-violet-600',
@@ -325,7 +328,7 @@ export default function PayrollPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{s.label}</p>
-                  <p className={`text-2xl font-bold mt-2 ${s.valueColor} tracking-tight`}>{s.value}</p>
+                  <p className={`text-2xl font-bold mt-2 ${s.valueColor} tracking-tight`}>{s.sensitive ? <SensitiveAmount value={s.value} label={s.label.toLowerCase()} format={(v) => v} /> : s.value}</p>
                   {s.trend && (
                     <p className="text-xs font-medium text-gray-400 mt-1">{s.trend}</p>
                   )}
@@ -408,16 +411,16 @@ export default function PayrollPage() {
                       </span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm text-gray-700 font-medium tabular-nums">₹{(r._basic ?? r.hr_basic)?.toLocaleString('en-IN') || '—'}</span>
+                      <span className="text-sm text-gray-700 font-medium"><SensitiveAmount value={r._basic ?? r.hr_basic} label="salary" /></span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm text-emerald-600 font-semibold tabular-nums">+₹{(r._allowances ?? r.hr_allowances)?.toLocaleString('en-IN') || '0'}</span>
+                      <span className="text-sm text-emerald-600 font-semibold"><SensitiveAmount value={r._allowances ?? r.hr_allowances} label="allowances" format={(n) => `+₹${(Number(n) || 0).toLocaleString('en-IN')}`} /></span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm text-red-500 font-semibold tabular-nums">-₹{(r._deductions ?? r.hr_deductions)?.toLocaleString('en-IN') || '0'}</span>
+                      <span className="text-sm text-red-500 font-semibold"><SensitiveAmount value={r._deductions ?? r.hr_deductions} label="deductions" format={(n) => `-₹${(Number(n) || 0).toLocaleString('en-IN')}`} /></span>
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <span className="text-sm font-bold text-gray-900 tabular-nums">₹{(r._net ?? r.hr_netpay)?.toLocaleString('en-IN') || '—'}</span>
+                      <span className="text-sm font-bold text-gray-900"><SensitiveAmount value={r._net ?? r.hr_netpay} label="net pay" /></span>
                     </td>
                     <td className="px-5 py-4">
                       {(() => {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { attendanceApi } from '../../api/endpoints';
 import { ScaleIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
+import SensitiveAmount from '../../components/SensitiveAmount';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const now = new Date();
@@ -111,8 +112,8 @@ export default function MonthlyBalanceCard({ employeeId }) {
           <Band label="Monthly Difference" value={signed(diff)} tone={diff < 0 ? 'red' : 'emerald'} big />
           <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <Stat label="Shortage Hours" value={hrs(shortage)} tone={shortage > 0 ? 'text-red-600' : 'text-gray-900'} />
-            <Stat label="Hourly Rate" value={data?.hourlyRate == null ? '—' : rupees(data.hourlyRate)} />
-            <Stat label="Salary Deduction" value={rupees(data?.salaryDeduction)} tone={data?.salaryDeduction > 0 ? 'text-red-600' : 'text-gray-900'} />
+            <Stat label="Hourly Rate" value={<SensitiveAmount value={data?.hourlyRate} label="hourly rate" />} />
+            <Stat label="Salary Deduction" value={<SensitiveAmount value={data?.salaryDeduction} label="salary deduction" />} tone={data?.salaryDeduction > 0 ? 'text-red-600' : 'text-gray-900'} />
           </div>
           {data?.absentDays > 0 && (
             <p className="text-[11px] text-red-500 mt-2.5">{data.absentDays} absent day(s) — handled separately as LOP (not part of the hourly shortage).</p>

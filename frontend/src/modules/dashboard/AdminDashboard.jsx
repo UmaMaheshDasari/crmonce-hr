@@ -12,6 +12,7 @@ import {
 import { dashboardApi, attendanceApi, lateLoginApi, leaveApi, attendanceRequestApi, compOffApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import ActivityFeed from '../../components/ActivityFeed';
+import SensitiveAmount from '../../components/SensitiveAmount';
 import TodaysCelebrations from './TodaysCelebrations';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
 
@@ -32,7 +33,7 @@ function useClock() {
   return now;
 }
 
-function Kpi({ icon: Icon, label, value, sub, iconBg, iconColor }) {
+function Kpi({ icon: Icon, label, value, sub, subSensitive, iconBg, iconColor }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3.5 h-full">
       <div className={`w-11 h-11 rounded-lg grid place-items-center flex-shrink-0 ${iconBg}`}>
@@ -41,7 +42,7 @@ function Kpi({ icon: Icon, label, value, sub, iconBg, iconColor }) {
       <div className="min-w-0">
         <p className="text-2xl font-bold text-gray-900 tabular-nums leading-none">{value}</p>
         <p className="text-xs font-semibold text-gray-500 mt-1 leading-tight truncate">{label}</p>
-        {sub != null && <p className="text-[10px] text-gray-400 leading-tight truncate">{sub}</p>}
+        {sub != null && <p className="text-[10px] text-gray-400 leading-tight truncate">{subSensitive ? <SensitiveAmount value={sub} label="payroll amount" iconClassName="w-3 h-3" /> : sub}</p>}
       </div>
     </div>
   );
@@ -191,7 +192,7 @@ export default function AdminDashboard() {
     { icon: UsersIcon, label: 'Total Employees', value: k.totalEmployees, sub: 'active headcount', iconBg: 'bg-indigo-50', iconColor: 'text-indigo-600' },
     { icon: ClockIcon, label: 'Present Today', value: k.presentToday, sub: `of ${k.totalEmployees}`, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
     { icon: BriefcaseIcon, label: 'Open Positions', value: k.openPositions, sub: 'hiring now', iconBg: 'bg-amber-50', iconColor: 'text-amber-600' },
-    { icon: CurrencyDollarIcon, label: 'Payroll Status', value: k.payroll.status, sub: k.payroll.netTotal ? money(k.payroll.netTotal) : 'this month', iconBg: 'bg-violet-50', iconColor: 'text-violet-600' },
+    { icon: CurrencyDollarIcon, label: 'Payroll Status', value: k.payroll.status, sub: k.payroll.netTotal ? money(k.payroll.netTotal) : 'this month', subSensitive: !!k.payroll.netTotal, iconBg: 'bg-violet-50', iconColor: 'text-violet-600' },
   ] : [];
 
   // NOTE: Leave / Attendance Correction approvals now live in the dedicated
