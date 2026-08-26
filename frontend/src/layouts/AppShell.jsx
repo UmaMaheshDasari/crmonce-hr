@@ -11,7 +11,7 @@ import {
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, ChevronDownIcon, PencilSquareIcon,
   BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
-  Squares2X2Icon, ArrowPathIcon, GiftIcon, XCircleIcon,
+  Squares2X2Icon, ArrowPathIcon, GiftIcon, XCircleIcon, ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline';
 
 // Grouped navigation. Standalone items have `to`; groups have `group` + `children`.
@@ -73,9 +73,12 @@ const NAV = [
   },
   {
     group: 'Administration', icon: Squares2X2Icon, children: [
+      { to: '/users',            label: 'Users',            icon: UsersIcon, permission: 'users.view' },
+      { to: '/roles-permissions', label: 'Roles & Permissions', icon: ShieldCheckIcon, permission: 'roles.view' },
       { to: '/web-checkin-access', label: 'Web Check-In Access', icon: ClockIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/import-export',    label: 'Import / Export',  icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/company-settings', label: 'Company Settings', icon: BuildingOffice2Icon, roles: ['super_admin'] },
+      { to: '/audit-logs',       label: 'Audit Logs',       icon: ClipboardDocumentListIcon, permission: 'audit.view' },
     ],
   },
 ];
@@ -180,7 +183,7 @@ function NavGroup({ item, open, onToggle, containsActive, onNavigate }) {
 }
 
 export default function AppShell() {
-  const { user, logout, hasRole } = useAuth();
+  const { user, logout, hasRole, hasPermission } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   const toggleCollapsed = () => setCollapsed(c => { localStorage.setItem('sidebarCollapsed', c ? '0' : '1'); return !c; });
@@ -203,10 +206,13 @@ export default function AppShell() {
   // a group also keeps only the children the current role may see and is hidden if
   // none remain. (Only the Employees group + the Salary Structure item carry roles,
   // so the Employee role never sees those two; every other item is unchanged.)
+  // A nav item is visible when its role gate (if any) AND its granular permission gate
+  // (if any) both pass. Permission gating (RBAC Phase E) drives the Admin RBAC items.
+  const canSee = (n) => (!n.roles || hasRole(...n.roles)) && (!n.permission || hasPermission(n.permission));
   const visibleNav = NAV.map(item => {
-    if (item.roles && !hasRole(...item.roles)) return null;
+    if (!canSee(item)) return null;
     if (item.children) {
-      const kids = item.children.filter(c => !c.roles || hasRole(...c.roles));
+      const kids = item.children.filter(canSee);
       return kids.length ? { ...item, children: kids } : null;
     }
     return item;

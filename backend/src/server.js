@@ -139,6 +139,7 @@ app.use('/api/import-export', authenticateToken, require('./modules/shared/impor
 app.use('/api/celebrations', authenticateToken, require('./modules/celebrations/celebrations.routes'));
 app.use('/api/requests',    authenticateToken, require('./modules/shared/requests.routes'));
 app.use('/api/audit',       authenticateToken, require('./modules/audit/audit.routes'));
+app.use('/api/roles',       authenticateToken, require('./modules/roles/roles.routes'));
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));

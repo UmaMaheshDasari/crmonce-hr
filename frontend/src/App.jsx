@@ -40,13 +40,16 @@ import WebCheckInAccessPage from './modules/attendance/WebCheckInAccessPage';
 import ImportExportPage from './modules/shared/ImportExportPage';
 import ProfilePage from './modules/employees/ProfilePage';
 import HRVerificationPage from './modules/employees/HRVerificationPage';
+import UsersPage from './modules/admin/UsersPage';
+import RolesPermissionsPage from './modules/admin/RolesPermissionsPage';
+import AuditLogsPage from './modules/admin/AuditLogsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 300000, refetchOnWindowFocus: false } },
 });
 
-function ProtectedRoute({ children, roles }) {
-  const { user, loading } = useAuth();
+function ProtectedRoute({ children, roles, permission }) {
+  const { user, loading, hasPermission } = useAuth();
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-gray-50">
       <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
@@ -54,6 +57,8 @@ function ProtectedRoute({ children, roles }) {
   );
   if (!user) return <Navigate to="/login" replace />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
+  // RBAC Phase E: optional granular gate (backend still enforces — this is UX only).
+  if (permission && !hasPermission(permission)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -107,6 +112,10 @@ function AppRoutes() {
         <Route path="company-settings" element={<ProtectedRoute roles={['super_admin']}><CompanySettingsPage /></ProtectedRoute>} />
         <Route path="import-export" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ImportExportPage /></ProtectedRoute>} />
         <Route path="web-checkin-access" element={<ProtectedRoute roles={['super_admin','hr_manager']}><WebCheckInAccessPage /></ProtectedRoute>} />
+        {/* RBAC Phase E — Administration RBAC UI (route + granular permission gated; backend enforces) */}
+        <Route path="users" element={<ProtectedRoute permission="users.view"><UsersPage /></ProtectedRoute>} />
+        <Route path="roles-permissions" element={<ProtectedRoute permission="roles.view"><RolesPermissionsPage /></ProtectedRoute>} />
+        <Route path="audit-logs" element={<ProtectedRoute permission="audit.view"><AuditLogsPage /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

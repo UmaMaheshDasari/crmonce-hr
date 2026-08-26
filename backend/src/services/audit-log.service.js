@@ -85,8 +85,8 @@ async function record(entry) {
   } catch (err) { global.logger?.warn?.(`[audit-log] write skipped (${entry?.action}): ${err.message}`); }
 }
 
-/** Read the audit log, newest first. Filters: action, actor, actorRole, outcome, category, from, to. */
-async function list({ action, actor, actorRole, outcome, category, from, to, top = 500 } = {}) {
+/** Read the audit log, newest first. Filters: action, actor, actorRole, outcome, category, targetId (employee), from, to. */
+async function list({ action, actor, actorRole, outcome, category, targetId, from, to, top = 500 } = {}) {
   try {
     const q = (s) => String(s).replace(/'/g, "''");
     const filters = [];
@@ -95,6 +95,7 @@ async function list({ action, actor, actorRole, outcome, category, from, to, top
     if (outcome) filters.push(`hr_outcome eq '${q(outcome)}'`);
     if (actorRole) filters.push(`hr_actorrole eq '${q(actorRole)}'`);
     if (actor) filters.push(`contains(hr_actor,'${q(actor)}')`);
+    if (targetId) filters.push(`hr_targetid eq '${q(targetId)}'`);   // audit "Employee" filter (RBAC Phase E)
     if (from) filters.push(`hr_occurredon ge '${q(from)}'`);
     if (to) filters.push(`hr_occurredon le '${q(to)}'`);
     const { data } = await withTable(() => d365.getList(ENTITY_SET, {

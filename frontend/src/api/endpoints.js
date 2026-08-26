@@ -324,3 +324,15 @@ export const celebrationsApi = {
   logs: (params) => api.get('/celebrations/logs', { params }),
   run: () => api.post('/celebrations/run'),
 };
+
+// ── Roles & Permissions (RBAC Phase E — read-only catalogue + guarded role assignment) ──
+export const rolesApi = {
+  list: () => api.get('/roles'),                                           // roles.view
+  assignRole: (employeeId, role, reason) => api.patch(`/employees/${employeeId}/role`, { role, reason }), // roles.edit
+};
+
+// ── Audit Logs (RBAC Phase C security audit; Phase E adds the export + employee filter) ──
+export const auditApi = {
+  list: (params) => api.get('/audit', { params }),                         // audit.view
+  export: (params) => api.get('/audit/export', { params, responseType: 'blob' }), // audit.export
+};

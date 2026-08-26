@@ -4,7 +4,7 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const authService = require('../../services/auth.service');
 const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
-const { toValue, labelsForList, labelsForEntity } = require('../../services/picklist');
+const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
 const { validateCompanyEmail } = require('../../services/email/sender');
 const { validateEmployeeIdentity } = require('../../services/validators');
 const profile = require('../../services/profile.service');
@@ -305,6 +305,38 @@ router.post('/', requireAnyPermission('employees.create'), async (req, res, next
   } catch (err) { next(err); }
 });
 
+// PATCH /api/employees/:id/role — SEPARATELY PROTECTED role assignment (RBAC Phase E).
+// Gated by roles.edit (super_admin). Records an audit entry (old→new role + reason).
+// You can NEVER change your own role; the last Super Admin can never be demoted.
+router.patch('/:id/role', requireAnyPermission('roles.edit'), async (req, res, next) => {
+  try {
+    const VALID = ['employee', 'hr_manager', 'recruiter', 'super_admin'];
+    const newRole = String(req.body?.role || '').trim();
+    const reason = String(req.body?.reason || '').slice(0, 500);
+    if (!VALID.includes(newRole)) return res.status(400).json({ error: 'A valid role is required.' });
+    if (req.params.id === req.user.id) return res.status(403).json({ error: 'You cannot change your own role.' });
+
+    const emp = await d365.getById(ENTITY, req.params.id, { select: 'hr_hremployeeid,hr_hremployee1,hr_role' });
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const oldRole = toLabel('hr_role', emp.hr_role);
+    if (oldRole === newRole) return res.json({ id: req.params.id, oldRole, newRole, changed: false });
+
+    // Safety: never demote the LAST Super Admin (would remove all unrestricted access).
+    if (oldRole === 'super_admin' && newRole !== 'super_admin') {
+      const { data } = await d365.getList(ENTITY, { select: 'hr_hremployeeid', filter: `hr_role eq ${toValue('hr_role', 'super_admin')}`, top: 5 });
+      if ((data || []).length <= 1) return res.status(409).json({ error: 'Cannot demote the last Super Admin.' });
+    }
+
+    await d365.update(ENTITY, req.params.id, { hr_role: toValue('hr_role', newRole) });
+
+    // Enrich the audit entry — the audit middleware logs this mutation (action=roles.edit,
+    // actor/role, target=:id, outcome); details carries the old→new role and the reason.
+    req._audit = { ...(req._audit || {}), action: 'roles.edit', details: JSON.stringify({ employee: emp.hr_hremployee1 || '', oldRole, newRole, reason }) };
+
+    res.json({ id: req.params.id, employee: emp.hr_hremployee1 || '', oldRole, newRole, changed: true });
+  } catch (err) { next(err); }
+});
+
 // PATCH /api/employees/:id — HR edits anyone; an employee may edit ONLY their OWN
 // personal/identity/address/emergency/bank details (ESS self-service). The backend
 // whitelist (profile.SELF_EDITABLE) is the security boundary — a hand-crafted
@@ -317,6 +349,11 @@ router.patch('/:id', async (req, res, next) => {
     if (!isHRWrite && !isSelf) return res.status(403).json({ error: 'Access denied' });
 
     const { password, managerId, ...raw } = req.body;
+
+    // RBAC Phase E: role changes are NOT permitted through the generic employee update.
+    // They must go through PATCH /:id/role (roles.edit, separately protected + audited).
+    // Strip hr_role defensively so a form/hand-crafted request cannot change a role here.
+    delete raw.hr_role;
 
     // Employees editing themselves: keep ONLY the whitelisted fields.
     if (!isHRWrite) {

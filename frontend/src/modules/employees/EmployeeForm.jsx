@@ -40,16 +40,18 @@ function Field({ label, name, type = 'text', required, register, errors, rules, 
   );
 }
 
-function SelectField({ label, name, register, children }) {
+function SelectField({ label, name, register, children, disabled = false, hint }) {
   return (
     <div className="space-y-1.5">
       <label className="block text-sm font-semibold text-gray-700">{label}</label>
       <select
-        className="w-full h-11 px-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all duration-200 cursor-pointer appearance-none"
+        disabled={disabled}
+        className={`w-full h-11 px-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all duration-200 appearance-none ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
         {...register(name)}
       >
         {children}
       </select>
+      {hint && <p className="text-xs text-gray-400">{hint}</p>}
     </div>
   );
 }
@@ -205,7 +207,9 @@ export default function EmployeeForm() {
                 <option value="">Select designation</option>
                 {DESIGNATIONS.map(d => <option key={d} value={d}>{d}</option>)}
               </SelectField>
-              <SelectField label="Role" name="hr_role" register={register}>
+              <SelectField label="Role" name="hr_role" register={register}
+                disabled={isEdit}
+                hint={isEdit ? 'Role changes are managed from Administration → Users.' : undefined}>
                 {ROLES.map(r => <option key={r} value={r}>{r.replace('_',' ')}</option>)}
               </SelectField>
               <SelectField label="Employment Type" name="hr_employmenttype" register={register}>
