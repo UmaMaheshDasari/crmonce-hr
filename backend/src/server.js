@@ -183,7 +183,7 @@ server.listen(PORT, () => {
 
   // RBAC Phase K: load Super-Admin role-permission overrides into the in-memory cache.
   // Fail-safe — on any error, authorization falls back to the code-defined defaults.
-  require('./services/permission-overrides').load()
+  require('./services/permission-overrides.service').load()
     .catch(err => logger.warn(`[perm-overrides] initial load skipped: ${err.message}`));
 
   // Best-effort: create the Missing Punch / Holiday tables if they don't exist yet
