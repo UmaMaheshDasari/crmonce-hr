@@ -1,8 +1,8 @@
 name: Deploy HRMS to VPS
 
 # Auto-deploy the HR System to https://hr.crmonce.com on every push to main.
-# Mirrors the working crmonce-website pattern (appleboy/ssh-action + VPS_* secrets on the
-# SAME Hostinger VPS), but uses HR-specific paths/service and does NOT run the repo's
+# Uses appleboy/ssh-action with SSH KEY auth (secrets: VPS_HOST, VPS_USER, VPS_SSH_KEY) on the
+# Hostinger VPS, HR-specific paths/service, and does NOT run the repo's
 # deploy.sh / deploy-app.sh (those are one-time provisioners that rewrite nginx & .env).
 # It replicates the safe manual process: ff-only pull to the pushed commit → build → restart
 # ONLY hr-backend. crmonce-backend is never touched.
@@ -29,7 +29,7 @@ jobs:
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          password: ${{ secrets.VPS_PASSWORD }}
+          key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           timeout: 60s
           command_timeout: 15m
