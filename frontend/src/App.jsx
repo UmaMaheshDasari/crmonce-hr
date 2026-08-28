@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import useVersionCheck from './hooks/useVersionCheck';
 import AppShell from './layouts/AppShell';
 import LoginPage from './modules/auth/LoginPage';
 import AzureCallback from './modules/auth/AzureCallback';
@@ -141,6 +142,10 @@ function AppRoutes() {
 }
 
 export default function App() {
+  // Reloads this tab when a newer build is deployed, but only while the user
+  // is not looking at it. Session-safe: its only effect is location.reload().
+  useVersionCheck();
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
