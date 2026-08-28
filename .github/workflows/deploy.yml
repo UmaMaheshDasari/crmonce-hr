@@ -1,0 +1,88 @@
+name: Deploy HRMS to VPS
+
+# Auto-deploy the HR System to https://hr.crmonce.com on every push to main.
+# Mirrors the working crmonce-website pattern (appleboy/ssh-action + VPS_* secrets on the
+# SAME Hostinger VPS), but uses HR-specific paths/service and does NOT run the repo's
+# deploy.sh / deploy-app.sh (those are one-time provisioners that rewrite nginx & .env).
+# It replicates the safe manual process: ff-only pull to the pushed commit → build → restart
+# ONLY hr-backend. crmonce-backend is never touched.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# One production deploy at a time; never cancel a deploy mid-flight.
+concurrency:
+  group: deploy-hr-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy HR System to Production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: 22
+          timeout: 60s
+          command_timeout: 15m
+          envs: GITHUB_SHA
+          script: |
+            set -euo pipefail
+            APP_DIR=/var/www/hr-system
+            echo "HR deploy started $(date) — target commit ${GITHUB_SHA:-unknown}"
+            cd "$APP_DIR"
+
+            # 1. Update ONLY the HR repo to the EXACT pushed commit. Public repo → HTTPS pull
+            #    needs no credentials (same as the manual process). ff-only never rewrites history.
+            git checkout main
+            git pull --ff-only origin main
+            HEAD_SHA=$(git rev-parse HEAD)
+            echo "Production HEAD now: $HEAD_SHA"
+            if [ -n "${GITHUB_SHA:-}" ] && [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+              echo "::error::Production HEAD ($HEAD_SHA) != pushed commit ($GITHUB_SHA)"
+              exit 1
+            fi
+
+            # 2. Backend dependencies — the existing project process (production only).
+            echo "--- backend: npm ci --omit=dev ---"
+            cd "$APP_DIR/backend"
+            npm ci --omit=dev
+
+            # 3. Frontend — ALWAYS rebuild so new UI ships (dev deps needed for vite build).
+            echo "--- frontend: npm ci + build ---"
+            cd "$APP_DIR/frontend"
+            npm ci
+            npm run build
+
+            # 4. Restart ONLY hr-backend. Source backend/.env into THIS shell first so
+            #    pm2 --update-env injects the REAL JWT_SECRET (never an empty one → no session
+            #    or JWT breakage). This only READS .env; it never modifies it. crmonce-backend
+            #    is NEVER restarted here.
+            cd "$APP_DIR"
+            if [ -f "$APP_DIR/backend/.env" ]; then
+              set -a; . "$APP_DIR/backend/.env"; set +a
+            fi
+            echo "JWT_SECRET present in shell: $([ -n "${JWT_SECRET:-}" ] && echo yes || echo no)"
+            pm2 restart hr-backend --update-env
+            pm2 save
+            echo "HR deploy finished $(date)"
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+
+      - name: Health check
+        run: |
+          sleep 5
+          # Fails the workflow on any non-2xx response — never reports success on a bad deploy.
+          curl -fsS https://hr.crmonce.com/health
+          echo ""
+          echo "Health check passed — https://hr.crmonce.com/health returned 200."
+        env:
+          GITHUB_SHA: ${{ github.sha }}
