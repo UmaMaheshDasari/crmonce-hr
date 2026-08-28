@@ -16,6 +16,10 @@ const attendanceExceptions = require('../../services/attendance-exception.servic
 const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
 const webCheckin = require('../../services/web-checkin.service');
+// Same resolver the route guards use, so per-user RBAC overrides are honoured.
+// (requireRole/requireAnyPermission are imported further down, next to the
+// admin-summary route that uses them.)
+const { hasPermission } = require('../../middleware/auth.middleware');
 
 const ATT = d365.constructor.entities.attendance;
 const EMP = d365.constructor.entities.employee;
@@ -57,6 +61,25 @@ router.get('/summary', async (req, res, next) => {
     // Only HR/Super Admin may view another employee's dashboard; everyone else
     // (incl. recruiter) is locked to their own id (this route has no permission gate).
     const empId = ['super_admin', 'hr_manager'].includes(req.user.role) ? (req.query.employeeId || req.user.id) : req.user.id;
+
+    // ── Recent Activity: company-wide, so permission-gated ──────────────
+    // activity.recent() is NOT scoped to the caller. It returns events for
+    // the whole company, including payroll_generated carrying other
+    // employees' names, PT, net salary, working days and LOP. An employee
+    // holds none of payroll.*, salary.view or reports.view, so returning it
+    // on this route handed them exactly what those flags deny.
+    //
+    // Gated on reports.view because that is the permission already guarding
+    // /dashboard/admin-summary, which serves the same feed — same data, same
+    // gate. employee does not hold it; hr_manager does; super_admin has '*'.
+    // No new permission is introduced and the catalogue is unchanged.
+    //
+    // hasPermission takes the user object, so per-user RBAC overrides are
+    // honoured rather than a naive role lookup.
+    //
+    // The flag also skips the fetch below: unauthorised callers never cause
+    // the data to be read, so it cannot leak through an error path or a log.
+    const mayViewActivity = hasPermission(req.user, 'reports.view');
     const today = time.istDateStr();
     const [Y, M] = today.split('-').map(Number);
     const mm = pad2(M);
@@ -86,7 +109,7 @@ router.get('/summary', async (req, res, next) => {
       }).catch((e) => { console.error(`[dashboard/summary] leave read FAILED for ${empId}: ${e.message}`); return { data: [] }; }),
       firstAttendanceDate(empId),
       openPriorRecord(empId, today),
-      activity.recent(6).catch(() => []),
+      mayViewActivity ? activity.recent(6).catch(() => []) : Promise.resolve(null),
       holidayService.listHolidays().catch(() => []),
       attendanceExceptions.openExceptionsForEmployee(empId).catch(() => []),
     ]);
@@ -212,7 +235,13 @@ router.get('/summary', async (req, res, next) => {
       nextPayday,
       upcomingHoliday,
       alerts: alerts || [],          // auto-detected attendance exceptions (Attendance Alerts card)
-      activity: activityItems,
+      // Omitted entirely without reports.view — the key is absent, not an
+      // empty array, so nothing about the feed is implied to the caller.
+      // Older frontend builds still open in a browser read `d.activity` and
+      // render `items={d?.activity ?? []}`, so they now show an empty feed
+      // instead of payroll data. That is the point: a tab that can never
+      // receive new JavaScript is fixed by changing what the API returns.
+      ...(mayViewActivity ? { activity: activityItems } : {}),
     });
   } catch (err) { next(err); }
 });
