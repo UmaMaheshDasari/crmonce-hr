@@ -62,15 +62,15 @@ jobs:
             npm ci
             npm run build
 
-            # 4. Restart ONLY hr-backend. Source backend/.env into THIS shell first so
-            #    pm2 --update-env injects the REAL JWT_SECRET (never an empty one → no session
-            #    or JWT breakage). This only READS .env; it never modifies it. crmonce-backend
-            #    is NEVER restarted here.
+            # 4. Restart ONLY hr-backend. hr-backend loads its own env via dotenv
+            #    (backend/src/server.js: require('dotenv').config()), so JWT_SECRET comes from
+            #    backend/.env at startup — the shell must NOT carry it. We deliberately do NOT
+            #    source .env here: it contains values with spaces (e.g. SMTP_FROM) that break
+            #    `source` under `set -e`, and a shell with an empty JWT_SECRET would let
+            #    --update-env inject the blank and break auth. Restarting from a shell WITHOUT
+            #    JWT_SECRET keeps dotenv authoritative — the proven manual-deploy behaviour.
+            #    crmonce-backend is NEVER restarted here.
             cd "$APP_DIR"
-            if [ -f "$APP_DIR/backend/.env" ]; then
-              set -a; . "$APP_DIR/backend/.env"; set +a
-            fi
-            echo "JWT_SECRET present in shell: $([ -n "${JWT_SECRET:-}" ] && echo yes || echo no)"
             pm2 restart hr-backend --update-env
             pm2 save
             echo "HR deploy finished $(date)"
