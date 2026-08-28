@@ -11,7 +11,8 @@ import {
 } from '@heroicons/react/24/outline';
 import { dashboardApi, attendanceApi, lateLoginApi, leaveApi, attendanceRequestApi, compOffApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
-import ActivityFeed from '../../components/ActivityFeed';
+// ActivityFeed is intentionally not imported — Recent Activity is withdrawn
+// from this dashboard for every role. See the note in the attendance section.
 import SensitiveAmount from '../../components/SensitiveAmount';
 import TodaysCelebrations from './TodaysCelebrations';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
@@ -330,8 +331,13 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* ── Attendance widget + Recent Activity ──────────────────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+      {/* ── Attendance widget ─────────────────────────────────────────────
+          Recent Activity used to sit beside this. It is withdrawn from every
+          role, not just Employee: the feed is company-wide and carries
+          payroll_generated events with names, PT and net salary, and the
+          decision was to pull it from the UI entirely while the backend
+          exposure is addressed separately. See the note below. */}
+      <div className="grid grid-cols-1 gap-5">
         {/* My attendance */}
         <div className="bg-white rounded-xl border border-gray-100 p-5">
           <div className="flex items-center justify-between mb-4">
@@ -366,14 +372,21 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        {/* Recent Activity (above Leave Summary) */}
-        <div className="xl:col-span-2 bg-white rounded-xl border border-gray-100 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-bold text-gray-900">Recent Activity</h2>
-            <Link to="/activities" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all →</Link>
-          </div>
-          <ActivityFeed items={d?.activity ?? []} loading={isLoading && !d} emptyText="No recent activity yet." />
-        </div>
+        {/* Recent Activity is deliberately NOT rendered — for any role.
+
+            It is not gated on role state on purpose. A conditional would only
+            take effect once auth state resolved, which is the stale-render
+            problem we are removing; an unconditional omission cannot render
+            stale data at all, on first paint or after a role change.
+
+            No data request is dropped by this: `d.activity` arrives inside the
+            shared dashboard summary, so there was never a separate call here.
+            The one dedicated GET /api/activity lives in ActivitiesPage, whose
+            route is now blocked, so that query never mounts.
+
+            The summary response still contains `activity`, and the endpoint is
+            still reachable with a valid session — the backend exposure remains
+            a separate fix. */}
       </div>
 
       {/* ── Today's Celebrations ──────────────────────────────────────────── */}

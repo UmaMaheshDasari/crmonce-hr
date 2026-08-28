@@ -34,7 +34,10 @@ import PayrollDashboardPage from './modules/payroll/PayrollDashboardPage';
 import AutomationPage from './modules/payroll/AutomationPage';
 import GoalsPage from './modules/performance/GoalsPage';
 import ApprovalAction from './modules/attendance/ApprovalAction';
-import ActivitiesPage from './modules/activity/ActivitiesPage';
+// ActivitiesPage is intentionally not imported — the /activities route is
+// redirected for every role (see below). The module is left in the tree so the
+// route can be restored once the backend feed is scoped. Not importing it also
+// keeps it out of the bundle.
 import CompanySettingsPage from './modules/company/CompanySettingsPage';
 import WebCheckInAccessPage from './modules/attendance/WebCheckInAccessPage';
 import ImportExportPage from './modules/shared/ImportExportPage';
@@ -108,14 +111,22 @@ function AppRoutes() {
         {/* Documents: HR sees all (management); an employee sees ONLY their own —
             the page and the /api/documents backend both self-scope by role. */}
         <Route path="documents" element={<DocumentsPage />} />
-        {/* Activities: HR/admin only. Unlike Documents above, this feed does NOT
-            self-scope by role — it lists company-wide events including
-            payroll_generated with other employees' names, PT and net salary.
-            Employees have Payroll/Salary/Audit View OFF, so the page is gated to
-            match. Same guard as salary-structure and payroll-dashboard; an
-            employee hitting /activities directly is sent to the dashboard.
-            Backend /api/activity is still open — separate fix. */}
-        <Route path="activities" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ActivitiesPage /></ProtectedRoute>} />
+        {/* Activities: withdrawn for EVERY role, not gated by one.
+
+            The feed is company-wide and carries payroll_generated events with
+            other employees' names, PT and net salary. It was briefly gated to
+            super_admin/hr_manager; it is now closed to all while the backend
+            exposure is fixed separately.
+
+            A plain redirect rather than ProtectedRoute with an empty role list:
+            the redirect does not depend on auth state resolving, so it cannot
+            flash the page before a role check completes. ActivitiesPage is the
+            only caller of GET /api/activity in the UI, so never mounting it
+            also stops that request being made.
+
+            Restoring this later means putting the ProtectedRoute back — the
+            page component is untouched. */}
+        <Route path="activities" element={<Navigate to="/" replace />} />
         <Route path="company-settings" element={<ProtectedRoute roles={['super_admin']}><CompanySettingsPage /></ProtectedRoute>} />
         <Route path="import-export" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ImportExportPage /></ProtectedRoute>} />
         <Route path="web-checkin-access" element={<ProtectedRoute roles={['super_admin','hr_manager']}><WebCheckInAccessPage /></ProtectedRoute>} />
