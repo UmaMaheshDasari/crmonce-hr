@@ -13,7 +13,7 @@ import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import MissingPunchModal from '../attendance/MissingPunchModal';
 import MonthlyBalanceCard from '../attendance/MonthlyBalanceCard';
-import ActivityFeed from '../../components/ActivityFeed';
+// ActivityFeed is intentionally not imported here — see SECTION 6 below.
 import TodaysCelebrations from './TodaysCelebrations';
 import { formatDuration, formatMinutes } from '../../utils/formatDuration';
 
@@ -442,16 +442,24 @@ export default function EmployeeDashboard() {
         )}
       </div>
 
-      {/* ── SECTION 6 · Celebrations + Recent Activity (two columns) ───────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-        <div className="lg:col-span-2 flex"><TodaysCelebrations /></div>
-        <div className="lg:col-span-3 bg-white rounded-2xl border border-gray-200/70 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-bold text-gray-900">Recent Activity</h2>
-            <Link to="/activities" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all →</Link>
-          </div>
-          <ActivityFeed items={d?.activity ?? []} loading={isLoading && !d} emptyText="No recent activity yet." />
-        </div>
+      {/* ── SECTION 6 · Celebrations ───────────────────────────────────────
+          Recent Activity is deliberately NOT rendered here.
+
+          The feed is company-wide rather than self-scoped: it carries
+          payroll_generated events with other employees' names, PT and net
+          salary amounts, working days and LOP. The Employee role has Payroll
+          View, Payroll Process, Salary View, Salary Edit and Audit View all
+          switched OFF, so rendering it here leaked precisely what those flags
+          deny.
+
+          HR and super-admins are unaffected — Dashboard.jsx routes them to
+          AdminDashboard, which keeps its own Recent Activity card.
+
+          UI mitigation only: `d.activity` is still present in the dashboard
+          summary response and GET /api/activity is still reachable with an
+          employee session. The backend exposure is a separate fix. */}
+      <div className="grid grid-cols-1 gap-5">
+        <div className="flex"><TodaysCelebrations /></div>
       </div>
 
       {/* One-click: opens the correction form pre-filled from the detected exception. */}

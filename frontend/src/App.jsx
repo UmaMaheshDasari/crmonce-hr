@@ -108,7 +108,14 @@ function AppRoutes() {
         {/* Documents: HR sees all (management); an employee sees ONLY their own —
             the page and the /api/documents backend both self-scope by role. */}
         <Route path="documents" element={<DocumentsPage />} />
-        <Route path="activities" element={<ActivitiesPage />} />
+        {/* Activities: HR/admin only. Unlike Documents above, this feed does NOT
+            self-scope by role — it lists company-wide events including
+            payroll_generated with other employees' names, PT and net salary.
+            Employees have Payroll/Salary/Audit View OFF, so the page is gated to
+            match. Same guard as salary-structure and payroll-dashboard; an
+            employee hitting /activities directly is sent to the dashboard.
+            Backend /api/activity is still open — separate fix. */}
+        <Route path="activities" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ActivitiesPage /></ProtectedRoute>} />
         <Route path="company-settings" element={<ProtectedRoute roles={['super_admin']}><CompanySettingsPage /></ProtectedRoute>} />
         <Route path="import-export" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ImportExportPage /></ProtectedRoute>} />
         <Route path="web-checkin-access" element={<ProtectedRoute roles={['super_admin','hr_manager']}><WebCheckInAccessPage /></ProtectedRoute>} />
