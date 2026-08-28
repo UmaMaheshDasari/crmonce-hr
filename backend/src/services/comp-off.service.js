@@ -53,6 +53,35 @@ function compOffDaysForHours(effectiveHours) {
 /** Is a day's effective worked hours enough to be eligible for Comp Off? */
 function isEligibleHours(effectiveHours) { return (Number(effectiveHours) || 0) >= MIN_COMPOFF_HOURS; }
 
+// Full | Half → 0.5 / 1.0 day. Default (empty/unknown) is Full — backward compatible with the
+// pre-feature behaviour where an employee raise always earned the full hours-eligible amount.
+const typeToDays = (dayType) => (String(dayType || '').toLowerCase() === 'half' ? 0.5 : 1);
+
+/**
+ * Days an EMPLOYEE self-request earns for their chosen Full/Half type, capped by what the
+ * worked hours actually earned (eligibleMax = 0.5 or 1.0). An employee can voluntarily take
+ * LESS (Half when they earned Full) but can NEVER inflate beyond the hours they worked, so
+ * comp-off balance always reflects real extra work. No type sent → Full → the eligible max
+ * (identical to the previous behaviour).
+ */
+function requestedDaysForType(dayType, eligibleMax = 1) {
+  return Math.min(typeToDays(dayType), num(eligibleMax) || 1);
+}
+
+/**
+ * Final credited days when an APPROVER approves with a Full/Half choice. A manual /
+ * employee-applied request carries HR discretion (the approver's choice is honoured — the
+ * same freedom HR already has when granting or editing). An AUTO holiday/weekly-off record is
+ * attendance-verified, so the approver may only REDUCE to what the attendance supports, never
+ * inflate past it. No choice supplied → the already-verified amount (unchanged behaviour).
+ */
+function approvedDaysForType({ dayType, verifiedDays, isAuto }) {
+  const verified = num(verifiedDays);
+  if (!dayType) return verified;
+  const chosen = typeToDays(dayType);
+  return isAuto ? Math.min(chosen, verified) : chosen;
+}
+
 const SELECT = 'hr_compoffid,hr_employeeid,hr_employeename,hr_year,hr_type,hr_workeddate,hr_workedhours,hr_reason,hr_holidayname,hr_days,hr_expirydate,hr_status,hr_remarks,hr_approvedby,hr_approveddate,hr_createdby,hr_ledgerlinked,createdon,modifiedon';
 
 const shape = (r) => ({
@@ -66,6 +95,10 @@ const shape = (r) => ({
   reason: r.hr_reason || '',
   holidayName: r.hr_holidayname || '',
   days: num(r.hr_days),
+  // Full / Half day is a semantic VIEW over hr_days (the single source of truth): 1.0 → Full,
+  // 0.5 → Half. No separate stored field — the day count IS the type, so balance & type can
+  // never diverge. Legacy records (days = 1) read as Full (backward compatible).
+  dayType: num(r.hr_days) >= 1 ? 'full' : 'half',
   expiryDate: r.hr_expirydate || '',
   status: r.hr_status || 'pending',
   remarks: r.hr_remarks || '',
@@ -277,22 +310,34 @@ async function attendanceVerification(id) {
 }
 
 // ── approve / reject / cancel / expire ───────────────────────────────────────
-async function approve(id, approver) {
+async function approve(id, approver, opts = {}) {
   const row = await getRaw(id);
   if (['approved', 'expired', 'cancelled'].includes(row.hr_status)) { const e = new Error(`Comp Off is already ${row.hr_status}`); e.status = 409; throw e; }
+  // Approver's Full/Half override — allowed ONLY while the request is still pending. A
+  // finalized request (rejected/etc.) can never have its type changed.
+  const wantType = opts && opts.dayType ? String(opts.dayType).toLowerCase() : '';
+  if (wantType && !['full', 'half'].includes(wantType)) { const e = new Error('Comp Off type must be "full" or "half".'); e.status = 400; throw e; }
+  if (wantType && row.hr_status !== 'pending') { const e = new Error('Comp Off type can only be changed while the request is pending.'); e.status = 400; throw e; }
   // LIVE attendance re-verification (auto records) — never trust the stored values alone;
   // attendance may have changed. Credit the RECOMPUTED days so the balance matches reality.
   const v = await verifyEligibility(row);
   if (!v.ok) { const e = new Error('Comp Off cannot be approved because the attendance does not qualify.'); e.status = 400; e.reason = v.reason; throw e; }
-  const days = num(v.computedDays) || num(row.hr_days) || 1;
+  const verifiedDays = num(v.computedDays) || num(row.hr_days) || 1;
+  const fromType = num(row.hr_days) >= 1 ? 'full' : 'half';
+  // Final credited days = the approver's Full/Half choice (manual = HR discretion; auto capped
+  // by attendance), or the verified amount when the approver did not change it.
+  const days = approvedDaysForType({ dayType: wantType, verifiedDays, isAuto: String(row.hr_type) === 'auto' });
+  const toType = days >= 1 ? 'full' : 'half';
+  const typeChanged = !!wantType && toType !== fromType;
   if (row.hr_ledgerlinked !== 'true') await bridgeEarned({ ...row, hr_days: String(days) }, days);
   // Expiry clock STARTS at approval — approval date + the 45-day policy (never the
   // worked date). The 409 guard above means a second approve can't reset this.
   const p = await policy();
   const expiryDate = Number(p.expiryDays) > 0 ? addDays(today(), p.expiryDays) : '';
   await d365.update(COMP, id, { hr_status: 'approved', hr_days: String(days), hr_approvedby: approver?.name || 'HR', hr_approveddate: new Date().toISOString(), hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
-  notifyUser(row.hr_employeeid, 'compoff:approved', { days, workedDate: row.hr_workeddate });
-  audit({ category: 'Attendance', type: 'compoff_approved', title: 'Comp Off approved', name: row.hr_employeename, meta: { days, by: approver?.name } });
+  notifyUser(row.hr_employeeid, 'compoff:approved', { days, dayType: toType, workedDate: row.hr_workeddate });
+  // Reuse the existing audit trail — record the approver's Full↔Half change (from → to) when one happened.
+  audit({ category: 'Attendance', type: 'compoff_approved', title: 'Comp Off approved', name: row.hr_employeename, meta: { days, dayType: toType, ...(typeChanged ? { typeChangedFrom: fromType, typeChangedTo: toType } : {}), by: approver?.name } });
   return shape({ ...row, hr_days: String(days), hr_status: 'approved', hr_ledgerlinked: 'true', hr_expirydate: expiryDate });
 }
 
@@ -634,4 +679,4 @@ async function remove(id, user) {
   return { deleted: true, id };
 }
 
-module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, remove, verifyEligibility, attendanceVerification, isCompOffUsed, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours, isEligibleHours, workedHoursForDate, validateManualCompOff, existsForDate, MIN_COMPOFF_HOURS, fmtHours };
+module.exports = { list, getRaw, shape, create, approve, reject, cancel, expire, edit, remove, verifyEligibility, attendanceVerification, isCompOffUsed, sweepExpired, nextExpiry, maybeAutoCompOff, scanRange, scanMonthCompOff, compOffDaysForHours, isEligibleHours, requestedDaysForType, approvedDaysForType, workedHoursForDate, validateManualCompOff, existsForDate, MIN_COMPOFF_HOURS, fmtHours };

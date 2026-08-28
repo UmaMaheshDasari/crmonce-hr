@@ -105,10 +105,13 @@ router.post('/', async (req, res, next) => {
     const workReport = b.workReport || b.reason || '';
     const v = await withTable(() => compOff.validateManualCompOff({ employeeId: req.user.id, workedDate: b.workedDate, workReport, requireWorkReport: true }));
     if (!v.ok) return res.status(v.status).json({ error: v.error });
+    // Employee's Full/Half choice (default Full), capped by the hours-eligible max so a request
+    // can never claim more than the worked hours earned.
+    const days = compOff.requestedDaysForType(b.dayType, v.days);
     const rec = await withTable(() => compOff.create({
       employeeId: req.user.id, employeeName: req.user.name, type: 'manual',
       workedDate: b.workedDate, workedHours: v.worked.effectiveHours, reason: workReport,
-      days: v.days, remarks: b.evidenceUrl || '', createdBy: req.user.name || req.user.email, status: 'pending',
+      days, remarks: b.evidenceUrl || '', createdBy: req.user.name || req.user.email, status: 'pending',
     }));
     res.status(201).json(rec);
   } catch (err) {
@@ -124,9 +127,10 @@ router.get('/:id/verify', requireAnyPermission('compoff.approve'), async (req, r
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
-// PATCH /:id/approve
+// PATCH /:id/approve  — optional body { dayType: 'full' | 'half' } lets the approver set the
+// FINAL Full/Half type before it is credited (pending only). Gated by compoff.approve (HR).
 router.patch('/:id/approve', requireAnyPermission('compoff.approve'), async (req, res, next) => {
-  try { res.json(await compOff.approve(req.params.id, req.user)); }
+  try { res.json(await compOff.approve(req.params.id, req.user, { dayType: req.body?.dayType })); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 

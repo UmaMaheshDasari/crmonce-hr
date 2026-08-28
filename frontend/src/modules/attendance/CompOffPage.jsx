@@ -27,7 +27,7 @@ const fmtHrs = (h) => { const n = Number(h) || 0; const m = Math.round(n * 60); 
 // Grant (HR) / Raise (employee) comp-off.
 function RaiseModal({ isHR, employees, onClose }) {
   const qc = useQueryClient();
-  const [f, setF] = useState({ employeeId: '', workedDate: new Date().toISOString().slice(0, 10), days: 1, workReport: '', holidayName: '', grant: isHR, evidenceUrl: '' });
+  const [f, setF] = useState({ employeeId: '', workedDate: new Date().toISOString().slice(0, 10), days: 1, dayType: 'full', workReport: '', holidayName: '', grant: isHR, evidenceUrl: '' });
   const [evidenceName, setEvidenceName] = useState('');
   const [uploading, setUploading] = useState(false);
 
@@ -91,6 +91,16 @@ function RaiseModal({ isHR, employees, onClose }) {
                 <input type="number" step="0.5" min="0.5" className={inp} value={f.days} onChange={e => setF(p => ({ ...p, days: e.target.value }))} placeholder="auto" /></div>
             )}
           </div>
+
+          {/* Comp Off Type (employee) — Full (1 day) or Half (0.5). Default Full. The backend caps
+              a Full choice to the hours actually earned; the approver can still change it later. */}
+          {!isHR && (
+            <div><label className="block text-xs font-semibold text-gray-600 mb-1">Comp Off Type</label>
+              <select className={inp} value={f.dayType} onChange={e => setF(p => ({ ...p, dayType: e.target.value }))}>
+                <option value="full">Full Day (1 day)</option>
+                <option value="half">Half Day (0.5 day)</option>
+              </select></div>
+          )}
 
           {/* Eligibility panel — computed from the actual attendance for the date */}
           {f.workedDate && (isHR ? f.employeeId : true) && (
@@ -188,9 +198,15 @@ function ScanModal({ onClose }) {
 // date + the backend-calculated eligibility. Approve/Reject use the verified eligible days.
 function VerifyAttendanceModal({ id, onClose }) {
   const qc = useQueryClient();
+  const [dayType, setDayType] = useState('');   // approver's Full/Half override ('' → keep the requested type)
   const { data: v, isLoading } = useQuery({ queryKey: ['comp-off-verify', id], queryFn: () => compOffApi.verify(id).then(r => r.data) });
+  // Current type is derived from the stored day count (1 → Full, 0.5 → Half). The approver may
+  // change it before approving; the selected value is what gets credited to the balance.
+  const currentType = (Number(v?.storedDays) >= 1) ? 'full' : 'half';
+  const selType = dayType || currentType;
+  const selDays = selType === 'half' ? 0.5 : 1;
   const refresh = () => { qc.invalidateQueries({ queryKey: ['comp-off'] }); qc.invalidateQueries({ queryKey: ['leave-balance'] }); };
-  const approveMut = useMutation({ mutationFn: () => compOffApi.approve(id), onSuccess: () => { toast.success('Comp Off approved'); refresh(); onClose(); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed to approve') });
+  const approveMut = useMutation({ mutationFn: () => compOffApi.approve(id, selType), onSuccess: () => { toast.success('Comp Off approved'); refresh(); onClose(); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed to approve') });
   const rejectMut = useMutation({ mutationFn: () => compOffApi.reject(id), onSuccess: () => { toast.success('Comp Off rejected'); refresh(); onClose(); }, onError: (e) => toast.error(e.response?.data?.error || 'Failed to reject') });
   const a = v?.attendance;
   const YesNo = ({ on }) => <span className={`font-semibold ${on ? 'text-emerald-600' : 'text-gray-400'}`}>{on ? 'Yes' : 'No'}</span>;
@@ -266,6 +282,21 @@ function VerifyAttendanceModal({ id, onClose }) {
               {!v.eligible && v.eligibilityReason && <p className="text-xs text-gray-500 mt-1.5">{v.eligibilityReason}</p>}
             </div>
 
+            {/* Comp Off Type — the approver can change Full ↔ Half BEFORE approving; the selected
+                value is credited to the balance (Full = 1 day, Half = 0.5). Pending only. */}
+            {v.compOffStatus === 'pending' && (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Comp Off Type</p>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-gray-500">Requested: <span className="font-semibold text-gray-700">{currentType === 'half' ? 'Half Day (0.5)' : 'Full Day (1)'}</span></span>
+                  <select value={selType} onChange={e => setDayType(e.target.value)} className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm font-semibold text-gray-800">
+                    <option value="full">Full Day (1 day)</option>
+                    <option value="half">Half Day (0.5 day)</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
             {/* Approval actions — only for a still-pending comp-off */}
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200">Close</button>
@@ -275,7 +306,7 @@ function VerifyAttendanceModal({ id, onClose }) {
                   <button onClick={() => approveMut.mutate()} disabled={!v.eligible || approveMut.isPending}
                     title={v.eligible ? '' : 'Not eligible — attendance does not qualify'}
                     className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                    {approveMut.isPending ? 'Approving…' : v.eligible ? `Approve ${v.eligibleDays} Day` : 'Not Eligible'}
+                    {approveMut.isPending ? 'Approving…' : v.eligible ? `Approve ${selDays} Day` : 'Not Eligible'}
                   </button>
                 </>
               )}
@@ -388,7 +419,7 @@ export default function CompOffPage() {
                   {hr && <td className="px-4 py-3 font-medium text-gray-800">{r.employeeName || '—'}</td>}
                   <td className="px-4 py-3 capitalize text-gray-600">{r.type}</td>
                   <td className="px-4 py-3 text-gray-600">{fmt(r.workedDate)}</td>
-                  <td className="px-4 py-3 font-semibold text-gray-800">{r.days}</td>
+                  <td className="px-4 py-3 font-semibold text-gray-800">{r.days}<span className="ml-1 text-[11px] font-medium text-gray-400">· {r.dayType === 'half' ? 'Half' : 'Full'}</span></td>
                   <td className="px-4 py-3 text-gray-500 max-w-[16rem]">
                     <div className="truncate">{r.holidayName || r.reason || '—'}</div>
                     {r.type === 'auto' && Number(r.workedHours) > 0 && <div className="text-[11px] text-gray-400">Worked Hours: {hoursLabel(r.workedHours)}</div>}
