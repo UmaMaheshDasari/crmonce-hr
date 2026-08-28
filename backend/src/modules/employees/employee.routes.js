@@ -16,7 +16,7 @@ const ENTITY = d365.constructor.entities.employee;
 // ESS columns (provisioned by provision-employee-columns.js). Selected as OPTIONAL
 // so the module keeps working before the columns exist.
 const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_uan,hr_pfnumber,hr_bloodgroup';
-const PERSONAL_FIELDS = 'hr_altphone,hr_personalemail,hr_dob,hr_gender,hr_maritalstatus,hr_marriagedate,hr_nationality,hr_photourl,hr_personalphotourl,hr_photoremoved';
+const PERSONAL_FIELDS = 'hr_altphone,hr_personalemail,hr_dob,hr_certificatedob,hr_gender,hr_maritalstatus,hr_marriagedate,hr_nationality,hr_photourl,hr_personalphotourl,hr_photoremoved';
 const ADDRESS_FIELDS = 'hr_permaddress,hr_city,hr_state,hr_country,hr_pincode';
 const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
 const VERIFY_FIELDS = 'hr_verifystatus,hr_verifiedby,hr_verifieddate,hr_verifynote';

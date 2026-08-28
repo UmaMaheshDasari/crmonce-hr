@@ -111,7 +111,10 @@ const FORM_TABS = [
     { name: 'hr_phone', label: 'Mobile Number', rules: phoneRule },
     { name: 'hr_altphone', label: 'Alternate Mobile', rules: phoneRule },
     { name: 'hr_personalemail', label: 'Personal Email', type: 'email' },
-    { name: 'hr_dob', label: 'Date of Birth', type: 'date', required: true },
+    { name: 'hr_dob', label: 'Original Date of Birth', type: 'date', required: true },
+    // Certificate DOB is HR-managed (document reference) — employees can view it but NEVER
+    // edit it, and it is NEVER used for birthday wishes. hrOnly gates edit in render + save.
+    { name: 'hr_certificatedob', label: 'Certificate Date of Birth', type: 'date', hrOnly: true },
     { name: 'hr_gender', label: 'Gender', type: 'select', options: GENDERS },
     { name: 'hr_maritalstatus', label: 'Marital Status', type: 'select', options: MARITAL },
     // Marriage Date shows (and is required) only when Marital Status = Married.
@@ -152,6 +155,8 @@ const TABS = [...FORM_TABS, { key: 'documents', label: 'Documents', icon: Docume
 const TAB_KEY = { General: 'general', Identity: 'identity', Address: 'address', Bank: 'bank', Emergency: 'emergency', Documents: 'documents' };
 const EDITABLE_FIELDS = FORM_TABS.flatMap(t => t.fields.map(f => f.name));
 const FIELD_TAB = Object.fromEntries(FORM_TABS.flatMap(t => t.fields.map(f => [f.name, t.key])));
+// Fields only HR/Super Admin may edit (employees can view). Backend SELF_EDITABLE enforces this too.
+const HRONLY_FIELDS = new Set(FORM_TABS.flatMap(t => t.fields.filter(f => f.hrOnly).map(f => f.name)));
 
 const VERIFY_BADGE = {
   verified: { icon: CheckBadgeIcon, text: 'Verified', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' },
@@ -233,7 +238,10 @@ export default function ProfilePage() {
 
   const onValid = (values) => {
     const payload = {};
-    for (const f of EDITABLE_FIELDS) if (values[f] !== undefined) payload[f] = values[f];
+    for (const f of EDITABLE_FIELDS) {
+      if (HRONLY_FIELDS.has(f) && !hrView) continue;   // employees can never submit HR-only fields (backend also strips)
+      if (values[f] !== undefined) payload[f] = values[f];
+    }
     // Clear Marriage Date whenever the employee is not Married (keeps data consistent).
     if (values.hr_maritalstatus !== 'Married') payload.hr_marriagedate = '';
     saveMutation.mutate(payload);
@@ -287,13 +295,14 @@ export default function ProfilePage() {
   const formVals = { hr_maritalstatus: marital };
   const Field = (f) => {
     const err = errors[f.name];
-    const ro = !editing;
+    // HR-only fields stay read-only for non-HR even in edit mode (employees can view, not edit).
+    const ro = !editing || (f.hrOnly && !hrView);
     const required = f.required || (f.requiredWhen && f.requiredWhen(formVals));
     const base = `w-full ${f.textarea ? 'px-4 py-2.5' : 'h-11 px-4'} border rounded-xl text-sm transition-all outline-none ${err ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} ${ro ? 'bg-gray-50/70 text-gray-600 cursor-default' : 'bg-white text-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400'}`;
     const reg = register(f.name, { ...(required ? { required: `${f.label} is required` } : {}), ...(f.rules || {}) });
     return (
       <div key={f.name} className={`space-y-1.5 ${f.textarea ? 'sm:col-span-2' : ''}`}>
-        <label className="block text-sm font-semibold text-gray-700">{f.label}{required && <span className="text-red-500 ml-0.5">*</span>}</label>
+        <label className="block text-sm font-semibold text-gray-700">{f.label}{required && <span className="text-red-500 ml-0.5">*</span>}{f.hrOnly && !hrView && <span className="ml-1 text-[11px] font-normal text-gray-400">· Managed by HR</span>}</label>
         {f.textarea ? (
           <textarea rows={2} className={`${base} resize-none`} readOnly={ro} {...reg} />
         ) : f.type === 'select' ? (

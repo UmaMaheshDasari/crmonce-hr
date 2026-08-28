@@ -44,6 +44,7 @@ const COLUMNS = [
   str('hr_AltPhone', 'Alternate Mobile', 20),
   str('hr_PersonalEmail', 'Personal Email', 120),
   str('hr_DOB', 'Date of Birth', 20),
+  str('hr_CertificateDOB', 'Certificate Date of Birth', 20),   // HR/document reference — NEVER used for birthday wishes
   str('hr_Gender', 'Gender', 20),
   str('hr_MaritalStatus', 'Marital Status', 20),
   str('hr_MarriageDate', 'Marriage Date', 20),          // shown only when Marital Status = Married

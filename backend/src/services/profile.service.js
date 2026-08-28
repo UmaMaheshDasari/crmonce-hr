@@ -44,7 +44,8 @@ const VERIFY_TRIGGER = new Set([
 // Human labels for audit rows / notifications.
 const FIELD_LABELS = {
   hr_phone: 'Mobile Number', hr_altphone: 'Alternate Mobile', hr_personalemail: 'Personal Email',
-  hr_dob: 'Date of Birth', hr_gender: 'Gender', hr_maritalstatus: 'Marital Status', hr_marriagedate: 'Marriage Date', hr_nationality: 'Nationality',
+  hr_dob: 'Original Date of Birth', hr_certificatedob: 'Certificate Date of Birth',
+  hr_gender: 'Gender', hr_maritalstatus: 'Marital Status', hr_marriagedate: 'Marriage Date', hr_nationality: 'Nationality',
   hr_bloodgroup: 'Blood Group', hr_photourl: 'Photo',
   hr_aadhaar: 'Aadhaar', hr_pan: 'PAN', hr_passport: 'Passport',
   hr_uan: 'UAN', hr_pfnumber: 'PF Number',
@@ -73,7 +74,7 @@ const MISSING_GROUPS = [
 
 // Field → section (used to label "Changed Section" in HR Verification).
 const SECTION_OF = {
-  hr_phone: 'Personal', hr_altphone: 'Personal', hr_personalemail: 'Personal', hr_dob: 'Personal',
+  hr_phone: 'Personal', hr_altphone: 'Personal', hr_personalemail: 'Personal', hr_dob: 'Personal', hr_certificatedob: 'Personal',
   hr_gender: 'Personal', hr_maritalstatus: 'Personal', hr_marriagedate: 'Personal', hr_nationality: 'Personal', hr_bloodgroup: 'Personal', hr_photourl: 'Personal',
   hr_aadhaar: 'Identity', hr_pan: 'Identity', hr_passport: 'Identity', hr_uan: 'Identity', hr_pfnumber: 'Identity',
   hr_address: 'Address', hr_permaddress: 'Address', hr_city: 'Address', hr_state: 'Address', hr_country: 'Address', hr_pincode: 'Address',
