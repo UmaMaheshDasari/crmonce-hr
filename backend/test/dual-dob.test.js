@@ -2,8 +2,9 @@
  * Dual Date of Birth (Original hr_dob + Certificate hr_certificatedob).
  *
  * Verifies: birthday wishes read ONLY hr_dob (never hr_certificatedob, no fallback);
- * Certificate DOB is HR-only (NOT in the self-editable whitelist, so an employee can never
- * set it — the route strips non-whitelisted fields for non-HR callers); labels are correct.
+ * Certificate DOB is self-editable — an employee may set it on their OWN profile (it is in the
+ * whitelist), while the route's own-record ownership check (isSelf) still blocks editing anyone
+ * else's; HR/Super Admin keep full edit access; labels are correct.
  * No network — d365 stubbed. No notifications are sent.
  */
 process.env.NODE_ENV = 'test';
@@ -17,18 +18,19 @@ const profile = require('../src/services/profile.service');
 const celebrations = require('../src/services/celebrations.service');
 const d365 = require('../src/services/d365.service');
 
-// ── HR-only enforcement: Certificate DOB is NOT self-editable ──
-test('hr_certificatedob is NOT in SELF_EDITABLE (employees can never set it)', () => {
-  assert.equal(profile.SELF_EDITABLE.has('hr_certificatedob'), false);
-  // The Original DOB stays self-editable (unchanged behaviour).
+// ── Self-edit: Certificate DOB is self-editable (own profile), like Original DOB ──
+test('hr_certificatedob IS in SELF_EDITABLE (employee can set it on their own profile)', () => {
+  assert.equal(profile.SELF_EDITABLE.has('hr_certificatedob'), true);
+  // The Original DOB stays self-editable too (unchanged behaviour).
   assert.equal(profile.SELF_EDITABLE.has('hr_dob'), true);
 });
 
-test('an employee self-update payload cannot carry Certificate DOB through diffChanges', () => {
-  // diffChanges only tracks SELF_EDITABLE fields — a self-service change to hr_certificatedob
-  // is ignored (and the route strips it before write anyway).
+test('an employee self-update of Certificate DOB is tracked by diffChanges (whitelisted)', () => {
+  // diffChanges tracks SELF_EDITABLE fields — a self-service change to hr_certificatedob now
+  // records an audit row alongside hr_dob. Cross-employee edits are blocked at the route
+  // (isSelf ownership check), not here.
   const changes = profile.diffChanges({ hr_dob: '1990-01-01' }, { hr_dob: '1991-01-01', hr_certificatedob: '2000-12-31' });
-  assert.deepEqual(changes.map((c) => c.field), ['hr_dob']);
+  assert.deepEqual(changes.map((c) => c.field).sort(), ['hr_certificatedob', 'hr_dob']);
 });
 
 test('labels: hr_dob → "Original Date of Birth", hr_certificatedob → "Certificate Date of Birth"', () => {
