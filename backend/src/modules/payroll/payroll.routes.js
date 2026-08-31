@@ -536,9 +536,14 @@ payrollRouter.get('/dashboard', requireAnyPermission('payroll.view'), async (req
 // attendance-register, employee-master, bank-transfer. ?year=&month=
 payrollRouter.get('/reports/:type', requireAnyPermission('payroll.export'), async (req, res, next) => {
   try {
-    const wb = await buildReport(req.params.type, { year: Number(req.query.year) || undefined, month: Number(req.query.month) || undefined });
+    const y = Number(req.query.year) || undefined;
+    const m = Number(req.query.month) || undefined;
+    const wb = await buildReport(req.params.type, { year: y, month: m });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=${req.params.type}_${req.query.year || 'all'}.xlsx`);
+    // Filename identifies the exact period so July and August downloads are never confused.
+    const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const period = (m && MONTHS[m]) ? `${MONTHS[m]}_${y || ''}` : (y ? String(y) : 'all');
+    res.setHeader('Content-Disposition', `attachment; filename=${req.params.type}_${period}.xlsx`);
     await wb.xlsx.write(res);
     res.end();
   } catch (err) { res.status(err.status || 500).json({ error: err.message || 'Failed to generate report' }); }

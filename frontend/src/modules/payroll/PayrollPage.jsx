@@ -194,12 +194,14 @@ export default function PayrollPage() {
   const [showModal, setShowModal] = useState(false);
   const [viewRec, setViewRec] = useState(null);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [filterMonth, setFilterMonth] = useState(0);   // 0 = All months (year-wide); 1-12 = a single month
   const [page, setPage] = useState(1);
   const limit = 20;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['payroll', filterYear, page],
-    queryFn: () => payrollApi.list({ year: filterYear, page, limit }),
+    queryKey: ['payroll', filterYear, filterMonth, page],
+    // Backend enforces hr_month/hr_year at the query — month isolation is never trusted to the UI.
+    queryFn: () => payrollApi.list({ year: filterYear, ...(filterMonth ? { month: filterMonth } : {}), page, limit }),
     placeholderData: (prev) => prev,
   });
 
@@ -244,8 +246,11 @@ export default function PayrollPage() {
   const runReport = async (type, label) => {
     setDownloadingReport(type);
     try {
-      const res = await payrollApi.report(type, { year: filterYear });
-      downloadBlob(new Blob([res.data]), `${label.replace(/\s+/g, '_')}_${filterYear}.xlsx`);
+      // Pass the SAME period as the table. The backend export query filters by month+year, so
+      // an August download can never contain July (and vice-versa).
+      const res = await payrollApi.report(type, { year: filterYear, ...(filterMonth ? { month: filterMonth } : {}) });
+      const period = filterMonth ? `${MONTHS[filterMonth - 1]}_${filterYear}` : `${filterYear}`;
+      downloadBlob(new Blob([res.data]), `${label.replace(/\s+/g, '_')}_${period}.xlsx`);
       toast.success(`${label} downloaded`);
     } catch { toast.error(`Failed to generate ${label}`); }
     finally { setDownloadingReport(''); }
@@ -357,6 +362,15 @@ export default function PayrollPage() {
             onChange={e => { setFilterYear(Number(e.target.value)); setPage(1); }}
           >
             {[2024, 2025, 2026].map(y => <option key={y}>{y}</option>)}
+          </select>
+          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider ml-2">Month</label>
+          <select
+            className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all appearance-none"
+            value={filterMonth}
+            onChange={e => { setFilterMonth(Number(e.target.value)); setPage(1); }}
+          >
+            <option value={0}>All months</option>
+            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
           </select>
         </div>
       </div>

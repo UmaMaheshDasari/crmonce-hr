@@ -57,14 +57,25 @@ async function empInfoMap() {
   const emps = await fetchEmployees();
   return new Map(emps.map((e) => [e.hr_hremployeeid, { id: empId(e), code: empCode(e) }]));
 }
-async function fetchPayroll(year) {
+// Payroll rows for a period. Scope by BOTH hr_year and hr_month at the QUERY so a report can
+// never mix months: an August export asks the database for August only. hr_month/hr_year are
+// integer columns; month/year are coerced to integers (never interpolated as raw strings).
+async function fetchPayroll(year, month) {
+  const y = Number.isFinite(Number(year)) && year ? Math.trunc(Number(year)) : null;
+  const m = Number.isFinite(Number(month)) && month ? Math.trunc(Number(month)) : null;
+  const clauses = [];
+  if (y !== null) clauses.push(`hr_year eq ${y}`);
+  if (m !== null) clauses.push(`hr_month eq ${m}`);
   const res = await d365.getListOptional(PAYROLL, {
     select: 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,_hr_hremployee_value',
     optionalSelect: 'hr_gross,hr_overtime,hr_lop,hr_hourdeduction,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays,hr_approvedby,hr_releasedby',
-    filter: year ? `hr_year eq ${year}` : undefined,
+    filter: clauses.length ? clauses.join(' and ') : undefined,
     orderby: 'hr_year desc,hr_month desc', top: 5000,
   });
-  return res.data || [];
+  // Belt-and-suspenders: even if a caller ever passes an unfiltered list, never emit another
+  // month's rows when a month was requested.
+  const rows = res.data || [];
+  return m !== null ? rows.filter((r) => Number(r.hr_month) === m) : rows;
 }
 
 // employeeGuid → shaped active Salary Structure, effective as of `asOf`. ONE query
@@ -98,7 +109,7 @@ async function buildReport(type, { year, month } = {}) {
   wb.creator = 'CRMONCE HRMS';
 
   if (type === 'payroll-register') {
-    const [rows, ids] = await Promise.all([fetchPayroll(year), empInfoMap()]);
+    const [rows, ids] = await Promise.all([fetchPayroll(year, month), empInfoMap()]);
     const ws = await titledSheet(wb, 'Payroll Register', company);
     ws.columns = [
       { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 }, { header: 'Month', key: 'month', width: 8 },
@@ -147,7 +158,7 @@ async function buildReport(type, { year, month } = {}) {
   }
 
   else if (type === 'attendance-register') {
-    const [rows, ids] = await Promise.all([fetchPayroll(year), empInfoMap()]);
+    const [rows, ids] = await Promise.all([fetchPayroll(year, month), empInfoMap()]);
     const ws = await titledSheet(wb, 'Attendance Register', company);
     ws.columns = [
       { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 }, { header: 'Month', key: 'month', width: 8 },
@@ -194,7 +205,7 @@ async function buildReport(type, { year, month } = {}) {
   }
 
   else if (type === 'bank-transfer') {
-    const [rows, emps] = await Promise.all([fetchPayroll(year), fetchEmployees()]);
+    const [rows, emps] = await Promise.all([fetchPayroll(year, month), fetchEmployees()]);
     const byId = new Map(emps.map((e) => [e.hr_hremployeeid, e]));
     const ws = await titledSheet(wb, 'Bank Transfer', company);
     ws.columns = [
@@ -215,7 +226,7 @@ async function buildReport(type, { year, month } = {}) {
   }
 
   else if (type === 'payslip-register') {
-    const [rows, ids] = await Promise.all([fetchPayroll(year), empInfoMap()]);
+    const [rows, ids] = await Promise.all([fetchPayroll(year, month), empInfoMap()]);
     const ws = await titledSheet(wb, 'Payslip Register', company);
     ws.columns = [
       { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 },
