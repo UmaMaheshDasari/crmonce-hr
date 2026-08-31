@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { CheckIcon, XMarkIcon, ClockIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, XMarkIcon, ClockIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { attendanceRequestApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
@@ -17,11 +17,13 @@ export default function AttendanceRequestsPage({ kind } = {}) {
   const { isHR, hasPermission } = useAuth();
   const canApprove = hasPermission('attendance.approve_request');   // RBAC Phase D
   const canReject = hasPermission('attendance.reject_request');
+  const canDelete = canApprove || canReject;   // HR/Admin who manage the queue may delete a pending request
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [comment, setComment] = useState({});   // per-request comment
   const [modalOpen, setModalOpen] = useState(false);
   const [editRecord, setEditRecord] = useState(null);   // employee editing their own pending request
+  const [confirmDelete, setConfirmDelete] = useState(null);   // pending request awaiting delete confirmation
 
   const { data, isLoading } = useQuery({
     queryKey: ['attendance-requests', statusFilter],
@@ -38,6 +40,12 @@ export default function AttendanceRequestsPage({ kind } = {}) {
       ? attendanceRequestApi.approve(id, comment[id]) : attendanceRequestApi.reject(id, comment[id]),
     onSuccess: (_r, v) => { toast.success(`Request ${v.action === 'approved' ? 'approved — attendance recalculated' : 'rejected'}`); qc.invalidateQueries({ queryKey: ['attendance-requests'] }); qc.invalidateQueries({ queryKey: ['attendance'] }); },
     onError: (e) => toast.error(e.response?.data?.error || 'Action failed'),
+  });
+
+  const del = useMutation({
+    mutationFn: (id) => attendanceRequestApi.remove(id),
+    onSuccess: () => { toast.success('Request deleted'); setConfirmDelete(null); qc.invalidateQueries({ queryKey: ['attendance-requests'] }); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Delete failed'),
   });
 
   return (
@@ -104,6 +112,8 @@ export default function AttendanceRequestsPage({ kind } = {}) {
                             className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 disabled:opacity-50" title="Approve"><CheckIcon className="w-4 h-4" /></button>}
                           {canReject && <button onClick={() => act.mutate({ id: r.id, action: 'rejected' })} disabled={act.isPending}
                             className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50" title="Reject"><XMarkIcon className="w-4 h-4" /></button>}
+                          {canDelete && <button onClick={() => setConfirmDelete(r)} disabled={del.isPending}
+                            className="p-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50" title="Delete / Cancel request"><TrashIcon className="w-4 h-4" /></button>}
                         </div>
                       ) : (
                         <span className="text-xs text-gray-400 flex justify-end">{r.approvedBy ? `by ${r.approvedBy}` : '—'}</span>
@@ -128,6 +138,23 @@ export default function AttendanceRequestsPage({ kind } = {}) {
       </div>
 
       <MissingPunchModal open={modalOpen} lockKind={isEarlyLogout ? 'early_logout' : undefined} onClose={() => { setModalOpen(false); setEditRecord(null); }} editRecord={editRecord} />
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !del.isPending && setConfirmDelete(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center"><TrashIcon className="w-5 h-5 text-red-600" /></div>
+              <h2 className="text-lg font-bold text-gray-900">Delete this request?</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-1">This permanently removes the pending {confirmDelete.punchTypeLabel} request. The employee's attendance and punch records are <b>not</b> changed.</p>
+            <p className="text-xs text-gray-400 mb-5">{confirmDelete.employeeName ? `${confirmDelete.employeeName} · ` : ''}{confirmDelete.date}</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setConfirmDelete(null)} disabled={del.isPending} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 disabled:opacity-50">Cancel</button>
+              <button onClick={() => del.mutate(confirmDelete.id)} disabled={del.isPending} className="px-5 py-2 text-sm font-medium text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50">{del.isPending ? 'Deleting…' : 'Delete'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

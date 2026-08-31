@@ -289,6 +289,35 @@ router.patch('/:id/reject', requireAnyPermission('attendance.reject_request'), a
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 
+// DELETE /api/attendance-requests/:id — HR/Admin delete/cancel a PENDING request from the
+// approval queue. Authorized by the SAME permissions that process the queue (approve/reject),
+// so employees (who lack them) get 403 and can never delete from the approval list.
+//  • Only a PENDING request may be deleted; approved/rejected are blocked (409) so decided
+//    history is preserved (existing history/audit rules).
+//  • Deletes ONLY the request row — the original attendance / punch record is NEVER touched.
+//  • Payroll / OT / LOP are unaffected: a pending request grants nothing (only APPROVED
+//    adjustments feed the monthly balance), so removing it changes no calculation.
+//  • An audit entry records who deleted it and when.
+router.delete('/:id', requireAnyPermission('attendance.approve_request', 'attendance.reject_request'), async (req, res, next) => {
+  try {
+    let reqRec;
+    try { reqRec = await d365.getById(REQ, req.params.id, {}); }
+    catch (err) { if (notConfigured(err)) return res.status(404).json({ error: 'Attendance request not found.' }); throw err; }
+    const status = String(reqRec.hr_status || 'pending');
+    if (status !== 'pending') {
+      // Rule 5 (approved) + Rule 6 (rejected → keep as history) — only pending is deletable.
+      return res.status(409).json({ error: `Only a pending request can be deleted — this one is already ${status}.` });
+    }
+    await d365.delete(REQ, req.params.id);   // removes ONLY the request; attendance/punch record untouched
+    activity.record({
+      category: 'Attendance', type: 'correction_deleted', title: 'Attendance Request Deleted',
+      name: reqRec.hr_employeename,
+      meta: `${PUNCH_TYPES[reqRec.hr_punchtype] || reqRec.hr_punchtype} on ${String(reqRec.hr_attendancedate || '').slice(0, 10)} — pending request deleted by ${req.user.name}`,
+    });
+    res.json({ deleted: true, id: req.params.id });
+  } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
+
 // POST /api/attendance-requests/:id/email-action — approve/reject from an email button.
 router.post('/:id/email-action', requireAnyPermission('attendance.approve_request', 'attendance.reject_request'), async (req, res, next) => {
   try {

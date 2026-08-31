@@ -60,6 +60,8 @@ export const attendanceRequestApi = {
   list: (params) => api.get('/attendance-requests', { params }),
   approve: (id, comment) => api.patch(`/attendance-requests/${id}/approve`, { comment }),
   reject: (id, comment) => api.patch(`/attendance-requests/${id}/reject`, { comment }),
+  remove: (id) => api.delete(`/attendance-requests/${id}`),   // HR/Admin: delete a PENDING request
+
   emailAction: (id, action, token, comment) => api.post(`/attendance-requests/${id}/email-action`, { action, token, comment }),
   setup: () => api.post('/attendance-requests/setup'),   // super-admin: provision the Dataverse table
 };

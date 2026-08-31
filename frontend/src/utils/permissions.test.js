@@ -54,6 +54,14 @@ test('recruiter (dormant): recruitment + read employees only', () => {
   assert.equal(hasPermission(RECRUITER, 'payroll.process'), false);
 });
 
+test('attendance-request Delete/Cancel: visible ONLY to HR/Admin (canApprove || canReject)', () => {
+  const canDelete = (perms) => hasPermission(perms, 'attendance.approve_request') || hasPermission(perms, 'attendance.reject_request');
+  assert.equal(canDelete(SUPER_ADMIN), true);
+  assert.equal(canDelete(HR_MANAGER), true);
+  assert.equal(canDelete(EMPLOYEE), false);    // employee cannot delete from the approval list
+  assert.equal(canDelete(RECRUITER), false);
+});
+
 test('semantics: exact, module.* wildcard, "*", and missing → false (never throws)', () => {
   assert.equal(hasPermission(['payroll.*'], 'payroll.process'), true);   // module wildcard form
   assert.equal(hasPermission(['payroll.*'], 'salary.edit'), false);
