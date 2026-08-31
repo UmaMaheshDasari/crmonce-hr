@@ -21,6 +21,14 @@ const STATUS = { 123140000: 'Draft', draft: 'Draft', processed: 'Approved', paid
 const statusLabel = (s) => STATUS[s] || (s ? String(s) : '—');
 const nameOf = (r) => r['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || '—';
 
+// Gross for a payroll row (stored hr_gross, or Basic+Allowances when the column predates hr_gross).
+const grossOf = (r) => (r.hr_gross != null ? Number(r.hr_gross) : (Number(r.hr_basic) || 0) + (Number(r.hr_allowances) || 0));
+// TOTAL deductions for the sheet = Gross − Net. hr_deductions stores ONLY the "Other" bucket
+// (the engine keeps PF/PT/TDS/LOP/hour-shortage/advance in their own columns), so reading
+// hr_deductions understates real deductions to ₹0 for anyone with PF/PT/LOP. Gross − Net is the
+// authoritative total and keeps the sheet self-consistent (Net = Gross − Deductions).
+const totalDeductionsOf = (r) => Math.max(0, Math.round(grossOf(r) - (Number(r.hr_netpay) || 0)));
+
 function styleHeader(ws) {
   ws.getRow(1).font = { bold: true };
   ws.getRow(1).eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E8FB' } }; });
@@ -121,8 +129,10 @@ async function buildReport(type, { year, month } = {}) {
     for (const r of rows) ws.addRow({
       eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
       basic: r.hr_basic || 0, allow: r.hr_allowances || 0, ot: r.hr_overtime || 0,
-      gross: r.hr_gross != null ? r.hr_gross : (r.hr_basic || 0) + (r.hr_allowances || 0),
-      ded: r.hr_deductions || 0, net: r.hr_netpay || 0, status: statusLabel(r.hr_status),
+      gross: grossOf(r),
+      // TOTAL deductions (PF+PT+TDS+LOP+hour-shortage+advance+other) = Gross − Net, NOT the
+      // hr_deductions "Other" bucket which is ₹0 for most employees.
+      ded: totalDeductionsOf(r), net: r.hr_netpay || 0, status: statusLabel(r.hr_status),
     });
     styleHeader(ws); autoWidth(ws);
   }
@@ -170,12 +180,10 @@ async function buildReport(type, { year, month } = {}) {
       { header: 'Total Deduction (₹)', key: 'totded', width: 18 },
     ];
     for (const r of rows) {
-      const gross = r.hr_gross != null ? Number(r.hr_gross) : (Number(r.hr_basic) || 0) + (Number(r.hr_allowances) || 0);
-      const totalDed = Math.max(0, Math.round(gross - (Number(r.hr_netpay) || 0)));
       ws.addRow({
         eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
         present: r.hr_presentdays ?? '—', absent: r.hr_absentdays ?? '—', wd: r.hr_workingdays ?? '—', pd: r.hr_paydays ?? '—',
-        lop: r.hr_lop != null ? Number(r.hr_lop) : 0, hrded: r.hr_hourdeduction != null ? Number(r.hr_hourdeduction) : 0, totded: totalDed,
+        lop: r.hr_lop != null ? Number(r.hr_lop) : 0, hrded: r.hr_hourdeduction != null ? Number(r.hr_hourdeduction) : 0, totded: totalDeductionsOf(r),
       });
     }
     styleHeader(ws); autoWidth(ws);
@@ -237,8 +245,9 @@ async function buildReport(type, { year, month } = {}) {
     const filtered = month ? rows.filter((r) => r.hr_month === month) : rows;
     for (const r of filtered) ws.addRow({
       eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
-      gross: r.hr_gross != null ? r.hr_gross : (r.hr_basic || 0) + (r.hr_allowances || 0),
-      ded: r.hr_deductions || 0, net: r.hr_netpay || 0, status: statusLabel(r.hr_status),
+      gross: grossOf(r),
+      // TOTAL deductions = Gross − Net (not the hr_deductions "Other" bucket).
+      ded: totalDeductionsOf(r), net: r.hr_netpay || 0, status: statusLabel(r.hr_status),
     });
     styleHeader(ws); autoWidth(ws);
   }
