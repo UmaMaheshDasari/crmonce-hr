@@ -790,25 +790,16 @@ router.get('/hr/overview', requireAnyPermission('attendance.export'), async (req
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
 const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, approvedLeaveDaysWeighted, absentDatesFor, gracePassedToday, expandLeaveDays } = require('../../services/attendance-summary.util');
 const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
-const { buildReconRow } = require('../../services/payroll-recon.util');
+const { buildAttendanceRow } = require('../../services/payroll-recon.util');
 const companyPolicy = require('../../services/company.policy');
 
-/**
- * Stored payroll rows for a month, keyed by employee GUID — the AUTHORITATIVE
- * generated payroll (same rows the Payroll UI / Payroll Register read). Optional
- * columns are requested via optionalSelect so an unprovisioned column degrades to
- * an absent field rather than a 400. Returns an empty Map if payroll for the month
- * hasn't been generated (the recon sheet then shows "—" for money columns).
- */
-async function fetchPayrollRowMap(year, month) {
-  try {
-    const { data } = await d365.getListOptional(d365.constructor.entities.payroll, {
-      select: 'hr_hrpayrollid,hr_month,hr_year,hr_netpay,hr_deductions,_hr_hremployee_value',
-      optionalSelect: 'hr_gross,hr_overtime,hr_lop,hr_hourdeduction,hr_professionaltax,hr_pf,hr_incometax,hr_advance,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays',
-      filter: `hr_month eq ${Number(month)} and hr_year eq ${Number(year)}`, top: 5000,
-    });
-    return new Map((data || []).map(r => [r._hr_hremployee_value, r]));
-  } catch { return new Map(); }
+/** Run async `fn` over `items` with at most `limit` in flight (bounds per-employee I/O). */
+async function mapWithConcurrency(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
@@ -1157,9 +1148,11 @@ router.get('/absentees', requireAnyPermission('attendance.view'), async (req, re
 // GET /api/attendance/export — .xlsx with THREE sheets:
 //   1) Employee Attendance Summary — per-employee summary (original code, restored)
 //   2) Daily Attendance            — daily rows (original code, restored)
-//   3) Monthly Attendance Summary  — one row/employee: Employee ID | Employee Name |
-//      Calendar Days | Working Days | Present Days | Absent Days | Salary Working Days.
-//      CRMONCE ADMIN and UmaMahesh are excluded from sheet 3 only.
+//   3) Monthly Attendance Report — one row/employee, ATTENDANCE ONLY (no monetary
+//      values): Employee ID | Employee Name | Calendar Days | Working Days | Present
+//      Days | Approved Leave Days | Absent Days | Half Days | Incomplete Days | In
+//      Progress Days | Salary Working Days | Effective Hours | LOP Hours | Shortage
+//      Hours | OT Hours. CRMONCE ADMIN and UmaMahesh are excluded from sheet 3 only.
 // Reuses buildRangeSummary (no change to attendance/leave calculation).
 router.get('/export', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
@@ -1247,21 +1240,21 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
       });
     }
 
-    // ── Sheet 3: Monthly Attendance + Payroll Reconciliation ─────────────────
-    // A professional employee-wise Attendance + Payroll reconciliation. Attendance
-    // counts come from buildRangeSummary (the same source as the /stats cards and
-    // the Monthly Summary UI); every ₹ amount comes from the STORED payroll row
-    // (hr_hrpayrolls) — the authoritative generated payroll the Payroll UI / Payroll
-    // Register also read — so the sheet reconciles with payroll by construction. No
-    // payroll math is recreated here.
+    // ── Sheet 3: Monthly Attendance Report ───────────────────────────────────
+    // A professional employee-wise ATTENDANCE report — NO monetary values (gross/net/
+    // PT/deductions live in the Payroll Register). Day/hour counts come from
+    // buildRangeSummary (the same source as the /stats cards and the Monthly Attendance
+    // UI). Shortage Hours come from buildMonthlyBalance — the authoritative monthly
+    // hour-balance the payroll engine itself uses — computed from attendance alone, so
+    // it populates whether or not payroll has been generated for the month. No payroll
+    // math and no salary figures are recreated here.
     //
-    // The report is month-scoped: the payroll join keys on the MONTH of `from`
-    // (year+month), so every row belongs to the selected month only.
-    const payYear = Number(String(from).slice(0, 4));
-    const payMonth = Number(String(from).slice(5, 7));
-    const payrollByEmp = await fetchPayrollRowMap(payYear, payMonth);
-    const fullDayHours = companyPolicy.attendance.fullDayExpectedHours();   // 9 (same as payroll)
-    const monthLabel = new Date(Date.UTC(payYear, payMonth - 1, 1))
+    // Month-scoped: buildRangeSummary already ran for [from, to], so every row belongs
+    // to the selected month only.
+    const repYear = Number(String(from).slice(0, 4));
+    const repMonth = Number(String(from).slice(5, 7));
+    const fullDayHours = companyPolicy.attendance.fullDayExpectedHours();   // 9
+    const monthLabel = new Date(Date.UTC(repYear, repMonth - 1, 1))
       .toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
     // Excluded admin/test accounts (never in the monthly summary).
@@ -1273,23 +1266,19 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
       .filter(p => !isExcluded(p.emp))
       .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
 
-    // Hour-shortage HOURS are the only value not stored on the payroll row (the row
-    // keeps the ₹ deduction). Recompute them via the SAME monthly-balance service the
-    // payroll generation used — but ONLY for employees who actually have a shortage
-    // deduction (hr_hourdeduction > 0), so the heavy per-employee recompute is bounded
-    // to the few affected rows (everyone else is 0 with no extra I/O).
+    // Shortage Hours = attended-day working-hour shortfall, from the authoritative
+    // monthly hour-balance (same service payroll generation uses). Computed for every
+    // in-scope employee (bounded concurrency) so the column is correct for the month
+    // even before payroll is generated. Absent-day LOP flows through LOP Hours instead.
     const shortageByEmp = new Map();
-    const needShortage = summaryRows
-      .map(p => p.emp.hr_hremployeeid)
-      .filter(id => Number((payrollByEmp.get(id) || {}).hr_hourdeduction) > 0);
-    await Promise.all(needShortage.map(async (id) => {
+    await mapWithConcurrency(summaryRows, 6, async ({ emp }) => {
       try {
-        const bal = await monthlyBalance.buildMonthlyBalance({ employeeId: id, year: payYear, month: payMonth });
-        shortageByEmp.set(id, Number(bal.shortageHours) || 0);
-      } catch { /* leave 0 — the ₹ deduction column still reconciles */ }
-    }));
+        const bal = await monthlyBalance.buildMonthlyBalance({ employeeId: emp.hr_hremployeeid, year: repYear, month: repMonth });
+        shortageByEmp.set(emp.hr_hremployeeid, Number(bal.shortageHours) || 0);
+      } catch { shortageByEmp.set(emp.hr_hremployeeid, 0); }   // degrade to 0, never block the export
+    });
 
-    const ws = wb.addWorksheet('Monthly Attendance & Payroll');
+    const ws = wb.addWorksheet('Monthly Attendance Report');
     ws.columns = [
       { header: 'Employee ID', key: 'id', width: 14 },
       { header: 'Employee Name', key: 'name', width: 26 },
@@ -1304,23 +1293,14 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
       { header: 'Salary Working Days', key: 'salary', width: 18 },
       { header: 'Effective Hours', key: 'eff', width: 14 },
       { header: 'LOP Hours', key: 'lophrs', width: 11 },
-      { header: 'LOP Deduction', key: 'lopded', width: 14 },
       { header: 'Shortage Hours', key: 'shorthrs', width: 14 },
-      { header: 'Shortage Deduction', key: 'shortded', width: 17 },
-      { header: 'Professional Tax', key: 'pt', width: 15 },
-      { header: 'Other Deductions', key: 'other', width: 15 },
-      { header: 'Gross Pay', key: 'gross', width: 13 },
       { header: 'OT Hours', key: 'othrs', width: 10 },
-      { header: 'OT Pay', key: 'otpay', width: 12 },
-      { header: 'Net Pay', key: 'net', width: 13 },
     ];
-    const money = (v) => (v == null ? '—' : Number(v));     // "—" when payroll not generated
     for (const { emp: e, approvedLeaveDays, summary: s } of summaryRows) {
-      const row = buildReconRow({
+      const row = buildAttendanceRow({
         employeeId: e.hr_etimecode || e.hr_hremployeeid || '',
         employeeName: e.hr_hremployee1 || 'Employee',
         rc, summary: s, approvedLeaveDays,
-        payrollRow: payrollByEmp.get(e.hr_hremployeeid) || null,
         shortageHours: shortageByEmp.get(e.hr_hremployeeid) || 0,
         fullDayHours,
       });
@@ -1329,21 +1309,17 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
         cal: row.calendarDays, wd: row.workingDays, present: row.presentDays,
         leave: row.approvedLeaveDays, absent: row.absentDays, half: row.halfDays,
         incomplete: row.incompleteDays, inprogress: row.inProgressDays, salary: row.salaryWorkingDays,
-        eff: fmtDur(row.effectiveHours), lophrs: fmtDur(row.lopHours), lopded: money(row.lopDeduction),
-        shorthrs: fmtDur(row.shortageHours), shortded: money(row.shortageDeduction),
-        pt: money(row.professionalTax), other: money(row.otherDeductions), gross: money(row.grossPay),
-        othrs: fmtDur(row.otHours), otpay: money(row.otPay), net: money(row.netPay),
+        eff: fmtDur(row.effectiveHours), lophrs: fmtDur(row.lopHours),
+        shorthrs: fmtDur(row.shortageHours), othrs: fmtDur(row.otHours),
       });
     }
 
-    // ₹ currency format for money columns; centered numeric day/hour columns.
-    const RUPEE = '"₹"#,##0';
-    ['lopded', 'shortded', 'pt', 'other', 'gross', 'otpay', 'net'].forEach(k => { ws.getColumn(k).numFmt = RUPEE; ws.getColumn(k).alignment = { horizontal: 'right' }; });
+    // Centered numeric day/hour columns (no monetary columns on this sheet).
     ['cal', 'wd', 'present', 'leave', 'absent', 'half', 'incomplete', 'inprogress', 'salary', 'eff', 'lophrs', 'shorthrs', 'othrs'].forEach(k => { ws.getColumn(k).alignment = { horizontal: 'center' }; });
 
     // Title banner (row 1) identifying the month, headers on row 2.
     const lastCol = ws.columnCount;
-    ws.spliceRows(1, 0, [`Monthly Attendance & Payroll Reconciliation — ${monthLabel}`]);
+    ws.spliceRows(1, 0, [`Monthly Attendance Report — ${monthLabel}`]);
     ws.mergeCells(1, 1, 1, lastCol);
     const titleCell = ws.getCell(1, 1);
     titleCell.font = { bold: true, size: 13, color: { argb: 'FF1F4E79' } };
