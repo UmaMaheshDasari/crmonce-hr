@@ -790,6 +790,26 @@ router.get('/hr/overview', requireAnyPermission('attendance.export'), async (req
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
 const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, approvedLeaveDaysWeighted, absentDatesFor, gracePassedToday, expandLeaveDays } = require('../../services/attendance-summary.util');
 const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
+const { buildReconRow } = require('../../services/payroll-recon.util');
+const companyPolicy = require('../../services/company.policy');
+
+/**
+ * Stored payroll rows for a month, keyed by employee GUID — the AUTHORITATIVE
+ * generated payroll (same rows the Payroll UI / Payroll Register read). Optional
+ * columns are requested via optionalSelect so an unprovisioned column degrades to
+ * an absent field rather than a 400. Returns an empty Map if payroll for the month
+ * hasn't been generated (the recon sheet then shows "—" for money columns).
+ */
+async function fetchPayrollRowMap(year, month) {
+  try {
+    const { data } = await d365.getListOptional(d365.constructor.entities.payroll, {
+      select: 'hr_hrpayrollid,hr_month,hr_year,hr_netpay,hr_deductions,_hr_hremployee_value',
+      optionalSelect: 'hr_gross,hr_overtime,hr_lop,hr_hourdeduction,hr_professionaltax,hr_pf,hr_incometax,hr_advance,hr_presentdays,hr_absentdays,hr_workingdays,hr_paydays',
+      filter: `hr_month eq ${Number(month)} and hr_year eq ${Number(year)}`, top: 5000,
+    });
+    return new Map((data || []).map(r => [r._hr_hremployee_value, r]));
+  } catch { return new Map(); }
+}
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
   const v = Number(h);
@@ -1227,61 +1247,116 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
       });
     }
 
-    // Date bounds for the Monthly Summary (Sheet 3) — future days excluded from Absent.
-    const today = time.istDateStr();
-    const capTo = to < today ? to : today;
+    // ── Sheet 3: Monthly Attendance + Payroll Reconciliation ─────────────────
+    // A professional employee-wise Attendance + Payroll reconciliation. Attendance
+    // counts come from buildRangeSummary (the same source as the /stats cards and
+    // the Monthly Summary UI); every ₹ amount comes from the STORED payroll row
+    // (hr_hrpayrolls) — the authoritative generated payroll the Payroll UI / Payroll
+    // Register also read — so the sheet reconciles with payroll by construction. No
+    // payroll math is recreated here.
+    //
+    // The report is month-scoped: the payroll join keys on the MONTH of `from`
+    // (year+month), so every row belongs to the selected month only.
+    const payYear = Number(String(from).slice(0, 4));
+    const payMonth = Number(String(from).slice(5, 7));
+    const payrollByEmp = await fetchPayrollRowMap(payYear, payMonth);
+    const fullDayHours = companyPolicy.attendance.fullDayExpectedHours();   // 9 (same as payroll)
+    const monthLabel = new Date(Date.UTC(payYear, payMonth - 1, 1))
+      .toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
-    // ── Sheet 3: Monthly Attendance Summary ──────────────────────────────────
     // Excluded admin/test accounts (never in the monthly summary).
     const norm = (n) => String(n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const EXCLUDE = ['crmonceadmin', 'umamahesh'];
     const isExcluded = (e) => EXCLUDE.some(x => norm(e.hr_hremployee1).includes(x));
 
-    const ws = wb.addWorksheet('Monthly Attendance Summary');
-    ws.columns = [
-      { header: 'Employee ID', key: 'id', width: 16 },
-      { header: 'Employee Name', key: 'name', width: 26 },
-      { header: 'Calendar Days', key: 'cal', width: 14 },
-      { header: 'Working Days', key: 'wd', width: 14 },
-      { header: 'Present Days', key: 'present', width: 13 },
-      { header: 'Absent Days', key: 'absent', width: 13 },
-      { header: 'Salary Working Days', key: 'salary', width: 18 },
-    ];
-    // Sheet 3 reuses the AUTHORITATIVE leave-aware Absent (summary.absent from absentDatesFor)
-    // — the same value Sheet 1 and the Monthly Summary UI use — so approved leave is never
-    // counted as Absent. (Working Days column shows the full month via rc.working.)
     const summaryRows = perEmployee
       .filter(p => !isExcluded(p.emp))
       .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
+
+    // Hour-shortage HOURS are the only value not stored on the payroll row (the row
+    // keeps the ₹ deduction). Recompute them via the SAME monthly-balance service the
+    // payroll generation used — but ONLY for employees who actually have a shortage
+    // deduction (hr_hourdeduction > 0), so the heavy per-employee recompute is bounded
+    // to the few affected rows (everyone else is 0 with no extra I/O).
+    const shortageByEmp = new Map();
+    const needShortage = summaryRows
+      .map(p => p.emp.hr_hremployeeid)
+      .filter(id => Number((payrollByEmp.get(id) || {}).hr_hourdeduction) > 0);
+    await Promise.all(needShortage.map(async (id) => {
+      try {
+        const bal = await monthlyBalance.buildMonthlyBalance({ employeeId: id, year: payYear, month: payMonth });
+        shortageByEmp.set(id, Number(bal.shortageHours) || 0);
+      } catch { /* leave 0 — the ₹ deduction column still reconciles */ }
+    }));
+
+    const ws = wb.addWorksheet('Monthly Attendance & Payroll');
+    ws.columns = [
+      { header: 'Employee ID', key: 'id', width: 14 },
+      { header: 'Employee Name', key: 'name', width: 26 },
+      { header: 'Calendar Days', key: 'cal', width: 13 },
+      { header: 'Working Days', key: 'wd', width: 12 },
+      { header: 'Present Days', key: 'present', width: 12 },
+      { header: 'Approved Leave Days', key: 'leave', width: 18 },
+      { header: 'Absent Days', key: 'absent', width: 11 },
+      { header: 'Half Days', key: 'half', width: 10 },
+      { header: 'Incomplete Days', key: 'incomplete', width: 15 },
+      { header: 'In Progress Days', key: 'inprogress', width: 15 },
+      { header: 'Salary Working Days', key: 'salary', width: 18 },
+      { header: 'Effective Hours', key: 'eff', width: 14 },
+      { header: 'LOP Hours', key: 'lophrs', width: 11 },
+      { header: 'LOP Deduction', key: 'lopded', width: 14 },
+      { header: 'Shortage Hours', key: 'shorthrs', width: 14 },
+      { header: 'Shortage Deduction', key: 'shortded', width: 17 },
+      { header: 'Professional Tax', key: 'pt', width: 15 },
+      { header: 'Other Deductions', key: 'other', width: 15 },
+      { header: 'Gross Pay', key: 'gross', width: 13 },
+      { header: 'OT Hours', key: 'othrs', width: 10 },
+      { header: 'OT Pay', key: 'otpay', width: 12 },
+      { header: 'Net Pay', key: 'net', width: 13 },
+    ];
+    const money = (v) => (v == null ? '—' : Number(v));     // "—" when payroll not generated
     for (const { emp: e, approvedLeaveDays, summary: s } of summaryRows) {
-      const present = s.attended;               // Present/Late/Early/OT/Incomplete/Half → ONE present
-      // Absent = the AUTHORITATIVE leave-aware value (absentDatesFor) — approved leave is already
-      // excluded, exactly like Sheet 1, the Monthly Summary UI and payroll. The old recompute
-      // subtracted a `leaveDays` field that does not exist on the row (→ 0), so approved leave
-      // was wrongly counted as Absent.
-      const absent = s.absent;
-      // Salary Working Days = Working Days − approved leave working-day equivalent (half-day
-      // aware). Driven by ACTUAL approved leave, NOT a fixed absent-based adjustment.
-      const salary = Math.max(0, Math.round((rc.working - (approvedLeaveDays || 0)) * 100) / 100);
+      const row = buildReconRow({
+        employeeId: e.hr_etimecode || e.hr_hremployeeid || '',
+        employeeName: e.hr_hremployee1 || 'Employee',
+        rc, summary: s, approvedLeaveDays,
+        payrollRow: payrollByEmp.get(e.hr_hremployeeid) || null,
+        shortageHours: shortageByEmp.get(e.hr_hremployeeid) || 0,
+        fullDayHours,
+      });
       ws.addRow({
-        id: e.hr_etimecode || e.hr_hremployeeid || '',
-        name: e.hr_hremployee1 || 'Employee',
-        cal: rc.calendar, wd: rc.working,
-        present, absent, salary,
+        id: row.employeeId, name: row.employeeName,
+        cal: row.calendarDays, wd: row.workingDays, present: row.presentDays,
+        leave: row.approvedLeaveDays, absent: row.absentDays, half: row.halfDays,
+        incomplete: row.incompleteDays, inprogress: row.inProgressDays, salary: row.salaryWorkingDays,
+        eff: fmtDur(row.effectiveHours), lophrs: fmtDur(row.lopHours), lopded: money(row.lopDeduction),
+        shorthrs: fmtDur(row.shortageHours), shortded: money(row.shortageDeduction),
+        pt: money(row.professionalTax), other: money(row.otherDeductions), gross: money(row.grossPay),
+        othrs: fmtDur(row.otHours), otpay: money(row.otPay), net: money(row.netPay),
       });
     }
-    ws.columns.forEach(col => {
-      let max = String(col.header || '').length;
-      col.eachCell({ includeEmpty: false }, (cell) => { max = Math.max(max, String(cell.value ?? '').length); });
-      col.width = Math.min(Math.max(max + 2, 12), 40);
-    });
-    ['cal', 'wd', 'present', 'absent', 'salary'].forEach(k => { ws.getColumn(k).alignment = { horizontal: 'center' }; });
-    ws.getRow(1).eachCell((cell) => {
+
+    // ₹ currency format for money columns; centered numeric day/hour columns.
+    const RUPEE = '"₹"#,##0';
+    ['lopded', 'shortded', 'pt', 'other', 'gross', 'otpay', 'net'].forEach(k => { ws.getColumn(k).numFmt = RUPEE; ws.getColumn(k).alignment = { horizontal: 'right' }; });
+    ['cal', 'wd', 'present', 'leave', 'absent', 'half', 'incomplete', 'inprogress', 'salary', 'eff', 'lophrs', 'shorthrs', 'othrs'].forEach(k => { ws.getColumn(k).alignment = { horizontal: 'center' }; });
+
+    // Title banner (row 1) identifying the month, headers on row 2.
+    const lastCol = ws.columnCount;
+    ws.spliceRows(1, 0, [`Monthly Attendance & Payroll Reconciliation — ${monthLabel}`]);
+    ws.mergeCells(1, 1, 1, lastCol);
+    const titleCell = ws.getCell(1, 1);
+    titleCell.font = { bold: true, size: 13, color: { argb: 'FF1F4E79' } };
+    titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    ws.getRow(1).height = 22;
+    ws.getRow(2).eachCell((cell) => {
       cell.font = { bold: true };
-      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.alignment = { ...(cell.alignment || {}), horizontal: 'center', vertical: 'middle', wrapText: true };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E8FB' } };
     });
-    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    ws.getRow(2).height = 30;
+    ws.views = [{ state: 'frozen', ySplit: 2 }];                      // freeze title + header
+    ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: lastCol } };
 
     wb.views = [{ activeTab: 0 }];   // open on Employee Attendance Summary
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
