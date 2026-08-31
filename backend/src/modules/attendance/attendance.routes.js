@@ -57,9 +57,11 @@ router.get('/', requireAnyPermission('attendance.view'), async (req, res, next) 
     if (t) filters.push(`hr_date le ${t}`);
     if (source) filters.push(`hr_source eq ${toValue('hr_attendance_source', source)}`);
 
-    // Present/Half Day/Incomplete are DYNAMIC (computed from punches + shift), so
-    // filter/display them by the computed status — NOT the stored hr_status.
-    const COMPUTED = ['present', 'half_day', 'incomplete'];
+    // Present/Half Day/Incomplete/In Progress are DYNAMIC (computed from punches + shift),
+    // so filter/display them by the computed status — NOT the stored hr_status. 'in_progress'
+    // (today's live open session) is included so it can be filtered and never falls into the
+    // Incomplete filter — matching how the /stats summary now counts them separately.
+    const COMPUTED = ['present', 'half_day', 'incomplete', 'in_progress'];
     const useComputed = COMPUTED.includes(status);
     if (status && !useComputed) filters.push(`hr_status eq ${toValue('hr_attendance_status', status)}`);
 
@@ -893,19 +895,23 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const perEmployee = scope.map(e => {
     const recordSet = recordDatesByEmp[e.hr_hremployeeid] || new Set();
     const leaveMap = leaveInfoByEmp.get(e.hr_hremployeeid) || new Map();   // date → {type,status}
-    const leaveSet = new Set(leaveMap.keys());                             // approved+pending → NEVER Absent
+    // Only APPROVED leave suppresses Absence (paid, no punch required). PENDING/rejected/
+    // cancelled do NOT — a no-punch day stays Absent — matching the payroll rule
+    // (buildMonthlyBalance) and /summary/monthly. leaveMap still carries pending for the
+    // on-page leave overlay/display; only the ABSENT test uses the approved-only set.
+    const approvedLeaveSet = new Set();
     let approvedDays = 0, pendingDays = 0;
-    for (const info of leaveMap.values()) { if (info.status === 'approved') approvedDays++; else if (info.status === 'pending') pendingDays++; }
+    for (const [d, info] of leaveMap) { if (info.status === 'approved') { approvedDays++; approvedLeaveSet.add(d); } else if (info.status === 'pending') pendingDays++; }
     // Prefer the true first-ever date; fall back to the earliest in-range punch so
     // an unavailable aggregate never forces working days (and thus Absent) to 0.
     const firstDate = firstMap.get(e.hr_hremployeeid) || firstInRange[e.hr_hremployeeid] || null;
     const working = effectiveWorking(from, capTo, firstDate);
     const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays: approvedDays });
-    // Absent = ENUMERATED working dates with no record and no leave (approved OR pending)
-    // — pending is held out of Absent, exactly like payroll. Today counts only once this
-    // employee's own shift-start + grace has passed (spec §7/§8).
+    // Absent = ENUMERATED working dates with no record and no APPROVED leave. Pending leave
+    // does NOT suppress Absence (matches payroll). Today counts only once this employee's own
+    // shift-start + grace has passed (spec §7/§8).
     const todayPending = todayInRange && !gracePassedToday(shiftOf(e), graceMin, nowMin);
-    summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds), { today, todayPending }).length;
+    summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => approvedLeaveSet.has(ds), { today, todayPending }).length;
     // Approved leave working-day equivalent for the FULL selected month (half-day aware,
     // weekend/holiday-excluded, overlap-deduped, month-clipped). Drives Salary Working Days.
     const approvedLeaveDays = approvedLeaveDaysWeighted(approvedLeavesByEmp[e.hr_hremployeeid] || [], from, to);
@@ -913,12 +919,12 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   });
 
   const totals = perEmployee.reduce((t, p) => {
-    t.present += p.summary.present; t.half += p.summary.half; t.incomplete += p.summary.incomplete;
+    t.present += p.summary.present; t.half += p.summary.half; t.incomplete += p.summary.incomplete; t.inProgress += p.summary.inProgress;
     t.attended += p.summary.attended; t.absent += p.summary.absent;
     t.leaveApproved += p.approvedDays; t.leavePending += p.pendingDays;
     t.effectiveHours += p.summary.effectiveHours; t.overtimeHours += p.summary.overtimeHours;
     return t;
-  }, { present: 0, half: 0, incomplete: 0, attended: 0, absent: 0, leaveApproved: 0, leavePending: 0, effectiveHours: 0, overtimeHours: 0, employees: perEmployee.length });
+  }, { present: 0, half: 0, incomplete: 0, inProgress: 0, attended: 0, absent: 0, leaveApproved: 0, leavePending: 0, effectiveHours: 0, overtimeHours: 0, employees: perEmployee.length });
   totals.leave = totals.leaveApproved;                       // back-compat: "Leave" column = approved working days
   totals.leaveApplied = totals.leaveApproved + totals.leavePending;
 
@@ -950,7 +956,7 @@ router.get('/stats', requireAnyPermission('attendance.view'), async (req, res, n
     res.json({
       from, to,
       calendar: rc.calendar, working: rc.working, holidays: rc.holidays, weeklyOff: rc.weeklyOff,
-      present: totals.present, halfDay: totals.half, incomplete: totals.incomplete,
+      present: totals.present, halfDay: totals.half, incomplete: totals.incomplete, inProgress: totals.inProgress,
       absent: totals.absent, leave: totals.leave, attended: totals.attended,
       // Leave summary (respects the same employee/department/date filters).
       leaveApplied: totals.leaveApplied, leavePending: totals.leavePending, leaveApproved: totals.leaveApproved,
@@ -1221,19 +1227,19 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
       { header: 'Absent Days', key: 'absent', width: 13 },
       { header: 'Salary Working Days', key: 'salary', width: 18 },
     ];
-    // Recompute Sheet 3 from scratch — do NOT reuse the stored summary.absent.
-    // Working Days for the Absent calc excludes FUTURE days (rangeCounts already
-    // excludes Sundays + holidays); for a completed month this equals the full
-    // Working Days column, so Present + Absent + Leave reconcile exactly.
-    const workingForAbsent = rangeCounts(from, capTo).working;   // capTo = min(to, today)
+    // Sheet 3 reuses the AUTHORITATIVE leave-aware Absent (summary.absent from absentDatesFor)
+    // — the same value Sheet 1 and the Monthly Summary UI use — so approved leave is never
+    // counted as Absent. (Working Days column shows the full month via rc.working.)
     const summaryRows = perEmployee
       .filter(p => !isExcluded(p.emp))
       .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
-    for (const { emp: e, leaveDays, approvedLeaveDays, summary: s } of summaryRows) {
+    for (const { emp: e, approvedLeaveDays, summary: s } of summaryRows) {
       const present = s.attended;               // Present/Late/Early/OT/Incomplete/Half → ONE present
-      const leave = leaveDays || 0;             // (unchanged — preserves the existing Absent calc)
-      // Absent = Working − Present − Leave (future excluded, never negative). PRESERVED as-is.
-      const absent = Math.max(0, workingForAbsent - present - leave);
+      // Absent = the AUTHORITATIVE leave-aware value (absentDatesFor) — approved leave is already
+      // excluded, exactly like Sheet 1, the Monthly Summary UI and payroll. The old recompute
+      // subtracted a `leaveDays` field that does not exist on the row (→ 0), so approved leave
+      // was wrongly counted as Absent.
+      const absent = s.absent;
       // Salary Working Days = Working Days − approved leave working-day equivalent (half-day
       // aware). Driven by ACTUAL approved leave, NOT a fixed absent-based adjustment.
       const salary = Math.max(0, Math.round((rc.working - (approvedLeaveDays || 0)) * 100) / 100);

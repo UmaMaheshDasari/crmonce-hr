@@ -23,7 +23,8 @@ test('Normal Present → attended, not Absent', () => {
 test('Device Punch only (single IN) → in_progress (unfinalized), NOT Absent', () => {
   const s = summarizeEmployee([day('2026-07-06', ['09:00'])], { working: 1 });
   assert.strictEqual(s.half, 0);               // open session — NOT Half Day
-  assert.strictEqual(s.incomplete, 1);         // counted as Incomplete (unfinalized), still attended
+  assert.strictEqual(s.inProgress, 1);         // live open session → its OWN bucket
+  assert.strictEqual(s.incomplete, 0);         // NOT counted as Incomplete anymore
   assert.strictEqual(s.attended, 1);
   assert.strictEqual(s.absent, 0);
 });
@@ -115,7 +116,8 @@ test('Mixed month reconciles: Absent = Working − Attended − Leave', () => {
   const s = summarizeEmployee(sessions, { working: 22, leaveDays: 2 });
   assert.strictEqual(s.present, 2);
   assert.strictEqual(s.half, 0);            // open single-punch day → NOT Half Day
-  assert.strictEqual(s.incomplete, 1);      // → Incomplete (unfinalized), still attended
+  assert.strictEqual(s.inProgress, 1);      // live open session → its OWN bucket
+  assert.strictEqual(s.incomplete, 0);      // NOT lumped into Incomplete
   assert.strictEqual(s.attended, 3);
   assert.strictEqual(s.absent, 17);         // 22 − 3 attended − 2 leave (unchanged: attended counts any punch)
 });

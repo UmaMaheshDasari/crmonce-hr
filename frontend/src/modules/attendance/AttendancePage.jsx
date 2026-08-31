@@ -280,6 +280,8 @@ export default function AttendancePage() {
     { label: 'Absent', value: 'absent', filterable: true, count: stats?.absent ?? 0, icon: XCircleIcon, iconBg: 'bg-red-100', iconColor: 'text-red-600', border: 'border-l-red-500' },
     { label: 'Half Day', value: 'half_day', filterable: true, count: stats?.halfDay ?? 0, icon: ClockIcon, iconBg: 'bg-amber-100', iconColor: 'text-amber-600', border: 'border-l-amber-500' },
     { label: 'Incomplete', value: 'incomplete', filterable: true, count: stats?.incomplete ?? 0, icon: ExclamationTriangleIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-500', border: 'border-l-slate-400' },
+    // In Progress — today's live open sessions (own bucket, no longer folded into Incomplete).
+    { label: 'In Progress', value: 'in_progress', filterable: true, count: stats?.inProgress ?? 0, icon: ClockIcon, iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', border: 'border-l-indigo-500' },
     // Leave summary — informational (respects the same Employee / Date / Department filters).
     { label: 'Leave Applied', value: null, filterable: false, count: stats?.leaveApplied ?? 0, icon: CalendarDaysIcon, iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', border: 'border-l-indigo-500' },
     { label: 'Leave Pending', value: null, filterable: false, count: stats?.leavePending ?? 0, icon: ClockIcon, iconBg: 'bg-sky-100', iconColor: 'text-sky-600', border: 'border-l-sky-500' },
