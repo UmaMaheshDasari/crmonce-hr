@@ -141,6 +141,53 @@ function approvedLeaveWorkingDays(leaves = [], from, to, opts = {}) {
   return counted.size;
 }
 
+/**
+ * Approved-leave WORKING days for one employee within [from, to], RESPECTING the leave's
+ * actual DURATION so a half-day counts 0.5 and a full day counts 1. Each leave spreads its
+ * own hr_days across its working dates (half-day = 0.5 over its single date; a full N-day
+ * leave = 1 per date), the span is clipped to [from, to] (month isolation), holidays /
+ * weekly-offs are excluded (weekend leave never subtracts), and overlapping leaves are
+ * de-duplicated per date (the max weight wins, so the same day is never counted twice).
+ * Pass ONLY approved leaves — pending/rejected/cancelled must be filtered out by the caller.
+ * This is what "Salary Working Days = Working Days − approved leave" uses in the report.
+ * @param leaves rows carrying hr_fromdate / hr_todate / hr_days
+ */
+function approvedLeaveDaysWeighted(leaves = [], from, to, opts = {}) {
+  const weekOffDays = opts.weekOffDays || attnCfg.weekOffDays;
+  const holidays = opts.holidays || attnCfg.holidays;
+  const start = String(from).slice(0, 10), end = String(to).slice(0, 10);
+  if (!start || !end || end < start) return 0;
+  const workingDatesOf = (lf, lt) => {
+    const dates = [];
+    let d = new Date(`${lf}T00:00:00Z`); const stop = new Date(`${lt}T00:00:00Z`);
+    let guard = 0;
+    while (d <= stop && guard++ < 500) {
+      const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+      if (!holidays.includes(ds) && !weekOffDays.includes(d.getUTCDay())) dates.push(ds);
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return dates;
+  };
+  const perDate = new Map();   // in-range working date → weight (dedupe: keep the max)
+  for (const l of leaves || []) {
+    const lf = String(l.hr_fromdate || '').slice(0, 10);
+    const lt = String(l.hr_todate || '').slice(0, 10) || lf;
+    if (!lf) continue;
+    const spanDates = workingDatesOf(lf, lt);       // all working dates of the leave (full span)
+    if (!spanDates.length) continue;                // weekend/holiday-only leave → subtracts nothing
+    const days = Number(l.hr_days);
+    // Per-date weight from the leave's OWN duration: half-day (0.5 over 1 date) = 0.5;
+    // full leave (N days over N dates) = 1 each. Fall back to a full day if hr_days is absent.
+    const weight = Math.min(1, Number.isFinite(days) && days > 0 ? days / spanDates.length : 1);
+    for (const ds of spanDates) {
+      if (ds < start || ds > end) continue;         // clip to the selected month
+      if (!perDate.has(ds) || perDate.get(ds) < weight) perDate.set(ds, weight);
+    }
+  }
+  let sum = 0; for (const w of perDate.values()) sum += w;
+  return round2(sum);
+}
+
 // ── Absent enumeration + before-grace rule (spec §7/§8) — the SINGLE definition of
 // an employee's Absent working dates, reused by the attendance list, the stats
 // cards, the dashboard, reports and payroll so every surface agrees. ─────────────
@@ -221,4 +268,4 @@ function expandLeaveDays(normLeaves = [], from, capTo, opts = {}) {
   return byEmp;
 }
 
-module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday, expandLeaveDays };
+module.exports = { rangeCounts, summarizeEmployee, fmtDate, effectiveWorking, approvedLeaveWorkingDays, approvedLeaveDaysWeighted, absentDatesFor, gracePassedToday, expandLeaveDays };

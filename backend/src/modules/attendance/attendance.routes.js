@@ -786,7 +786,7 @@ router.get('/hr/overview', requireAnyPermission('attendance.export'), async (req
 });
 
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
-const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, absentDatesFor, gracePassedToday, expandLeaveDays } = require('../../services/attendance-summary.util');
+const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, approvedLeaveDaysWeighted, absentDatesFor, gracePassedToday, expandLeaveDays } = require('../../services/attendance-summary.util');
 const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (h) => {
@@ -840,6 +840,13 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     status: toLabel('hr_leave_status', l.hr_status),
   }));
   const leaveInfoByEmp = expandLeaveDays(normLeaves, from, to);           // Map(empId → Map(date → {type,status}))
+  // APPROVED leaves grouped per employee (raw rows carry hr_days for half-day duration) —
+  // the source for "Salary Working Days = Working Days − approved leave working days".
+  const approvedLeavesByEmp = {};
+  for (const l of leaves || []) {
+    if (toLabel('hr_leave_status', l.hr_status) !== 'approved') continue;   // pending/rejected/cancelled excluded
+    (approvedLeavesByEmp[l._hr_hremployee_value] = approvedLeavesByEmp[l._hr_hremployee_value] || []).push(l);
+  }
   const recordDatesByEmp = {};
   (recs || []).forEach(r => {
     const ds = String(r.hr_date || '').slice(0, 10);
@@ -899,7 +906,10 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     // employee's own shift-start + grace has passed (spec §7/§8).
     const todayPending = todayInRange && !gracePassedToday(shiftOf(e), graceMin, nowMin);
     summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds), { today, todayPending }).length;
-    return { emp: e, approvedDays, pendingDays, working, firstDate, summary, leaveMap, recordSet };
+    // Approved leave working-day equivalent for the FULL selected month (half-day aware,
+    // weekend/holiday-excluded, overlap-deduped, month-clipped). Drives Salary Working Days.
+    const approvedLeaveDays = approvedLeaveDaysWeighted(approvedLeavesByEmp[e.hr_hremployeeid] || [], from, to);
+    return { emp: e, approvedDays, pendingDays, approvedLeaveDays, working, firstDate, summary, leaveMap, recordSet };
   });
 
   const totals = perEmployee.reduce((t, p) => {
@@ -1219,13 +1229,14 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
     const summaryRows = perEmployee
       .filter(p => !isExcluded(p.emp))
       .sort((a, b) => (a.emp.hr_hremployee1 || '').localeCompare(b.emp.hr_hremployee1 || ''));
-    for (const { emp: e, leaveDays, summary: s } of summaryRows) {
+    for (const { emp: e, leaveDays, approvedLeaveDays, summary: s } of summaryRows) {
       const present = s.attended;               // Present/Late/Early/OT/Incomplete/Half → ONE present
-      const leave = leaveDays || 0;             // approved leave days (already resolveDays-counted)
-      // Absent = Working − Present − Leave (future excluded, never negative).
+      const leave = leaveDays || 0;             // (unchanged — preserves the existing Absent calc)
+      // Absent = Working − Present − Leave (future excluded, never negative). PRESERVED as-is.
       const absent = Math.max(0, workingForAbsent - present - leave);
-      // First absent day is FREE; 2nd+ each reduce one Salary Working Day.
-      const salary = Math.max(0, rc.working - Math.max(absent - 1, 0));
+      // Salary Working Days = Working Days − approved leave working-day equivalent (half-day
+      // aware). Driven by ACTUAL approved leave, NOT a fixed absent-based adjustment.
+      const salary = Math.max(0, Math.round((rc.working - (approvedLeaveDays || 0)) * 100) / 100);
       ws.addRow({
         id: e.hr_etimecode || e.hr_hremployeeid || '',
         name: e.hr_hremployee1 || 'Employee',
