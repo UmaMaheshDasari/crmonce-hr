@@ -53,18 +53,19 @@ test('Case 6 — a real half-day (closed in→out, 5h) still HALF DAY (regressio
   assert.strictEqual(c.status, 'half_day');
 });
 
-test('Regression — odd punch but REAL hours (in→out→in = 8h) stays PRESENT, not Incomplete', () => {
-  const c = computeSession(['09:00', '17:00', '18:00'], GEN, { date: PAST });   // 8h from first pair, trailing IN
-  assert.strictEqual(c.effectiveHours, 8);
-  assert.strictEqual(c.status, 'present');
+test('Missing final punch WITH a completed first pair (in→out→in = 8h) → INCOMPLETE (confirmed hours kept)', () => {
+  const c = computeSession(['09:00', '17:00', '18:00'], GEN, { date: PAST });   // 8h from first pair, trailing IN (missing final OUT)
+  assert.strictEqual(c.effectiveHours, 8);       // confirmed completed-pair hours
+  assert.strictEqual(c.status, 'incomplete');    // odd/missing final punch → Incomplete, never Present/Half
 });
 
 // Direct classifier unit checks (the exact rule).
-test('classifyStatus — odd punch + 0 effective → incomplete; even/real hours unaffected', () => {
+test('classifyStatus — ANY odd/missing punch → incomplete; only EVEN completed sessions are Present/Half', () => {
   assert.strictEqual(classifyStatus(0, 1, { oddPunch: true }), 'incomplete');   // missing punch, 0h
+  assert.strictEqual(classifyStatus(4, 3, { oddPunch: true }), 'incomplete');   // missing final punch, 4h confirmed
+  assert.strictEqual(classifyStatus(8, 3, { oddPunch: true }), 'incomplete');   // missing final punch, 8h confirmed
   assert.strictEqual(classifyStatus(0, 0), 'absent');                            // no punch
-  assert.strictEqual(classifyStatus(4, 2, { oddPunch: false }), 'half_day');     // valid half day
-  assert.strictEqual(classifyStatus(8, 2, { oddPunch: false }), 'present');      // full day
-  assert.strictEqual(classifyStatus(8, 3, { oddPunch: true }), 'present');       // odd but real hours → not incomplete
+  assert.strictEqual(classifyStatus(4, 2, { oddPunch: false }), 'half_day');     // valid (even) half day
+  assert.strictEqual(classifyStatus(8, 2, { oddPunch: false }), 'present');      // valid (even) full day
   assert.strictEqual(classifyStatus(0, 1, { openSession: true }), 'in_progress'); // today's live open session
 });

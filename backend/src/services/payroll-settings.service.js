@@ -35,6 +35,7 @@ const PAYROLL_SETTINGS_DEFAULTS = {
   // ── Attendance / Overtime ──
   hr_workinghoursperday: '8',
   hr_otmultiplier: '2',            // overtime paid at N × per-hour rate
+  hr_calculateotpay: 'true',       // 'true' = pay OT monetarily; 'false' = track OT hours only, OT pay = 0
   hr_weeklyoff: 'Sunday',          // comma-separated weekday names
   // ── Leave policy (drives LOP): 18 paid/year = 12 Casual + 6 Sick, then LOP ──
   hr_paidleavesperyear: '18',
@@ -176,6 +177,9 @@ function resolve(settings = null) {
     lopBasis: g.hr_lopbasis || 'salary_working_days',
     workingHoursPerDay: num(g.hr_workinghoursperday, 8),
     overtimeMultiplier: num(g.hr_otmultiplier, 2),
+    // Whether OT is PAID monetarily. When false, OT hours are still tracked (attendance) and
+    // can still cover an attendance shortage — only the OT PAY amount is forced to 0.
+    calculateOtPay: bool(g.hr_calculateotpay),
     weeklyOff: String(g.hr_weeklyoff || 'Sunday').split(',').map(s => s.trim()).filter(Boolean),
     leavePolicy: {
       paidPerYear: num(g.hr_paidleavesperyear, 18),

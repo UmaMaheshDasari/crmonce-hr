@@ -65,12 +65,14 @@ function punchesFromRecord(record) {
 function classifyStatus(effectiveHours, punchCount, { fullDayMinHours = 7, openSession = false, oddPunch = false } = {}) {
   if (!punchCount) return 'absent';
   if (openSession) return 'in_progress';   // TODAY's open IN session → live, not yet finalized
-  // A finalized day with an ODD / missing punch that produced NO completed work session
-  // (effective hours = 0) is INCOMPLETE, never Half Day: with a check-in but no matching
-  // check-out there is no measurable worked time, so it cannot be a valid half day. A day
-  // that DID complete real hours (e.g. in→out→in = 8h, still odd) keeps its hour-based
-  // status below, so genuine Present/Half days are never reclassified.
-  if (oddPunch && effectiveHours <= 0) return 'incomplete';
+  // A finalized day with an ODD / missing punch is INCOMPLETE, never Half Day or Present. A
+  // check-in without its matching check-out means the day is NOT fully confirmed — only the
+  // completed IN→OUT pairs count as effective hours (computeSession already does this), but the
+  // day cannot be a trusted Present/Half day (e.g. 09:00–13:00 + 14:00→missing = 4h confirmed →
+  // INCOMPLETE). Present/Half require an EVEN, fully-paired completed session. The confirmed
+  // hours are used for the LOP calculation; missing-punch shortfall is NOT covered by OT until
+  // an Attendance Correction is approved (which makes the punches even → a normal calculation).
+  if (oddPunch) return 'incomplete';
   if (effectiveHours >= fullDayMinHours) return 'present';
   return 'half_day';
 }

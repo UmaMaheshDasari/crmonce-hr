@@ -61,14 +61,22 @@ const fullDayExpected = () => policy.attendance.fullDayExpectedHours();
  * @param {{workingDays:number, approvedLeaveHours:number, approvedAdjustmentHours:number,
  *          absentDays:number, presentWorkedHours:number, halfWorkedHours:number, fullDayExpected?:number}} p
  */
-function computeMonthlySummary({ workingDays = 0, approvedLeaveHours = 0, approvedAdjustmentHours = 0, absentDays = 0, presentWorkedHours = 0, halfWorkedHours = 0, fullDayExpected = 9 } = {}) {
+function computeMonthlySummary({ workingDays = 0, approvedLeaveHours = 0, approvedAdjustmentHours = 0, absentDays = 0, presentWorkedHours = 0, halfWorkedHours = 0, incompleteDays = 0, incompleteSurplusHours = 0, incompleteFirmShortageHours = 0, fullDayExpected = 9 } = {}) {
   const fd = num(fullDayExpected) || 9;
   const baseRequiredHours = round2(num(workingDays) * fd);
-  const finalRequiredHours = Math.max(0, round2(baseRequiredHours - num(approvedLeaveHours) - num(approvedAdjustmentHours) - num(absentDays) * fd));
-  const totalWorkedHours = round2(num(presentWorkedHours) + num(halfWorkedHours));
+  // INCOMPLETE (missing-punch) days are pulled OUT of the OT-poolable requirement (like absent
+  // days), so OT / other days' surplus can NEVER cover a missing-punch shortfall (that shortfall
+  // is FIRM — added below and only ever resolved by an approved correction). Their genuine
+  // SURPLUS (worked beyond required) still flows into totalWorkedHours, so an employee who worked
+  // a long/OT day with a missing punch is not broken — their extra hours still cover other days.
+  const finalRequiredHours = Math.max(0, round2(baseRequiredHours - num(approvedLeaveHours) - num(approvedAdjustmentHours) - num(absentDays) * fd - num(incompleteDays) * fd));
+  const totalWorkedHours = round2(num(presentWorkedHours) + num(halfWorkedHours) + num(incompleteSurplusHours));
   const monthlyDifference = round2(totalWorkedHours - finalRequiredHours);
-  const shortageHours = monthlyDifference < 0 ? round2(-monthlyDifference) : 0;
-  return { baseRequiredHours, approvedLeaveHours: round2(approvedLeaveHours), approvedAdjustmentHours: round2(approvedAdjustmentHours), finalRequiredHours, totalWorkedHours, monthlyDifference, shortageHours };
+  // Pool shortage = complete-day shortfall after OT/surplus. Firm incomplete shortage is added
+  // on top and is never reducible by OT. Total = the employee-explainable LOP hours.
+  const poolShortageHours = monthlyDifference < 0 ? round2(-monthlyDifference) : 0;
+  const shortageHours = round2(poolShortageHours + num(incompleteFirmShortageHours));
+  return { baseRequiredHours, approvedLeaveHours: round2(approvedLeaveHours), approvedAdjustmentHours: round2(approvedAdjustmentHours), finalRequiredHours, totalWorkedHours, monthlyDifference, poolShortageHours, incompleteFirmShortageHours: round2(incompleteFirmShortageHours), shortageHours };
 }
 
 /** First-ever attendance date (min hr_date) — clamps the month so days before an
@@ -159,6 +167,9 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
   const fd = fullDayExpected();   // 9 (configurable via Company Settings)
   let workingDays = 0, presentDays = 0, presentWorkedHours = 0, halfDays = 0, halfWorkedHours = 0;
   let absentDays = 0, approvedLeaveDays = 0, approvedLeaveHours = 0, approvedAdjustmentHours = 0, adjustedDays = 0;
+  // Missing-punch (incomplete) days: tracked SEPARATELY from the OT pool. Confirmed hours cover
+  // only their own required (firm shortfall never OT-covered); surplus stays poolable.
+  let incompleteDays = 0, incompleteConfirmedHours = 0, incompleteFirmShortageHours = 0, incompleteSurplusHours = 0;
   let approvedHourAdjustmentHours = 0, approvedEarlyLogoutHours = 0;   // breakdown of the reduction (display)
   const end = new Date(`${capTo}T00:00:00Z`);
   for (let d = new Date(`${effFrom}T00:00:00Z`); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
@@ -195,6 +206,22 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
       // (already 0 required) or absent (separate LOP).
       const cur = adjMap.get(ds) || { adj: 0, el: 0 };
       const combined = Math.min(round2(cur.adj + cur.el), fd);   // total reduction for the day, capped
+      const requiredForDay = Math.max(0, round2(fd - combined));  // this day's required hours after any approved reduction
+
+      // MISSING-PUNCH (incomplete) day — handled OUTSIDE the OT pool. Its confirmed hours offset
+      // only its OWN required; any unmet hours are a FIRM shortage (never covered by OT until an
+      // Attendance Correction is approved, which makes the punches even → a normal day). Any
+      // surplus (worked beyond required) is genuine OT and still helps the pool.
+      if (worked.status === 'incomplete') {
+        const confirmed = num(worked.effectiveHours);
+        incompleteDays++;
+        halfDays++;   // DISPLAY day-count unchanged (incomplete still shows as a 0.5 present day, like before)
+        incompleteConfirmedHours = round2(incompleteConfirmedHours + confirmed);
+        incompleteFirmShortageHours = round2(incompleteFirmShortageHours + Math.max(0, round2(requiredForDay - confirmed)));
+        incompleteSurplusHours = round2(incompleteSurplusHours + Math.max(0, round2(confirmed - requiredForDay)));
+        continue;   // never enters the poolable required/worked totals
+      }
+
       if (combined > 0) {
         approvedAdjustmentHours = round2(approvedAdjustmentHours + combined);   // feeds Final Required
         approvedHourAdjustmentHours = round2(approvedHourAdjustmentHours + cur.adj);
@@ -202,18 +229,21 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
         adjustedDays++;
       }
       if (worked.status === 'present') { presentDays++; presentWorkedHours += num(worked.effectiveHours); }
-      else { halfDays++; halfWorkedHours += num(worked.effectiveHours); }   // half_day or past in_progress
+      else { halfDays++; halfWorkedHours += num(worked.effectiveHours); }   // half_day
     } else {
       absentDays++;   // scheduled working day, no punch, no approved leave → day-based LOP (separate)
     }
   }
 
-  const summary = computeMonthlySummary({ workingDays, approvedLeaveHours, approvedAdjustmentHours, absentDays, presentWorkedHours, halfWorkedHours, fullDayExpected: fd });
+  const summary = computeMonthlySummary({ workingDays, approvedLeaveHours, approvedAdjustmentHours, absentDays, presentWorkedHours, halfWorkedHours, incompleteDays, incompleteSurplusHours, incompleteFirmShortageHours, fullDayExpected: fd });
   return {
     year: y, month: m,
     workingDays,
     presentDays, presentWorkedHours: round2(presentWorkedHours),
     halfDays, halfWorkedHours: round2(halfWorkedHours),
+    // Missing-punch days: confirmed hours + FIRM shortfall (not OT-covered) + poolable surplus.
+    incompleteDays, incompleteConfirmedHours: round2(incompleteConfirmedHours),
+    incompleteSurplusHours: round2(incompleteSurplusHours),
     absentDays, approvedLeaveDays, adjustedDays,
     approvedHourAdjustmentHours: round2(approvedHourAdjustmentHours),
     approvedEarlyLogoutHours: round2(approvedEarlyLogoutHours),

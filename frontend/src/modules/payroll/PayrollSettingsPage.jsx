@@ -62,6 +62,7 @@ const SECTIONS = [
     fields: [
       { name: 'hr_workinghoursperday', label: 'Working Hours / Day', type: 'number', step: '0.5' },
       { name: 'hr_otmultiplier', label: 'Overtime Multiplier (× hourly)', type: 'number', step: '0.25' },
+      { name: 'hr_calculateotpay', label: 'Calculate OT Pay', toggle: true, hint: 'Off = track OT hours only (OT pay ₹0); shortage adjustment still uses OT' },
       { name: 'hr_weeklyoff', label: 'Weekly Off', hint: 'Comma-separated, e.g. Sunday' },
       { name: 'hr_lopbasis', label: 'LOP Basis (Per-Day Salary)', select: [
         ['salary_working_days', 'Gross ÷ Salary Working Days'],

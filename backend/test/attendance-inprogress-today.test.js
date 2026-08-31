@@ -87,12 +87,12 @@ test('Test 7 — YESTERDAY missing OUT (lone IN) → FINALIZED, NEVER in_progres
   });
 });
 
-test('YESTERDAY open 2nd session (IN,OUT,IN) → finalized by completed hours, NOT in_progress', () => {
+test('YESTERDAY open 2nd session (IN,OUT,IN) → INCOMPLETE (missing final OUT), NOT in_progress', () => {
   withToday(() => {
-    const c = computeSession(['09:00', '14:00', '15:00'], GEN, { date: YDAY });   // session1 = 5h; open 3rd
+    const c = computeSession(['09:00', '14:00', '15:00'], GEN, { date: YDAY });   // session1 = 5h; open 3rd (missing OUT)
     assert.notEqual(c.status, 'in_progress');
-    assert.equal(c.effectiveHours, 5);
-    assert.equal(c.status, 'half_day');             // 5h < 7h → Half Day
+    assert.equal(c.effectiveHours, 5);              // confirmed completed-pair hours
+    assert.equal(c.status, 'incomplete');           // odd/missing final punch → Incomplete, not Half Day
   });
 });
 

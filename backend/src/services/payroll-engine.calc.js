@@ -46,10 +46,16 @@ function computePayrollEngine({ earnings = {}, settings = {}, overrides = {}, at
   const overtimeHours = nn(attendance.overtimeHours);
 
   // Overtime pay = hours × hourly rate × OT multiplier (all from settings).
+  // "Calculate OT Pay" = No (settings.calculateOtPay === false) → OT is NOT paid: OT pay is
+  // forced to 0. OT HOURS are unaffected (tracked in attendance) and still cover an attendance
+  // shortage via the monthly hour balance — only the monetary OT amount is suppressed here.
+  // Undefined/true keeps the existing behaviour (OT paid), so existing callers are unchanged.
   const workingHours = nn(settings.workingHoursPerDay) || 8;
   const otMultiplier = Number(settings.overtimeMultiplier) || 0;
   const perDayForOt = salaryWorkingDays > 0 ? baseGross / salaryWorkingDays : 0;
-  const overtimePay = round(overtimeHours * (perDayForOt / workingHours) * otMultiplier);
+  const overtimePay = settings.calculateOtPay === false
+    ? 0
+    : round(overtimeHours * (perDayForOt / workingHours) * otMultiplier);
 
   const gross = round(baseGross + overtimePay);
 
