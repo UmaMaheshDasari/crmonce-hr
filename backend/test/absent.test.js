@@ -35,12 +35,12 @@ test('Web Check-in only → in_progress (Missing Check Out), NOT Absent', () => 
   assert.strictEqual(summarizeEmployee([{ ...c, date: '2026-07-06' }], { working: 1 }).absent, 0);
 });
 
-test('Web Check-out only (OUT first) → half_day (Missing Check In), NOT Absent', () => {
+test('Web Check-out only (OUT first) → incomplete (Missing Check In), NOT Absent', () => {
   const c = computeSession([{ t: '18:00', d: 'out' }]);
-  assert.strictEqual(c.status, 'half_day');
+  assert.strictEqual(c.status, 'incomplete');       // lone punch, 0 effective → Incomplete, not Half Day
   assert.strictEqual(c.attendanceIssue, 'Missing Check In');
   const s = summarizeEmployee([{ ...c, date: '2026-07-06' }], { working: 1 });
-  assert.strictEqual(s.attended, 1);
+  assert.strictEqual(s.attended, 1);                // still attended (a punch exists) → NOT Absent
   assert.strictEqual(s.absent, 0);
 });
 

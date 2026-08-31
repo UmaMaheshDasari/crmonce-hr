@@ -81,8 +81,8 @@ test('Test 6 — YESTERDAY multi-session 8h → present (NOT in_progress)', () =
 test('Test 7 — YESTERDAY missing OUT (lone IN) → FINALIZED, NEVER in_progress', () => {
   withToday(() => {
     const c = computeSession(['09:00'], GEN, { date: YDAY });
-    assert.notEqual(c.status, 'in_progress');       // the whole point of this change
-    assert.equal(c.status, 'half_day');             // 0 effective → below full; finalized
+    assert.notEqual(c.status, 'in_progress');       // still not the live state
+    assert.equal(c.status, 'incomplete');           // missing OUT + 0 effective → Incomplete, NOT Half Day
     assert.equal(c.attendanceIssue, 'Missing Check Out');   // missing punch surfaced separately
   });
 });

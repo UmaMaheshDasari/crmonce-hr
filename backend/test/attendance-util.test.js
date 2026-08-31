@@ -233,10 +233,10 @@ test('IN + OUT → Normal issue, never Absent', () => {
   assert.notStrictEqual(c.status, 'absent');
 });
 
-test('device OUT-first single punch → Missing Check In, half_day', () => {
+test('device OUT-first single punch → Missing Check In, incomplete', () => {
   const c = computeSession([{ t: '18:00', d: 'out' }]);
-  assert.strictEqual(c.status, 'half_day');
-  assert.notStrictEqual(c.status, 'incomplete');
+  assert.strictEqual(c.status, 'incomplete');       // lone punch, 0 effective → Incomplete, not Half Day
+  assert.notStrictEqual(c.status, 'half_day');
   assert.strictEqual(c.attendanceIssue, 'Missing Check In');
 });
 

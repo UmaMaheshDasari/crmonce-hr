@@ -40,11 +40,11 @@ test('2026-08-01 → NEW calculation (half_day, no incomplete, expected 5h)', ()
   assert.equal(c.status, 'half_day');      // 6h < 7 → Half Day under the NEW rule
   assert.equal(c.expectedHours, 5);
   assert.equal(c.dailyBalanceHours, 1);    // 6 − 5
-  // A PREVIOUS date with an open/missing-OUT punch is FINALIZED (never IN PROGRESS) —
-  // classified by its actual worked hours. A lone IN (0 effective) → Half Day, with the
+  // A PREVIOUS date with an open/missing-OUT punch is FINALIZED (never IN PROGRESS). A lone IN
+  // with 0 effective hours has no completed work session → INCOMPLETE (not Half Day), with the
   // missing punch surfaced separately. IN PROGRESS is today-only.
   const odd = computeSession(['09:00'], 'GENERAL', { date: '2026-08-01' });
-  assert.equal(odd.status, 'half_day');
+  assert.equal(odd.status, 'incomplete');
   assert.notEqual(odd.status, 'in_progress');
   assert.equal(odd.attendanceIssue, 'Missing Check Out');
 });

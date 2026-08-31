@@ -50,20 +50,27 @@ function punchesFromRecord(record) {
  * DAILY worked-hours classification (fixed rules). The employee shift still governs
  * late/early/overtime; these thresholds are worked-hour rules, not office timings.
  *   0 punches                         → 'absent'
- *   OPEN session (last punch is IN)   → 'in_progress'  (day NOT finalized — the
- *                                        employee is still working; a first check-in
- *                                        must NEVER become Half Day)
+ *   TODAY's OPEN session (last=IN)    → 'in_progress'  (live; a first check-in must
+ *                                        NEVER become Half Day)
+ *   ODD/missing punch + 0 effective   → 'incomplete'  (a check-in with no matching
+ *                                        check-out has no measurable worked time — it
+ *                                        is a data-quality Incomplete, never Half Day;
+ *                                        it still feeds LOP via the hours-based rules)
  *   effective >= fullDayMinHours (7)  → 'present'  (Full Day)
- *   otherwise (closed, < full)        → 'half_day' (Half Day for 5–7h; below 5h uses
- *                                        the same below-half handling — never Absent
- *                                        when a punch exists)
- * Present/Half are decided ONLY once the session is closed (an OUT punch exists) —
- * i.e. once the day's worked hours are actually known. 'incomplete' is not produced
- * here; a missing/odd punch is a data-quality flag carried by `attendanceIssue`.
+ *   otherwise (closed, < full)        → 'half_day' (Half Day for a completed session
+ *                                        under a full day — never Absent when a punch exists)
+ * Present/Half are decided ONLY on a COMPLETED session with real worked hours. A missing
+ * punch is also surfaced separately via `attendanceIssue` (Missing Check In/Out).
  */
-function classifyStatus(effectiveHours, punchCount, { fullDayMinHours = 7, openSession = false } = {}) {
+function classifyStatus(effectiveHours, punchCount, { fullDayMinHours = 7, openSession = false, oddPunch = false } = {}) {
   if (!punchCount) return 'absent';
-  if (openSession) return 'in_progress';   // open IN session → not yet finalized
+  if (openSession) return 'in_progress';   // TODAY's open IN session → live, not yet finalized
+  // A finalized day with an ODD / missing punch that produced NO completed work session
+  // (effective hours = 0) is INCOMPLETE, never Half Day: with a check-in but no matching
+  // check-out there is no measurable worked time, so it cannot be a valid half day. A day
+  // that DID complete real hours (e.g. in→out→in = 8h, still odd) keeps its hour-based
+  // status below, so genuine Present/Half days are never reclassified.
+  if (oddPunch && effectiveHours <= 0) return 'incomplete';
   if (effectiveHours >= fullDayMinHours) return 'present';
   return 'half_day';
 }
@@ -229,7 +236,7 @@ function computeSession(rawPunches, shiftInput, opts = {}) {
   const isToday = !dateStr || dateStr === time.istDateStr();
   const openSession = state === 'in' && isToday;
   const status = useNewRules
-    ? classifyStatus(effectiveHours, count, { fullDayMinHours, openSession })
+    ? classifyStatus(effectiveHours, count, { fullDayMinHours, openSession, oddPunch: isOdd })
     : classifyStatusLegacy(effectiveHours, count, legacyHalfThreshold);
 
   // Expected hours + daily balance — monthly-calculation preparation. COMPUTED only
