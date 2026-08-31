@@ -790,7 +790,7 @@ router.get('/hr/overview', requireAnyPermission('attendance.export'), async (req
 // ── Excel export: Employee Attendance Summary (default) + Daily detail ───────
 const { rangeCounts, summarizeEmployee, effectiveWorking, approvedLeaveWorkingDays, approvedLeaveDaysWeighted, absentDatesFor, gracePassedToday, expandLeaveDays } = require('../../services/attendance-summary.util');
 const { resolveDays } = require('../../services/leave-summary.util');   // blank hr_days → from→to span
-const { buildAttendanceRow } = require('../../services/payroll-recon.util');
+const { buildAttendanceRow, buildLopReconRow, pendingLopDayCount } = require('../../services/payroll-recon.util');
 const companyPolicy = require('../../services/company.policy');
 
 /** Run async `fn` over `items` with at most `limit` in flight (bounds per-employee I/O). */
@@ -1145,14 +1145,18 @@ router.get('/absentees', requireAnyPermission('attendance.view'), async (req, re
   } catch (err) { next(err); }
 });
 
-// GET /api/attendance/export — .xlsx with THREE sheets:
+// GET /api/attendance/export — .xlsx with FOUR sheets:
 //   1) Employee Attendance Summary — per-employee summary (original code, restored)
 //   2) Daily Attendance            — daily rows (original code, restored)
 //   3) Monthly Attendance Report — one row/employee, ATTENDANCE ONLY (no monetary
 //      values): Employee ID | Employee Name | Calendar Days | Working Days | Present
 //      Days | Approved Leave Days | Absent Days | Half Days | Incomplete Days | In
 //      Progress Days | Salary Working Days | Effective Hours | LOP Hours | Shortage
-//      Hours | OT Hours. CRMONCE ADMIN and UmaMahesh are excluded from sheet 3 only.
+//      Hours | OT Hours. CRMONCE ADMIN and UmaMahesh are excluded from sheets 3 & 4.
+//   4) Attendance & LOP Reconciliation — like sheet 3 but a stricter LOP model: adds a
+//      Pending Leave Days column and a Required Hours column, treats PENDING leave as LOP
+//      (approved leave stays paid), and derives Salary Working Days = Working − LOP/req
+//      (not hardcoded to Working). Sheet 3 is left unchanged.
 // Reuses buildRangeSummary (no change to attendance/leave calculation).
 router.get('/export', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
@@ -1333,6 +1337,80 @@ router.get('/export', requireAnyPermission('attendance.view'), async (req, res, 
     ws.getRow(2).height = 30;
     ws.views = [{ state: 'frozen', ySplit: 2 }];                      // freeze title + header
     ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: lastCol } };
+
+    // ── Sheet 4: Attendance & LOP Reconciliation ─────────────────────────────
+    // A stricter LOP view (Sheet 3 is untouched). Attendance counts come from the same
+    // authoritative buildRangeSummary. The difference from Sheet 3 is the LOP model:
+    //   • APPROVED leave — paid, salary-protected: 0 LOP, keeps full Salary-Working-Day credit.
+    //   • PENDING leave  — NOT paid: EVERY pending-leave working day in the month with no
+    //     punch (TODAY INCLUDED) contributes its required hours to LOP, until it is approved.
+    //   • GENUINE ABSENT — no punch, no approved/pending leave: contributes required hours to LOP.
+    //   • SHORTAGE       — attended-day working-hour shortfall (buildMonthlyBalance): contributes to LOP.
+    // LOP Hours = absent×req + pending×req + shortage (disjoint → no double count). Salary
+    // Working Days = Working − LOP Hours / required (paid-day basis, never hardcoded to Working).
+    // Pending leave is unpaid → LOP for EVERY pending-leave working day in the selected
+    // month (TODAY INCLUDED — a pending request stays LOP until it is approved), UNLESS an
+    // attendance record exists on that date (punch precedence: a present/incomplete/
+    // in-progress record wins, so the day is never double-counted and an in-progress day
+    // itself creates no pending-LOP). leaveMap is already bounded to [from, to] and to
+    // working days by expandLeaveDays (approved wins over pending per date).
+    const pendingLopDays = (p) => pendingLopDayCount(p.leaveMap, (d) => p.recordSet.has(d));
+
+    const ws4 = wb.addWorksheet('Attendance & LOP Reconciliation');
+    ws4.columns = [
+      { header: 'Employee ID', key: 'id', width: 14 },
+      { header: 'Employee Name', key: 'name', width: 26 },
+      { header: 'Calendar Days', key: 'cal', width: 13 },
+      { header: 'Working Days', key: 'wd', width: 12 },
+      { header: 'Present Days', key: 'present', width: 12 },
+      { header: 'Approved Leave Days', key: 'aleave', width: 18 },
+      { header: 'Pending Leave Days', key: 'pleave', width: 18 },
+      { header: 'Absent Days', key: 'absent', width: 11 },
+      { header: 'Half Days', key: 'half', width: 10 },
+      { header: 'Incomplete Days', key: 'incomplete', width: 15 },
+      { header: 'In Progress Days', key: 'inprogress', width: 15 },
+      { header: 'Salary Working Days', key: 'salary', width: 18 },
+      { header: 'Effective Hours', key: 'eff', width: 14 },
+      { header: 'Required Hours', key: 'req', width: 13 },
+      { header: 'Shortage Hours', key: 'shorthrs', width: 14 },
+      { header: 'LOP Hours', key: 'lophrs', width: 11 },
+      { header: 'OT Hours', key: 'othrs', width: 10 },
+    ];
+    for (const p of summaryRows) {
+      const e = p.emp;
+      const row = buildLopReconRow({
+        employeeId: e.hr_etimecode || e.hr_hremployeeid || '',
+        employeeName: e.hr_hremployee1 || 'Employee',
+        rc, summary: p.summary,
+        approvedLeaveDays: p.approvedLeaveDays,
+        pendingLeaveDays: pendingLopDays(p),
+        shortageHours: shortageByEmp.get(e.hr_hremployeeid) || 0,
+        fullDayHours,
+      });
+      ws4.addRow({
+        id: row.employeeId, name: row.employeeName,
+        cal: row.calendarDays, wd: row.workingDays, present: row.presentDays,
+        aleave: row.approvedLeaveDays, pleave: row.pendingLeaveDays, absent: row.absentDays,
+        half: row.halfDays, incomplete: row.incompleteDays, inprogress: row.inProgressDays,
+        salary: row.salaryWorkingDays, eff: fmtDur(row.effectiveHours), req: fmtDur(row.requiredHours),
+        shorthrs: fmtDur(row.shortageHours), lophrs: fmtDur(row.lopHours), othrs: fmtDur(row.otHours),
+      });
+    }
+    ['cal', 'wd', 'present', 'aleave', 'pleave', 'absent', 'half', 'incomplete', 'inprogress', 'salary', 'eff', 'req', 'shorthrs', 'lophrs', 'othrs'].forEach(k => { ws4.getColumn(k).alignment = { horizontal: 'center' }; });
+    const lastCol4 = ws4.columnCount;
+    ws4.spliceRows(1, 0, [`Attendance & LOP Reconciliation — ${monthLabel}`]);
+    ws4.mergeCells(1, 1, 1, lastCol4);
+    ws4.getCell(1, 1).font = { bold: true, size: 13, color: { argb: 'FF1F4E79' } };
+    ws4.getCell(1, 1).alignment = { horizontal: 'left', vertical: 'middle' };
+    ws4.getRow(1).height = 22;
+    ws4.getRow(2).eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.alignment = { ...(cell.alignment || {}), horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4D6' } };
+    });
+    ws4.getRow(2).height = 30;
+    ws4.views = [{ state: 'frozen', ySplit: 2 }];
+    ws4.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: lastCol4 } };
 
     wb.views = [{ activeTab: 0 }];   // open on Employee Attendance Summary
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
