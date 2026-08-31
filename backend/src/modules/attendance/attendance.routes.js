@@ -895,23 +895,22 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   const perEmployee = scope.map(e => {
     const recordSet = recordDatesByEmp[e.hr_hremployeeid] || new Set();
     const leaveMap = leaveInfoByEmp.get(e.hr_hremployeeid) || new Map();   // date → {type,status}
-    // Only APPROVED leave suppresses Absence (paid, no punch required). PENDING/rejected/
-    // cancelled do NOT — a no-punch day stays Absent — matching the payroll rule
-    // (buildMonthlyBalance) and /summary/monthly. leaveMap still carries pending for the
-    // on-page leave overlay/display; only the ABSENT test uses the approved-only set.
-    const approvedLeaveSet = new Set();
+    // ACTUAL Absent excludes BOTH approved AND pending leave: a pending-leave day is NOT an
+    // actual Absent — it has its own "Leave Pending" status/count. (Rejected/cancelled are never
+    // fetched, so those days stay Absent.) The optional "Include Pending Leave" toggle only adds
+    // pending rows to the Absent DETAIL view — it never changes this Absent count.
+    const leaveSet = new Set(leaveMap.keys());                             // approved+pending → NEVER actual Absent
     let approvedDays = 0, pendingDays = 0;
-    for (const [d, info] of leaveMap) { if (info.status === 'approved') { approvedDays++; approvedLeaveSet.add(d); } else if (info.status === 'pending') pendingDays++; }
+    for (const info of leaveMap.values()) { if (info.status === 'approved') approvedDays++; else if (info.status === 'pending') pendingDays++; }
     // Prefer the true first-ever date; fall back to the earliest in-range punch so
     // an unavailable aggregate never forces working days (and thus Absent) to 0.
     const firstDate = firstMap.get(e.hr_hremployeeid) || firstInRange[e.hr_hremployeeid] || null;
     const working = effectiveWorking(from, capTo, firstDate);
     const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays: approvedDays });
-    // Absent = ENUMERATED working dates with no record and no APPROVED leave. Pending leave
-    // does NOT suppress Absence (matches payroll). Today counts only once this employee's own
-    // shift-start + grace has passed (spec §7/§8).
+    // Absent = ENUMERATED working dates with no record and no approved/pending leave. Today
+    // counts only once this employee's own shift-start + grace has passed (spec §7/§8).
     const todayPending = todayInRange && !gracePassedToday(shiftOf(e), graceMin, nowMin);
-    summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => approvedLeaveSet.has(ds), { today, todayPending }).length;
+    summary.absent = absentDatesFor(from, capTo, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds), { today, todayPending }).length;
     // Approved leave working-day equivalent for the FULL selected month (half-day aware,
     // weekend/holiday-excluded, overlap-deduped, month-clipped). Drives Salary Working Days.
     const approvedLeaveDays = approvedLeaveDaysWeighted(approvedLeavesByEmp[e.hr_hremployeeid] || [], from, to);
@@ -1065,17 +1064,24 @@ router.get('/absentees', requireAnyPermission('attendance.view'), async (req, re
     if (department) scope = scope.filter(e => e.hr_department === department);
     if (designation) scope = scope.filter(e => e.hr_designation === designation);
 
-    // Approved + Pending leave (employee|date) set — a pending leave is HELD (never Absent),
-    // exactly like payroll; rejected/cancelled stay Absent. Matches /stats' Absent exclusion.
+    // Approved + Pending leave (employee|date). BOTH suppress ACTUAL Absent (a pending-leave day
+    // is never an actual Absent — same as /stats); rejected/cancelled stay Absent. `pendingLeave`
+    // is tracked separately to power the OPTIONAL "Include Pending Leave" view.
+    const includePending = /^(1|true|yes)$/i.test(String(req.query.includePending || ''));
     const { data: leaves } = await d365.getList(d365.constructor.entities.leave, {
-      select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status',
+      select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_status,hr_leavetype',
       filter: `(hr_status eq ${toValue('hr_leave_status', 'approved')} or hr_status eq ${toValue('hr_leave_status', 'pending')})`,
     });
     const onLeave = new Set();
+    const pendingLeaveType = new Map();   // employee|date → leave type (pending only), for the optional rows
     (leaves || []).forEach(l => {
       const lf = String(l.hr_fromdate || '').slice(0, 10);
       const lt = String(l.hr_todate || '').slice(0, 10) || lf;
-      for (const ds of workDates) if (ds >= lf && ds <= lt) onLeave.add(`${l._hr_hremployee_value}|${ds}`);
+      const isPending = toLabel('hr_leave_status', l.hr_status) === 'pending';
+      for (const ds of workDates) if (ds >= lf && ds <= lt) {
+        onLeave.add(`${l._hr_hremployee_value}|${ds}`);
+        if (isPending) pendingLeaveType.set(`${l._hr_hremployee_value}|${ds}`, toLabel('hr_leave_type', l.hr_leavetype));
+      }
     });
 
     // Clamp each employee's absent days to start at their FIRST attendance date —
@@ -1108,6 +1114,20 @@ router.get('/absentees', requireAnyPermission('attendance.view'), async (req, re
         if (rows.length >= CAP) break;
       }
       if (rows.length >= CAP) break;
+    }
+    // OPTIONAL: add PENDING-leave rows to the Absent view (HR toggle). These are NOT Absent —
+    // they carry status 'leave_pending' so the UI labels them distinctly. Same scope + date range;
+    // only pending-leave working dates with NO attendance record (a punched day shows its record).
+    if (includePending && rows.length < CAP) {
+      for (const e of scope) {
+        for (const ds of workDates) {
+          const key = `${e.hr_hremployeeid}|${ds}`;
+          if (!pendingLeaveType.has(key) || active.has(key)) continue;   // pending + no record only
+          rows.push({ employee: e.hr_hremployee1 || 'Employee', department: e.hr_department || '', designation: e.hr_designation || '', date: ds, status: 'leave_pending', leaveType: pendingLeaveType.get(key) || '' });
+          if (rows.length >= CAP) break;
+        }
+        if (rows.length >= CAP) break;
+      }
     }
     rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.employee.localeCompare(b.employee)));
     res.json({ data: rows, count: rows.length });

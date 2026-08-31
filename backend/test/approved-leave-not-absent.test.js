@@ -18,13 +18,14 @@ const { expandLeaveDays, absentDatesFor } = require('../src/services/attendance-
 const FROM = '2026-08-01', TO = '2026-08-31', TODAY = '2026-08-31';
 const OPTS = { weekOffDays: [], holidays: [] };   // every date is a working day (isolates the leave rule)
 
-// Replicates the FIX: approved-only leave dates suppress absence; the rest do not.
+// Replicates buildRangeSummary: ACTUAL Absent excludes BOTH approved AND pending leave (a
+// pending-leave day is not an actual Absent — it has its own Leave Pending count). Rejected/
+// cancelled are never in the map → those days stay Absent.
 function absentDates({ records = [], leaves = [], firstDate = FROM }) {
   const recordSet = new Set(records);
   const map = expandLeaveDays(leaves.map(l => ({ employeeId: 'E', fromDate: l.from, toDate: l.to || l.from, status: l.status })), FROM, TO, OPTS).get('E') || new Map();
-  const approved = new Set();
-  for (const [d, info] of map) if (info.status === 'approved') approved.add(d);
-  return absentDatesFor(FROM, TO, firstDate, ds => recordSet.has(ds), ds => approved.has(ds), { ...OPTS, today: TODAY, todayPending: false });
+  const leaveSet = new Set(map.keys());   // approved + pending → never actual Absent
+  return absentDatesFor(FROM, TO, firstDate, ds => recordSet.has(ds), ds => leaveSet.has(ds), { ...OPTS, today: TODAY, todayPending: false });
 }
 
 test('1 — approved full-day leave + no punch → NOT Absent', () => {
@@ -32,9 +33,9 @@ test('1 — approved full-day leave + no punch → NOT Absent', () => {
   assert.ok(!a.includes('2026-08-10'), 'approved-leave day is not Absent');
 });
 
-test('2 — pending leave + no punch → Absent (does not suppress absence)', () => {
+test('2 — pending leave + no punch → NOT an actual Absent (own Leave Pending status)', () => {
   const a = absentDates({ records: [], leaves: [{ from: '2026-08-10', status: 'pending' }], firstDate: '2026-08-10' });
-  assert.ok(a.includes('2026-08-10'), 'pending leave day stays Absent');
+  assert.ok(!a.includes('2026-08-10'), 'pending leave day is not counted as actual Absent');
 });
 
 test('3 — rejected leave + no punch → Absent', () => {
@@ -79,10 +80,10 @@ test('10 — multiple employees / dates: each employee\'s approved leave is appl
   const aA = absentDates({ records: [], leaves: [{ from: '2026-08-05', status: 'approved' }], firstDate: '2026-08-05' })
     .filter(d => d === '2026-08-05' || d === '2026-08-06');
   assert.deepEqual(aA, ['2026-08-06'], 'A: 05 excused (approved), 06 absent');
-  // Emp B: pending 08-05 → absent.
+  // Emp B: pending 08-05 → NOT actual absent (its own Leave Pending status).
   const aB = absentDates({ records: [], leaves: [{ from: '2026-08-05', status: 'pending' }], firstDate: '2026-08-05' })
     .filter(d => d === '2026-08-05');
-  assert.deepEqual(aB, ['2026-08-05'], 'B: pending 05 stays absent');
+  assert.deepEqual(aB, [], 'B: pending 05 is not actual absent');
 });
 
 test('the real Uma Alapaka case — approved leave on a no-punch day is excused (Absent 0, not 1)', () => {

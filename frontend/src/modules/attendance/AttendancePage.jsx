@@ -89,6 +89,7 @@ export default function AttendancePage() {
   const [department, setDepartment] = useState('');   // HR filter
   const [late, setLate] = useState(false);            // HR filter — late arrivals
   const [missingPunch, setMissingPunch] = useState(false);   // HR filter — odd/open punches
+  const [includePending, setIncludePending] = useState(false);   // Absent view: optionally show Pending Leave rows too
   const [view, setView] = useState('');       // computed filter for export (late/early/overtime/…)
   const [exporting, setExporting] = useState(false);
   const [editRec, setEditRec] = useState(null);       // HR: attendance record being edited
@@ -121,9 +122,11 @@ export default function AttendancePage() {
   // them both in the "All" view (appended) and when the Absent filter is active.
   const isAbsentView = status === 'absent';
   const includeAbsentees = status === '' || isAbsentView;   // All view or Absent-only
+  // Only the Absent-only view honours the optional Pending Leave rows (not the "All" view).
+  const withPending = isAbsentView && includePending;
   const { data: absentData, isLoading: absentLoading } = useQuery({
-    queryKey: ['attendance-absentees', empId, from, to],
-    queryFn: () => attendanceApi.absentees({ employeeId: empId, from, to }),
+    queryKey: ['attendance-absentees', empId, from, to, department, withPending],
+    queryFn: () => attendanceApi.absentees({ employeeId: empId, from, to, department: department || undefined, includePending: withPending || undefined }),
     enabled: includeAbsentees,
     placeholderData: (prev) => prev,
   });
@@ -290,24 +293,31 @@ export default function AttendancePage() {
 
   const toggleCard = (val) => { setStatus(status === val ? '' : val); setPage(1); };
 
-  // Absent rows are synthesized (no attendance record exists for an absent day).
-  const renderAbsentRow = (a, key) => (
-    <tr key={key} className="hover:bg-red-50/30 transition-colors duration-150">
-      {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{a.employee}</span></td>}
-      <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd-MM-yyyy') : '—'}</td>
-      <td className="px-5 py-4 text-sm text-gray-300">—</td>
-      <td className="px-5 py-4 text-sm text-gray-300">—</td>
-      <td className="px-5 py-4 text-sm text-gray-300">—</td>
-      <td className="px-5 py-4 text-sm text-gray-300">—</td>
-      <td className="px-5 py-4 text-sm text-gray-300">—</td>
-      <td className="px-5 py-4 text-sm text-gray-300">—</td>
-      <td className="px-5 py-4">
-        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-700">
-          <span className="w-2 h-2 rounded-full bg-red-500" /> Absent
-        </span>
-      </td>
-    </tr>
-  );
+  // Absent rows are synthesized (no attendance record exists for an absent day). A row may also
+  // be an OPTIONAL Pending-Leave row (status 'leave_pending') — labelled distinctly, NEVER "Absent".
+  const renderAbsentRow = (a, key) => {
+    const pending = a.status === 'leave_pending';
+    return (
+      <tr key={key} className={`transition-colors duration-150 ${pending ? 'hover:bg-sky-50/30' : 'hover:bg-red-50/30'}`}>
+        {isHR() && <td className="px-5 py-4"><span className="text-sm font-semibold text-gray-900">{a.employee}</span></td>}
+        <td className="px-5 py-4 text-sm text-gray-700 font-medium">{a.date ? format(new Date(a.date), 'dd-MM-yyyy') : '—'}</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4 text-sm text-gray-300">—</td>
+        <td className="px-5 py-4">
+          <div className="flex flex-col gap-0.5">
+            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${pending ? 'text-sky-700' : 'text-red-700'}`}>
+              <span className={`w-2 h-2 rounded-full ${pending ? 'bg-sky-500' : 'bg-red-500'}`} /> {pending ? 'Leave Pending' : 'Absent'}
+            </span>
+            {pending && a.leaveType && <span className="text-[11px] font-semibold text-gray-500 pl-3.5">{a.leaveType}</span>}
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   // A leave date with no punch — shown as Approved/Pending Leave + the leave type,
   // NEVER as Absent/LOP (pending) or hidden (approved). Same rule as payroll.
@@ -543,6 +553,11 @@ export default function AttendancePage() {
               <label className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer">
                 <input type="checkbox" checked={status === 'absent'} onChange={e => { setStatus(e.target.checked ? 'absent' : ''); setPage(1); }} /> LOP / Absent
               </label>
+              {status === 'absent' && (
+                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer" title="Also show Pending Leave rows in the Absent view (they are NOT counted as Absent)">
+                  <input type="checkbox" checked={includePending} onChange={e => { setIncludePending(e.target.checked); setPage(1); }} /> Include Pending Leave
+                </label>
+              )}
             </div>
           )}
           <div className="min-w-[170px]">
