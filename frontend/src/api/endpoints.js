@@ -58,7 +58,7 @@ export const attendanceApi = {
 export const attendanceRequestApi = {
   submit: (data) => api.post('/attendance-requests', data),
   list: (params) => api.get('/attendance-requests', { params }),
-  approve: (id, comment) => api.patch(`/attendance-requests/${id}/approve`, { comment }),
+  approve: (id, comment, finalAction) => api.patch(`/attendance-requests/${id}/approve`, { comment, finalAction }),   // finalAction: 'add' | 'delete'
   reject: (id, comment) => api.patch(`/attendance-requests/${id}/reject`, { comment }),
   remove: (id) => api.delete(`/attendance-requests/${id}`),   // HR/Admin: delete a PENDING request
 

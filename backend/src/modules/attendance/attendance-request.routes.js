@@ -17,7 +17,7 @@ const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue } = require('../../services/picklist');   // only hr_attendance_status (a real Choice) uses this
 const { computeSession, punchesFromRecord, earlyLogoutHours } = require('../../services/attendance.util');
-const { insertPunchTime, detectMissingPunches, PUNCH_TYPES, NON_PUNCH_TYPES } = require('../../services/missing-punch.util');
+const { insertPunchTime, deletePunchTime, detectMissingPunches, PUNCH_TYPES, NON_PUNCH_TYPES } = require('../../services/missing-punch.util');
 const attnCfg = require('../../services/attendance.config');
 const time = require('../../services/time.util');
 const activity = require('../../services/activity.service');
@@ -62,6 +62,10 @@ const view = (r) => ({
   date: String(r.hr_attendancedate || '').slice(0, 10),
   // hr_punchtype / hr_status are TEXT string codes ('lunch_out', 'pending', …).
   punchType: r.hr_punchtype, punchTypeLabel: PUNCH_TYPES[r.hr_punchtype] || r.hr_punchtype,
+  // Requested action derived from the punch type (no schema change): a 'delete_punch' type
+  // is a DELETE request; everything else is an ADD/correction. The approver's FINAL action is
+  // recorded in the activity audit (it may differ from the requested action).
+  action: r.hr_punchtype === 'delete_punch' ? 'delete' : 'add',
   requestedTime: r.hr_requestedtime, reason: r.hr_reason, remarks: r.hr_remarks,
   // Approved Hour Adjustment (only meaningful when punchType === 'hour_adjustment').
   adjustmentHours: Number(r.hr_adjustmenthours) || 0,
@@ -121,7 +125,13 @@ router.post('/setup', requireRole('super_admin'), async (req, res, next) => {
 // POST /api/attendance-requests — employee submits a Missing Punch request.
 router.post('/', requireAnyPermission('attendance.view'), async (req, res, next) => {
   try {
-    const { attendanceDate, punchType, requestedTime, reason, remarks, attachmentUrl, adjustmentHours } = req.body;
+    const { attendanceDate, requestedTime, reason, remarks, attachmentUrl, adjustmentHours, action } = req.body;
+    // ADD vs DELETE action. A DELETE request stores the special 'delete_punch' punch type and
+    // carries the punch-to-delete in requestedTime — no schema change. An ADD request keeps its
+    // correction punch type (IN/OUT/etc). Ownership is inherent: the request is always for the
+    // authenticated employee's OWN attendance (hr_employeeid = req.user.id below).
+    const punchType = action === 'delete' ? 'delete_punch' : req.body.punchType;
+    if (action && !['add', 'delete'].includes(action)) return res.status(400).json({ error: 'Action must be "add" or "delete"' });
     const dateOnly = String(attendanceDate || '').slice(0, 10);
     const isAdjustment = punchType === 'hour_adjustment';
     const isEarlyLogout = punchType === 'early_logout';
@@ -231,12 +241,18 @@ router.get('/', requireAnyPermission('attendance.view'), async (req, res, next) 
 });
 
 // Shared approve/reject. On approve: insert the punch and recalculate the day.
-async function decide(user, id, decision, comment, { enforcePending = false } = {}) {
+async function decide(user, id, decision, comment, { enforcePending = false, finalAction } = {}) {
   const reqRec = await d365.getById(REQ, id, {});
   if (enforcePending && reqRec.hr_status && reqRec.hr_status !== 'pending') {
     const e = new Error(`This request is already ${reqRec.hr_status}`); e.status = 409; throw e;
   }
   const reqDate = String(reqRec.hr_attendancedate || '').slice(0, 10);
+  // Requested action (from the punch type) and the APPROVER's final action. The approver may
+  // choose a different final action than requested (§7/§10); the frontend's Approve dialog
+  // sends `finalAction`. When none is supplied (e.g. email-button approve), fall back to the
+  // requested action so existing flows are unchanged.
+  const requestedAction = reqRec.hr_punchtype === 'delete_punch' ? 'delete' : 'add';
+  const appliedAction = (finalAction === 'add' || finalAction === 'delete') ? finalAction : requestedAction;
   // All Text columns → store string values (no option-set ints, no lookup bind).
   const patch = {
     hr_status: decision,                          // 'approved' | 'rejected' (Text)
@@ -245,18 +261,22 @@ async function decide(user, id, decision, comment, { enforcePending = false } = 
     hr_approvercomment: comment || '',
   };
 
-  // Hour Adjustment approval does NOT touch the attendance record / punches — it only
-  // grants hours that reduce that day's required working hours (read by the monthly
-  // balance). Approving it just flips the status; nothing is recomputed or inserted.
+  // Hour Adjustment / Early Logout approval does NOT touch the attendance record / punches —
+  // it only grants hours. Approving flips the status; nothing is recomputed or inserted.
   if (decision === 'approved' && !NON_PUNCH_TYPES.has(reqRec.hr_punchtype)) {
     const record = await findAttendanceRecord(reqRec.hr_employeeid, reqDate);
     if (!record) { const e = new Error('No attendance record found for that date to correct'); e.status = 404; throw e; }
     const originalTimes = punchesFromRecord(record).map(p => p.t || p);
-    const correctedTimes = insertPunchTime(originalTimes, reqRec.hr_requestedtime);
+    // ADD → insert the requested time; DELETE → remove ONLY the selected punch. Both preserve
+    // every other punch. insert/delete are idempotent-ish (no duplicate on add; no-op if the
+    // delete target is absent), then computeSession recalculates the whole day.
+    const correctedTimes = appliedAction === 'delete'
+      ? deletePunchTime(originalTimes, reqRec.hr_requestedtime)
+      : insertPunchTime(originalTimes, reqRec.hr_requestedtime);
     // Recompute under the shift that was EFFECTIVE on the attendance date (not the
     // employee's current shift) so approving a correction never re-judges a past day.
     const shift = await require('../../services/shift-history.service').resolveShiftForDate(reqRec.hr_employeeid, reqDate);
-    const c = computeSession(correctedTimes, shift, { graceMinutes: shift.grace, date: String(reqDate).slice(0, 10) });   // ← recalc under the effective shift + effective-date rule
+    const c = computeSession(correctedTimes, shift, { graceMinutes: shift.grace, date: String(reqDate).slice(0, 10) });   // ← recalc: effective hours / status / shortage / OT / LOP all flow from here
     await d365.update(ATT, record.hr_hrattendanceid, punchPayload(c));     // corrected day persisted
     patch.hr_originalpunches = JSON.stringify(originalTimes);              // audit: never lose history
     patch.hr_correctedpunches = JSON.stringify(correctedTimes);
@@ -265,9 +285,13 @@ async function decide(user, id, decision, comment, { enforcePending = false } = 
 
   const updated = await d365.update(REQ, id, patch);
 
+  // Audit records BOTH the employee's requested action and the approver's final action (§7/§14).
+  const actionNote = decision === 'approved'
+    ? `Requested: ${requestedAction} · Approved action: ${appliedAction} · @ ${reqRec.hr_requestedtime}`
+    : `Requested: ${requestedAction} · rejected`;
   activity.record({ category: 'Attendance', type: decision === 'approved' ? 'correction_approved' : 'correction_rejected',
-    title: `Missing Punch ${decision === 'approved' ? 'Approved' : 'Rejected'}`, name: reqRec.hr_employeename,
-    meta: `${PUNCH_TYPES[reqRec.hr_punchtype] || reqRec.hr_punchtype} @ ${reqRec.hr_requestedtime} on ${reqDate}` });
+    title: `Attendance Correction ${decision === 'approved' ? 'Approved' : 'Rejected'}`, name: reqRec.hr_employeename,
+    meta: `${actionNote} on ${reqDate} by ${user.name}` });
   // Decision email → the EMPLOYEE ONLY (no HR / manager CC). FROM the approver's mailbox.
   requestNotify.emailDecisionToEmployee({
     type: 'missing_punch', employeeId: reqRec.hr_employeeid, decision,
@@ -277,9 +301,11 @@ async function decide(user, id, decision, comment, { enforcePending = false } = 
   return updated;
 }
 
-// PATCH /api/attendance-requests/:id/approve  (HR / Super Admin)
+// PATCH /api/attendance-requests/:id/approve  (HR / Super Admin) — body { comment, finalAction }.
+// finalAction ('add' | 'delete') is the approver's confirmed choice from the Approve dialog and
+// decides what is applied to attendance; it may differ from the employee's requested action.
 router.patch('/:id/approve', requireAnyPermission('attendance.approve_request'), async (req, res, next) => {
-  try { const u = await decide(req.user, req.params.id, 'approved', req.body.comment); res.json({ data: view(u) }); }
+  try { const u = await decide(req.user, req.params.id, 'approved', req.body.comment, { finalAction: req.body.finalAction }); res.json({ data: view(u) }); }
   catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
 });
 

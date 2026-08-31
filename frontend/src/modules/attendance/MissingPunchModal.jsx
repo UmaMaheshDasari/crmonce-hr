@@ -33,8 +33,25 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
   // so it is never mixed with Attendance Corrections / Hour Adjustments in one tab).
   const [mode, setMode] = useState(lockKind || 'correction');   // 'correction' | 'adjustment' | 'early_logout'
   const [form, setForm] = useState({ attendanceDate: '', punchType: 'missing_check_out', requestedTime: '', adjustmentHours: '', reason: '' });
+  const [action, setAction] = useState('');   // 'add' | 'delete' — REQUIRED for a correction, no default
   const isAdjust = mode === 'adjustment';
   const isEarly = mode === 'early_logout';
+  const isCorrection = !isAdjust && !isEarly;
+  const isDelete = isCorrection && action === 'delete';
+
+  // For a DELETE-punch request, load the employee's OWN punches for the selected date so they
+  // can pick the exact punch to remove (they can never select another employee's punch).
+  const { data: dayRes } = useQuery({
+    queryKey: ['my-day-punches', form.attendanceDate],
+    queryFn: () => attendanceApi.list({ from: form.attendanceDate, to: form.attendanceDate }),
+    enabled: open && isDelete && !!form.attendanceDate,
+  });
+  const dayPunches = (() => {
+    const rows = dayRes?.data?.data || dayRes?.data || [];
+    const rec = Array.isArray(rows) ? rows[0] : null;
+    try { const p = JSON.parse(rec?.hr_allpunches || '[]'); return Array.isArray(p) ? p.map(x => (x && typeof x === 'object') ? x.t : x).filter(Boolean) : []; }
+    catch { return []; }
+  })();
 
   // Employee shift (for the live Early Logout preview). The server recomputes the
   // authoritative value date-aware; this is an estimate from the current shift.
@@ -46,6 +63,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
     if (editRecord) {
       const t = editRecord.punchType;
       setMode(t === 'hour_adjustment' ? 'adjustment' : t === 'early_logout' ? 'early_logout' : 'correction');
+      setAction(editRecord.action || (t === 'delete_punch' ? 'delete' : 'add'));
       setForm({
         attendanceDate: editRecord.date || '',
         punchType: editRecord.punchType || 'missing_check_out',
@@ -55,6 +73,7 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
       });
     } else {
       setMode(lockKind || defaultKind || 'correction');   // locked kind (own page) or default
+      setAction('');   // employee must explicitly choose Add or Delete (no default)
       setForm(f => ({
         ...f,
         attendanceDate: defaultDate || f.attendanceDate || new Date().toISOString().slice(0, 10),
@@ -71,7 +90,11 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
   const kindPunchType = isAdjust ? 'hour_adjustment' : isEarly ? 'early_logout' : form.punchType;
   const baseFields = () => isAdjust
     ? { punchType: 'hour_adjustment', adjustmentHours: Number(form.adjustmentHours), reason: form.reason }
-    : { punchType: kindPunchType, requestedTime: form.requestedTime, reason: form.reason };
+    // Correction: carry the chosen action. DELETE sends action:'delete' + the punch to remove
+    // (requestedTime); ADD keeps the correction punch type + the time to add.
+    : isDelete
+      ? { action: 'delete', requestedTime: form.requestedTime, reason: form.reason }
+      : { action: isCorrection ? 'add' : undefined, punchType: kindPunchType, requestedTime: form.requestedTime, reason: form.reason };
   const createPayload = () => ({ attendanceDate: form.attendanceDate, ...baseFields() });
   const editPayload = () => ({ date: form.attendanceDate, ...baseFields() });
 
@@ -93,7 +116,9 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
   const canSubmit = form.attendanceDate && form.reason.trim() && (
     isAdjust ? (Number(form.adjustmentHours) > 0)
       : isEarly ? (form.requestedTime && elValid)
-        : (form.punchType && form.requestedTime)
+        : !action ? false                              // a correction MUST have Add or Delete chosen
+          : isDelete ? !!form.requestedTime            // Delete → a punch must be selected
+            : (form.punchType && form.requestedTime)   // Add → correction type + time
   );
   const title = isEdit ? 'Edit Request' : isAdjust ? 'Request Hour Adjustment' : isEarly ? 'Request Early Logout' : 'Request Attendance Correction';
 
@@ -124,6 +149,20 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
               className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-600 cursor-not-allowed" />
           </div>
 
+          {/* Action — REQUIRED for a correction (no default). Add a punch/time, or delete an
+              existing punch. Only the correction kind uses this (not Hour Adjustment/Early Logout). */}
+          {isCorrection && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Action <span className="text-red-500">*</span></label>
+              <select value={action} onChange={e => { setAction(e.target.value); setForm(f => ({ ...f, requestedTime: '' })); }}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
+                <option value="">Select an action…</option>
+                <option value="add">Add Punch</option>
+                <option value="delete">Delete Punch</option>
+              </select>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Attendance Date</label>
@@ -142,13 +181,22 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
                 <input type="time" value={form.requestedTime} onChange={set('requestedTime')}
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500/20" />
               </div>
-            ) : (
+            ) : isDelete ? (
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Punch to Delete <span className="text-red-500">*</span></label>
+                <select value={form.requestedTime} onChange={set('requestedTime')}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
+                  <option value="">{dayPunches.length ? 'Select a punch…' : 'No punches found for this date'}</option>
+                  {dayPunches.map((t, i) => <option key={`${t}-${i}`} value={t}>{t}</option>)}
+                </select>
+              </div>
+            ) : action === 'add' ? (
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Correct Time <span className="text-red-500">*</span></label>
                 <input type="time" value={form.requestedTime} onChange={set('requestedTime')}
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500/20" />
               </div>
-            )}
+            ) : <div />}
           </div>
 
           {/* Mode-specific helper / auto-calculated hours */}
@@ -172,9 +220,9 @@ export default function MissingPunchModal({ open, onClose, defaultDate, defaultT
               <p className="text-[11px] text-gray-400 mt-2">Approved hours reduce only this day's required hours; actual worked hours are unchanged, and it is not a salary deduction.</p>
             </div>
           )}
-          {!isAdjust && !isEarly && (
+          {isCorrection && action === 'add' && (
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Correction Type</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Punch Type</label>
               <select value={form.punchType} onChange={set('punchType')}
                 className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
                 {CORRECTION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}

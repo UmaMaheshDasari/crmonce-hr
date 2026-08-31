@@ -21,6 +21,9 @@ const PUNCH_TYPES = {
   device_failure: 'Device Failure',
   web_checkin_issue: 'Web Check-in Issue',
   other: 'Other',
+  // DELETE PUNCH: remove an existing (accidental/extra) punch from the day. The punch to
+  // delete is carried in hr_requestedtime; on approval it is removed and the day recomputed.
+  delete_punch: 'Delete Punch',
   // Approved HOUR ADJUSTMENT: HR grants N hours that reduce THAT day's required
   // working hours (not a punch correction — no attendance record is changed).
   hour_adjustment: 'Hour Adjustment',
@@ -80,4 +83,19 @@ function insertPunchTime(times, newTime) {
   return [...list.slice(0, idx), t, ...list.slice(idx)];
 }
 
-module.exports = { detectMissingPunches, insertPunchTime, PUNCH_TYPES, NON_PUNCH_TYPES };
+/**
+ * Remove ONE punch (the first whose time matches `target`) from an ordered list of "HH:MM"
+ * strings — used when an approved DELETE-punch correction removes an accidental/extra punch.
+ * All other punches are preserved and pairing is restored positionally on recompute. If no
+ * punch matches, the list is returned UNCHANGED (never deletes an unrelated punch). New array.
+ */
+function deletePunchTime(times, target) {
+  const t = String(target || '').slice(0, 5);
+  const list = (Array.isArray(times) ? times : []).map(x => (x && typeof x === 'object') ? x.t : x).filter(Boolean);
+  if (!/^\d{1,2}:\d{2}$/.test(t)) return list;
+  const idx = list.findIndex(x => String(x).slice(0, 5) === t);
+  if (idx === -1) return list;                       // not found → no unrelated punch removed
+  return [...list.slice(0, idx), ...list.slice(idx + 1)];
+}
+
+module.exports = { detectMissingPunches, insertPunchTime, deletePunchTime, PUNCH_TYPES, NON_PUNCH_TYPES };
