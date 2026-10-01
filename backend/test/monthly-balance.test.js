@@ -136,9 +136,12 @@ test('buildMonthlyBalance: Aug 2026 — working days, present/half punch hours, 
   time.istDateStr = () => '2026-09-15';   // month complete
   payrollSettings.getResolved = async () => ({ lateLogin: { graceMinutes: 15 } });
   shiftHistory.shiftResolverFor = async () => ({ forDate: () => ({ name: 'General', start: '09:00', end: '18:00', durationHours: 9, isNight: false, grace: 5 }) });
-  d365.getListOptional = async () => ({ data: [] });   // no approved hour adjustments
-  d365.getList = async (entity, opts) => {
+  // Leaves now read via getListOptional (hr_halfday is an optional column); adjustments too.
+  d365.getListOptional = async (entity) => {
     if (entity === d365.constructor.entities.leave) return { data: [{ hr_fromdate: '2026-08-27', hr_todate: '2026-08-27', hr_status: 123140001 }] };
+    return { data: [] };   // no approved hour adjustments
+  };
+  d365.getList = async (entity, opts) => {
     if (opts && opts.top === 1) return { data: [{ hr_date: '2026-08-27' }] };
     return { data: recs };
   };

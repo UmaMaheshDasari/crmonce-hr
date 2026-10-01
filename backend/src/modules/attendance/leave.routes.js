@@ -86,7 +86,7 @@ async function assertCertOkToApprove(leaveRecord) {
 async function applyCompOffUsageOnApprove(current, { alreadyApproved = false } = {}) {
   try {
     if (current.hr_usecompoff !== 'true' || alreadyApproved) return;
-    const days = resolveDays(current.hr_days, current.hr_fromdate, current.hr_todate);
+    const days = resolveDays(current.hr_days, current.hr_fromdate, current.hr_todate, current.hr_halfday);
     const yr = Number(String(current.hr_fromdate || '').slice(0, 4)) || new Date().getFullYear();
     await leaveEngine.addLedgerEntry({
       employeeId: current._hr_hremployee_value, employeeName: '', year: yr,
@@ -194,7 +194,7 @@ router.get('/', async (req, res, next) => {
 
     const result = await d365.getListOptional(ENTITY, {
       select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date,createdon',
-      optionalSelect: 'hr_medcertdocid,hr_usecompoff',   // present once the leave columns are provisioned
+      optionalSelect: 'hr_medcertdocid,hr_usecompoff,hr_halfday',   // present once the leave columns are provisioned
       filter: filters.join(' and ') || undefined,
       orderby: 'createdon desc',
     });
@@ -292,12 +292,13 @@ router.get('/summary', async (req, res, next) => {
     const from = req.query.from || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
     const to = req.query.to || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
     // hr_todate is needed so we can recover the day count when hr_days is blank.
-    const { data } = await d365.getList(ENTITY, {
+    const { data } = await d365.getListOptional(ENTITY, {
       select: 'hr_days,hr_fromdate,hr_todate,hr_status',
+      optionalSelect: 'hr_halfday',   // present once provisioned; half-day → 0.5
       filter: `_hr_hremployee_value eq '${targetId}'`,
     });
     const rows = (data || []).map(l => ({
-      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate),   // hr_days, else from→to span
+      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate, l.hr_halfday),   // half-day → 0.5; else hr_days/span
       fromDate: String(l.hr_fromdate || '').slice(0, 10),
       status: toLabel('hr_leave_status', l.hr_status),
     }));
@@ -334,7 +335,7 @@ router.get('/cc-candidates', async (req, res, next) => {
 async function applyHrOverride(user, id, status, remarks, { enforcePending = false } = {}) {
   const current = await d365.getByIdOptional(ENTITY, id, {
     select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
-    optionalSelect: 'hr_medcertdocid,hr_usecompoff',
+    optionalSelect: 'hr_medcertdocid,hr_usecompoff,hr_halfday',
   });
   const wasApproved = toLabel('hr_leave_status', current.hr_status) === 'approved';
 
@@ -389,7 +390,7 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
       remarks: remarks || '', status,
       fromDate: current.hr_fromdate, toDate: current.hr_todate,
       leaveType: toLabel('hr_leave_type', current.hr_leavetype),
-      requestDays: resolveDays(current.hr_days, current.hr_fromdate, current.hr_todate),
+      requestDays: resolveDays(current.hr_days, current.hr_fromdate, current.hr_todate, current.hr_halfday),
     });
   }
 
@@ -462,7 +463,14 @@ router.post('/', async (req, res, next) => {
     if (isHalfDay && workingDays !== 1) {
       return res.status(400).json({ error: 'Half-day leave can be applied for a single working day only.' });
     }
-    body.hr_days = isHalfDay ? 0.5 : workingDays;
+    // hr_days is Edm.Int32 and can NEVER hold 0.5 — store the integer span (1 for a
+    // half-day's single working day) and mark the 0.5 via the hr_halfday flag. Every
+    // day-count consumer resolves 0.5 from this flag (resolveDays/approvedLeaveDaysWeighted
+    // /expandLeaveDays). If the hr_halfday column isn't provisioned yet, the resilient create
+    // below FAILS a half-day request with a clear 503 (it never silently saves it as a full
+    // day); full-day leaves (flag 'false') are unaffected.
+    body.hr_days = isHalfDay ? 1 : workingDays;
+    body.hr_halfday = isHalfDay ? 'true' : 'false';
 
     // Balance guard (req 6): block a fully-exhausted Casual/Sick leave. The UI also
     // blocks it, but never trust the client. Best-effort — a lookup failure never
@@ -483,7 +491,7 @@ router.post('/', async (req, res, next) => {
     // 'Earned Leave' (the engine already treats it as paid, not vs the CL/SL cap)
     // plus a flag; on approval a `comp_off_used` ledger entry reduces the balance.
     if (typeLabel === 'Comp Off') {
-      const coDays = resolveDays(body.hr_days, fromDate, toDate);
+      const coDays = resolveDays(body.hr_days, fromDate, toDate, body.hr_halfday);   // 0.5 for a half-day comp-off
       // Expire this employee's overdue comp-off FIRST so expired credits can never be
       // used to apply leave, then check the (now accurate) balance.
       try { await compOffSvc.sweepExpired(req.user.id); } catch (_) {}
@@ -501,7 +509,7 @@ router.post('/', async (req, res, next) => {
     // Medical Certificate gate (req 1) — mandatory when the CONSECUTIVE working-day
     // Sick-Leave run (across the employee's history, ignoring weekly-offs/holidays)
     // reaches the configured threshold. Enforced on the backend regardless of the UI.
-    const leaveDays = resolveDays(body.hr_days, fromDate, toDate);
+    const leaveDays = resolveDays(body.hr_days, fromDate, toDate, body.hr_halfday);
     const runDays = typeLabel === 'Sick Leave'
       ? await sickRun.sickLeaveRunDays(req.user.id, fromDate, toDate)
       : leaveDays;
@@ -599,7 +607,16 @@ router.post('/', async (req, res, next) => {
         catch (err) {
           if (d365._isMissingProperty?.(err)) {
             const prop = d365._missingPropertyName?.(err);
-            if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) { delete payload[prop]; continue; }
+            if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) {
+              // A HALF-DAY request must NEVER silently become a full-day leave. If the
+              // hr_halfday column is not provisioned yet, stripping the flag would store
+              // hr_days=1 as a FULL day — so fail the request clearly instead (full-day
+              // leaves are unaffected: their flag is 'false' and safe to strip).
+              if (prop === 'hr_halfday' && isHalfDay) {
+                return res.status(503).json({ error: 'Half-day leave is temporarily unavailable — the half-day configuration is still being set up. Please apply a full-day leave or try again shortly.' });
+              }
+              delete payload[prop]; continue;
+            }
           }
           // Dataverse column still capped below the reason length → widen hr_reason to
           // 4000 and retry once. If the widen can't be applied (e.g. the Dataverse app
@@ -677,7 +694,7 @@ router.patch('/:id/l1', async (req, res, next) => {
     const { action, remarks } = req.body; // action: 'approved' or 'rejected'
     const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
-      optionalSelect: 'hr_medcertdocid,hr_usecompoff',
+      optionalSelect: 'hr_medcertdocid,hr_usecompoff,hr_halfday',
     });
 
     // Verify this user is the L1 manager of the leave employee
@@ -746,7 +763,7 @@ router.patch('/:id/l1', async (req, res, next) => {
         remarks: updatePayload.hr_remarks, status: finalStatus,
         fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
         leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
-        requestDays: resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate),
+        requestDays: resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate, leaveRecord.hr_halfday),
       });
     }
 
@@ -764,7 +781,7 @@ router.patch('/:id/l2', async (req, res, next) => {
     const { action, remarks } = req.body;
     const leaveRecord = await d365.getByIdOptional(ENTITY, req.params.id, {
       select: 'hr_hrleaveid,_hr_hremployee_value,hr_status,hr_l1status,hr_l2status,hr_fromdate,hr_todate,hr_days,hr_ccrecipients,hr_leavetype',
-      optionalSelect: 'hr_medcertdocid,hr_usecompoff',
+      optionalSelect: 'hr_medcertdocid,hr_usecompoff,hr_halfday',
     });
 
     if (leaveRecord.hr_l1status !== 'approved') {
@@ -820,7 +837,7 @@ router.patch('/:id/l2', async (req, res, next) => {
       remarks: updatePayload.hr_remarks, status: l2Final,
       fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
       leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
-      requestDays: resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate),
+      requestDays: resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate, leaveRecord.hr_halfday),
     });
 
     broadcast('leave:updated', { leaveId: req.params.id, action, level: 'L2' });

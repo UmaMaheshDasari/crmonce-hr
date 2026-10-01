@@ -44,7 +44,7 @@ function normalizeLeaves(rows, year) {
     if (year && from.slice(0, 4) !== String(year)) continue;
     out.push({
       category: categoryOfType(toLabel('hr_leave_type', l.hr_leavetype)),
-      days: Number(resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate)) || 0,
+      days: Number(resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate, l.hr_halfday)) || 0,   // half-day → 0.5
       month: Number(from.slice(5, 7)) || 0,
       date: from,
     });
@@ -162,8 +162,9 @@ function computeMonthSplit({ leaves = [], policy = {}, adjustments = {}, month, 
 
 async function fetchApprovedLeaves(employeeId, year) {
   const approved = toValue('hr_leave_status', 'approved');
-  const { data } = await d365.getList(LEAVE, {
+  const { data } = await d365.getListOptional(LEAVE, {
     select: 'hr_days,hr_fromdate,hr_todate,hr_status,hr_leavetype',
+    optionalSelect: 'hr_halfday',   // half-day → 0.5 (present once provisioned)
     filter: `_hr_hremployee_value eq '${employeeId}' and hr_status eq ${approved}`,
     top: 500,
   });
@@ -179,8 +180,9 @@ async function fetchApprovedLeaves(employeeId, year) {
 async function pendingMonthDays(employeeId, { year, month }) {
   try {
     const pending = toValue('hr_leave_status', 'pending');
-    const { data } = await d365.getList(LEAVE, {
+    const { data } = await d365.getListOptional(LEAVE, {
       select: 'hr_days,hr_fromdate,hr_todate,hr_status,hr_leavetype',
+      optionalSelect: 'hr_halfday',   // half-day pending → 0.5
       filter: `_hr_hremployee_value eq '${employeeId}' and hr_status eq ${pending}`,
       top: 500,
     });

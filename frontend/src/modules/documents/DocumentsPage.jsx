@@ -97,8 +97,13 @@ function UploadModal({ onClose }) {
   });
 
   const onDrop = useCallback(accepted => setFiles(prev => [...prev, ...accepted]), []);
+  // Files over the cap are rejected client-side (file-too-large) — tell the user why
+  // rather than silently dropping them.
+  const onDropRejected = useCallback(rejections => {
+    if (rejections.some(r => r.errors?.some(e => e.code === 'file-too-large'))) toast.error('File size must not exceed 10 MB.');
+  }, []);
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop, accept: { 'application/pdf': [], 'application/msword': [], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [], 'image/*': [] },
+    onDrop, onDropRejected, accept: { 'application/pdf': [], 'application/msword': [], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [], 'image/*': [] },
     maxSize: 10 * 1024 * 1024,
   });
 
@@ -114,7 +119,7 @@ function UploadModal({ onClose }) {
       }
     },
     onSuccess: () => { toast.success(`${files.length} document(s) uploaded!`); qc.invalidateQueries({ queryKey: ['documents'] }); onClose(); },
-    onError: () => toast.error('Upload failed'),
+    onError: (e) => toast.error(e?.response?.data?.error || (e?.response?.status === 413 ? 'File size must not exceed 10 MB.' : 'Upload failed')),
   });
 
   return (

@@ -16,7 +16,7 @@ const router = express.Router();
 const d365 = require('../../services/d365.service');
 const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue } = require('../../services/picklist');   // only hr_attendance_status (a real Choice) uses this
-const { computeSession, punchesFromRecord, earlyLogoutHours } = require('../../services/attendance.util');
+const { computeSession, punchesFromRecord, earlyLogoutHours, statusForStorage } = require('../../services/attendance.util');
 const { insertPunchTime, deletePunchTime, detectMissingPunches, PUNCH_TYPES, NON_PUNCH_TYPES } = require('../../services/missing-punch.util');
 const attnCfg = require('../../services/attendance.config');
 const time = require('../../services/time.util');
@@ -54,7 +54,10 @@ const punchPayload = (c) => ({
   hr_effectivehours: c.effectiveHours,
   hr_punchcount: c.count,
   hr_allpunches: JSON.stringify(c.punches.map(p => p.t)),
-  hr_status: toValue('hr_attendance_status', c.status),
+  // statusForStorage maps the computed 'in_progress' (today's open session) → 'incomplete'
+  // before the optionset lookup; hr_status is Edm.Int32, so an unmapped label like
+  // 'in_progress' would otherwise be sent literally and rejected (0x80048d19).
+  hr_status: toValue('hr_attendance_status', statusForStorage(c.status)),
 });
 const view = (r) => ({
   id: r.hr_attendancerequestid,

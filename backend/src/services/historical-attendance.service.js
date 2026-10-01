@@ -13,7 +13,7 @@
  */
 const d365 = require('./d365.service');
 const { toValue, toLabel } = require('./picklist');
-const { computeSession, punchesFromRecord } = require('./attendance.util');
+const { computeSession, punchesFromRecord, statusForStorage } = require('./attendance.util');
 const payrollSettings = require('./payroll-settings.service');
 let attnCfg; try { attnCfg = require('./attendance.config'); } catch (_) { attnCfg = null; }
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
@@ -91,7 +91,7 @@ const punchPayload = (c) => ({
   hr_effectivehours: c.effectiveHours,
   hr_punchcount: c.count,
   hr_allpunches: JSON.stringify(c.punches.map(p => p.t)),
-  hr_status: toValue('hr_attendance_status', c.status),
+  hr_status: toValue('hr_attendance_status', statusForStorage(c.status)),   // in_progress → incomplete (hr_status is Edm.Int32)
   hr_source: toValue('hr_attendance_source', 'manual_correction'),   // Historical Attendance (manual source)
 });
 

@@ -103,8 +103,9 @@ router.get('/summary', async (req, res, next) => {
         filter: `_hr_hremployee_value eq '${empId}' and hr_date ge ${monthFrom} and hr_date le ${monthEnd}`,
         orderby: 'hr_date asc',
       }).catch(() => ({ data: [] })),
-      d365.getList(LEAVE, {
+      d365.getListOptional(LEAVE, {
         select: 'hr_days,hr_fromdate,hr_todate,hr_status',
+        optionalSelect: 'hr_halfday',   // half-day → 0.5
         filter: `_hr_hremployee_value eq '${empId}'`,
       }).catch((e) => { console.error(`[dashboard/summary] leave read FAILED for ${empId}: ${e.message}`); return { data: [] }; }),
       firstAttendanceDate(empId),
@@ -198,7 +199,7 @@ router.get('/summary', async (req, res, next) => {
 
     // ── Leave Summary (period-filtered, all statuses) ─────────────────────────
     const leaveRows = allLeaves.map(l => ({
-      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate),
+      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate, l.hr_halfday),
       fromDate: String(l.hr_fromdate || '').slice(0, 10),
       status: toLabel('hr_leave_status', l.hr_status),
     }));
@@ -293,7 +294,7 @@ router.get('/admin-summary', requireAnyPermission('reports.view'), async (req, r
       }, 10000).catch(() => ({ data: [] })),
       d365.getList(JOB, { select: 'hr_hrjobid', filter: `hr_status eq ${openJobVal}`, top: 500 }).catch(() => ({ data: [] })),
       d365.getList(PAYROLL, { select: 'hr_netpay,hr_status', filter: `hr_month eq ${M} and hr_year eq ${Y}`, top: 2000 }).catch(() => ({ data: [] })),
-      d365.getList(LEAVE, { select: 'hr_days,hr_fromdate,hr_todate,hr_status,_hr_hremployee_value', top: 5000 }).catch(() => ({ data: [] })),
+      d365.getListOptional(LEAVE, { select: 'hr_days,hr_fromdate,hr_todate,hr_status,_hr_hremployee_value', optionalSelect: 'hr_halfday', top: 5000 }).catch(() => ({ data: [] })),
       d365.getList(DOC, { select: 'hr_hrdocumentid,createdon', filter: `createdon ge ${monthStartIso}`, top: 2000 }).catch(() => ({ data: [] })),
       activity.recent(8).catch(() => []),
     ]);
@@ -383,7 +384,7 @@ router.get('/admin-summary', requireAnyPermission('reports.view'), async (req, r
 
     // ── Leave Summary (org-wide, period-filtered) ──────────────────────────────
     const leaveRows = allLeaves.map(l => ({
-      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate),
+      days: resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate, l.hr_halfday),
       fromDate: String(l.hr_fromdate || '').slice(0, 10),
       status: toLabel('hr_leave_status', l.hr_status),
     }));

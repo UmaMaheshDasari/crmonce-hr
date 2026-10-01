@@ -844,13 +844,14 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
   // Absent enumeration itself only ever reaches capTo (today), so future dates never count.
   const { data: leaves } = await d365.getListOptional(d365.constructor.entities.leave, {
     select: 'hr_days,hr_fromdate,hr_todate,_hr_hremployee_value,hr_status,hr_leavetype',
-    optionalSelect: 'hr_usecompoff',
+    optionalSelect: 'hr_usecompoff,hr_halfday',
     filter: `(hr_status eq ${toValue('hr_leave_status', 'approved')} or hr_status eq ${toValue('hr_leave_status', 'pending')})`,
   });
   const normLeaves = (leaves || []).map(l => ({
     employeeId: l._hr_hremployee_value, fromDate: l.hr_fromdate, toDate: l.hr_todate,
     type: l.hr_usecompoff === 'true' ? 'Comp Off' : toLabel('hr_leave_type', l.hr_leavetype),
     status: toLabel('hr_leave_status', l.hr_status),
+    halfDay: l.hr_halfday === 'true',   // 0.5-day leave → expandLeaveDays weights the date 0.5
   }));
   const leaveInfoByEmp = expandLeaveDays(normLeaves, from, to);           // Map(empId → Map(date → {type,status}))
   // APPROVED leaves grouped per employee (raw rows carry hr_days for half-day duration) —
@@ -912,7 +913,9 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     // pending rows to the Absent DETAIL view — it never changes this Absent count.
     const leaveSet = new Set(leaveMap.keys());                             // approved+pending → NEVER actual Absent
     let approvedDays = 0, pendingDays = 0;
-    for (const info of leaveMap.values()) { if (info.status === 'approved') approvedDays++; else if (info.status === 'pending') pendingDays++; }
+    // SUM per-date weights (0.5 for a half-day, 1 for a full day) — never count entries —
+    // so a half-day leave contributes 0.5 to the approved/pending day totals.
+    for (const info of leaveMap.values()) { const w = Number(info.weight) || 1; if (info.status === 'approved') approvedDays = Math.round((approvedDays + w) * 100) / 100; else if (info.status === 'pending') pendingDays = Math.round((pendingDays + w) * 100) / 100; }
     // Prefer the true first-ever date; fall back to the earliest in-range punch so
     // an unavailable aggregate never forces working days (and thus Absent) to 0.
     const firstDate = firstMap.get(e.hr_hremployeeid) || firstInRange[e.hr_hremployeeid] || null;

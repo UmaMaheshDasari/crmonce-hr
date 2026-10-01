@@ -435,7 +435,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
   const [cc, setCc] = useState([]);              // selected employee ids
   const [ccSearch, setCcSearch] = useState('');
   const [certDoc, setCertDoc] = useState(null);  // uploaded Medical Certificate (shaped doc)
-  const [halfDay, setHalfDay] = useState(!!editLeave && Number(editLeave.hr_days) === 0.5); // 0.5-day leave (single working day only)
+  const [halfDay, setHalfDay] = useState(editLeave?.hr_halfday === 'true'); // 0.5-day leave (hr_halfday flag; hr_days stays Int 1)
 
   // Approver options — active HR Managers / Super Admins (backend-filtered)
   const { data: approversData } = useQuery({
@@ -953,9 +953,9 @@ export default function LeavePage() {
                         {/* Days circle badge */}
                         <div className="flex items-center gap-1.5">
                           <span className="inline-flex items-center justify-center w-7 h-7 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">
-                            {leave.hr_days}
+                            {leave.hr_halfday === 'true' ? '0.5' : leave.hr_days}
                           </span>
-                          <span className="text-xs text-gray-400 font-medium">day{leave.hr_days > 1 ? 's' : ''}</span>
+                          <span className="text-xs text-gray-400 font-medium">{leave.hr_halfday === 'true' ? 'day (half)' : `day${leave.hr_days > 1 ? 's' : ''}`}</span>
                         </div>
                       </div>
 

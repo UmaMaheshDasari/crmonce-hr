@@ -101,15 +101,33 @@ const storage = multer.diskStorage({
     cb(null, `${uuidv4()}${ext}`);
   },
 });
+const MAX_UPLOAD_BYTES = parseInt(process.env.MAX_FILE_SIZE || '10485760', 10);   // inclusive max (default 10 MB)
+const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
 const upload = multer({
   storage,
-  limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760') },
+  // busboy rejects at byteCount >= fileSize, so a file of EXACTLY MAX_UPLOAD_BYTES would be
+  // refused. +1 makes MAX_UPLOAD_BYTES the INCLUSIVE limit: a 10 MB file passes, 10 MB + 1 fails.
+  limits: { fileSize: MAX_UPLOAD_BYTES + 1 },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (BLOCKED_EXT.has(ext)) return cb(new Error(`For security, ${ext || 'this'} files are not allowed.`));
     cb(null, true);   // accept all document/image/archive/text types
   },
 });
+
+// Run multer, then translate its errors into a clean 4xx JSON message instead of the
+// generic 500 the global handler would produce. An oversize file (LIMIT_FILE_SIZE)
+// returns 413 "File size must not exceed N MB."; a blocked extension returns 400 with
+// the fileFilter message. NOTE: the reverse proxy must allow a body of at least this
+// size (nginx client_max_body_size) or it returns its own 413 before the request ever
+// reaches here — see the deployment note.
+const uploadSingle = (field) => (req, res, next) => {
+  upload.single(field)(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: `File size must not exceed ${MAX_UPLOAD_MB} MB.` });
+    return res.status(400).json({ error: err.message || 'File upload failed.' });
+  });
+};
 
 const DOC = d365.constructor.entities.document;
 const EMP = d365.constructor.entities.employee;
@@ -208,7 +226,7 @@ docRouter.get('/:id', requireAnyPermission('documents.view'), async (req, res, n
 });
 
 // POST /upload  — upload a document (any type). Status → pending; HR notified.
-docRouter.post('/upload', requireAnyPermission('documents.upload'), upload.single('file'), async (req, res, next) => {
+docRouter.post('/upload', requireAnyPermission('documents.upload'), uploadSingle('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const { employeeId, documentType, name, remarks } = req.body;
@@ -272,7 +290,7 @@ docRouter.get('/:id/file', requireAnyPermission('documents.view'), async (req, r
 });
 
 // POST /:id/replace  — replace the file (owner or HR; only while NOT verified). Resets to pending.
-docRouter.post('/:id/replace', requireAnyPermission('documents.upload'), upload.single('file'), async (req, res, next) => {
+docRouter.post('/:id/replace', requireAnyPermission('documents.upload'), uploadSingle('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const existing = await d365.getByIdOptional(DOC, req.params.id, { select: '_hr_hremployee_value', optionalSelect: 'hr_status' });
@@ -296,7 +314,7 @@ docRouter.post('/:id/replace', requireAnyPermission('documents.upload'), upload.
 // POST /:id/new-version  — upload a NEW VERSION of a document (typically a verified
 // one). The previous version is KEPT; the new version starts as pending → HR
 // notified. Owner or HR.
-docRouter.post('/:id/new-version', requireAnyPermission('documents.upload'), upload.single('file'), async (req, res, next) => {
+docRouter.post('/:id/new-version', requireAnyPermission('documents.upload'), uploadSingle('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const existing = await d365.getByIdOptional(DOC, req.params.id, { select: 'hr_name,_hr_hremployee_value', optionalSelect: 'hr_documenttype,hr_docgroup,hr_version' });

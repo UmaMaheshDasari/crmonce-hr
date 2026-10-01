@@ -137,9 +137,9 @@ function pendingLopDayCount(leaveEntries, hasRecord) {
   for (const [date, info] of (leaveEntries || [])) {
     if (!info || info.status !== 'pending') continue;   // only pending (approved is paid)
     if (hasRecord && hasRecord(date)) continue;         // attendance precedence → not pending-LOP
-    n++;
+    n += Number(info.weight) || 1;                      // half-day pending = 0.5 (→ 0.5 × required = 4.5h LOP)
   }
-  return n;
+  return round2(n);
 }
 
 module.exports = { buildAttendanceRow, buildLopReconRow, lopHoursOf, pendingLopDayCount };

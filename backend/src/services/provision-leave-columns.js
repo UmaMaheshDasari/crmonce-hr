@@ -22,6 +22,7 @@ const str = (schema, display, maxLength = 100) => ({
 const COLUMNS = [
   str('hr_MedCertDocId', 'Medical Certificate Document Id', 100),
   str('hr_UseCompOff', 'Applied Against Comp Off', 10),   // 'true' → paid from comp-off balance, never LOP
+  str('hr_HalfDay', 'Half Day', 10),   // 'true' → 0.5-day leave (hr_days stays Int 1; this flag is the 0.5 source of truth)
 ];
 
 const isExists = (m) => /already exists|duplicate|with the name|with a name|is not unique/i.test(m || '');

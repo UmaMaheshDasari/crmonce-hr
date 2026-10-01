@@ -17,7 +17,7 @@ test('multi-day approved CL covers every WORKING date (weekends excluded)', () =
   const m = expandLeaveDays([{ employeeId: EMP, fromDate: '2026-08-10', toDate: '2026-08-14', type: 'Casual Leave', status: 'approved' }], '2026-08-01', '2026-08-31', OPTS);
   const dates = m.get(EMP);
   assert.deepStrictEqual([...dates.keys()].sort(), ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14']);
-  assert.deepStrictEqual(dates.get('2026-08-12'), { type: 'Casual Leave', status: 'approved' });
+  assert.deepStrictEqual(dates.get('2026-08-12'), { type: 'Casual Leave', status: 'approved', weight: 1 });
 });
 
 test('a leave spanning a weekend skips the weekend days', () => {
@@ -41,7 +41,16 @@ test('pending leave is included (held), rejected/cancelled are ignored', () => {
 
 test('Comp Off keeps its type label', () => {
   const m = expandLeaveDays([{ employeeId: EMP, fromDate: '2026-08-13', toDate: '2026-08-13', type: 'Comp Off', status: 'approved' }], '2026-08-01', '2026-08-31', OPTS);
-  assert.deepStrictEqual(m.get(EMP).get('2026-08-13'), { type: 'Comp Off', status: 'approved' });
+  assert.deepStrictEqual(m.get(EMP).get('2026-08-13'), { type: 'Comp Off', status: 'approved', weight: 1 });
+});
+
+test('half-day leave weights its single date 0.5 (full day weights 1)', () => {
+  const m = expandLeaveDays([
+    { employeeId: EMP, fromDate: '2026-08-10', toDate: '2026-08-10', type: 'Casual Leave', status: 'approved', halfDay: true },
+    { employeeId: 'g2', fromDate: '2026-08-11', toDate: '2026-08-11', type: 'Casual Leave', status: 'pending' },
+  ], '2026-08-01', '2026-08-31', OPTS);
+  assert.deepStrictEqual(m.get(EMP).get('2026-08-10'), { type: 'Casual Leave', status: 'approved', weight: 0.5 });
+  assert.deepStrictEqual(m.get('g2').get('2026-08-11'), { type: 'Casual Leave', status: 'pending', weight: 1 });
 });
 
 test('approved wins over pending on the same date', () => {

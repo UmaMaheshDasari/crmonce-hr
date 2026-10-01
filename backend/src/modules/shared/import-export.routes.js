@@ -9,7 +9,7 @@ const ie = require('../../services/import-export.service');
 const salaryStructure = require('../../services/salary-structure.service');
 const leaveEngine = require('../../services/leave-engine.service');
 const leaveOpening = require('../../services/leave-opening.service');
-const { computeSession } = require('../../services/attendance.util');
+const { computeSession, statusForStorage } = require('../../services/attendance.util');
 const attnCfg = require('../../services/attendance.config');
 const { buildReport } = require('../../services/payroll-reports.service');
 const activity = require('../../services/activity.service');
@@ -110,10 +110,10 @@ const WRITERS = {
         hr_date: d.date, hr_intime: c.firstPunch || '', hr_outtime: c.state === 'out' ? c.lastPunch : '',
         hr_workedhours: c.totalSpanHours, hr_overtime: c.overtimeHours, hr_breakduration: c.breakHours,
         hr_effectivehours: c.effectiveHours, hr_punchcount: c.count,
-        hr_allpunches: JSON.stringify(c.punches.map(p => p.t)), hr_status: toValue('hr_attendance_status', c.status),
+        hr_allpunches: JSON.stringify(c.punches.map(p => p.t)), hr_status: toValue('hr_attendance_status', statusForStorage(c.status)),
       };
     }
-    if (d.status) { try { body.hr_status = toValue('hr_attendance_status', String(d.status).toLowerCase()); } catch { /* leave computed */ } }
+    if (d.status) { try { body.hr_status = toValue('hr_attendance_status', statusForStorage(String(d.status).toLowerCase())); } catch { /* leave computed */ } }
     if (existing.data?.[0]) { await d365.update(E.attendance, existing.data[0].hr_hrattendanceid, body); return 'updated'; }
     await d365.create(E.attendance, { 'hr_hremployee@odata.bind': `/hr_hremployees(${r._guid})`, ...body }); return 'created';
   },

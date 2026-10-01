@@ -516,13 +516,14 @@ payrollRouter.get('/dashboard', requireAnyPermission('payroll.view'), async (req
     // Approved leaves in the year → month/days for the Leave Trend.
     let leaves = [];
     try {
-      const { data } = await d365.getList(E.leave, {
+      const { data } = await d365.getListOptional(E.leave, {
         select: 'hr_days,hr_fromdate,hr_todate,hr_status,_hr_hremployee_value',
+        optionalSelect: 'hr_halfday',   // half-day → 0.5
         filter: `hr_status eq ${toValue('hr_leave_status', 'approved')}`, top: 5000,
       });
       leaves = (data || [])
         .filter(l => String(l.hr_fromdate || '').slice(0, 4) === String(year))
-        .map(l => ({ month: Number(String(l.hr_fromdate).slice(5, 7)) || 0, days: Number(resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate)) || 0, employeeId: l._hr_hremployee_value, department: deptOf.get(l._hr_hremployee_value) }));
+        .map(l => ({ month: Number(String(l.hr_fromdate).slice(5, 7)) || 0, days: Number(resolveDays(l.hr_days, l.hr_fromdate, l.hr_todate, l.hr_halfday)) || 0, employeeId: l._hr_hremployee_value, department: deptOf.get(l._hr_hremployee_value) }));
     } catch { /* leave trend is best-effort */ }
 
     res.json({ year, filters, ...payrollDashboard.aggregate({ rows, employees, leaves, filters }) });

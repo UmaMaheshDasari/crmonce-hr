@@ -180,9 +180,13 @@ function approvedLeaveDaysWeighted(leaves = [], from, to, opts = {}) {
     const spanDates = workingDatesOf(lf, lt);       // all working dates of the leave (full span)
     if (!spanDates.length) continue;                // weekend/holiday-only leave → subtracts nothing
     const days = Number(l.hr_days);
-    // Per-date weight from the leave's OWN duration: half-day (0.5 over 1 date) = 0.5;
-    // full leave (N days over N dates) = 1 each. Fall back to a full day if hr_days is absent.
-    const weight = Math.min(1, Number.isFinite(days) && days > 0 ? days / spanDates.length : 1);
+    // Per-date weight from the leave's OWN duration: an explicit HALF-DAY (hr_halfday==='true',
+    // a single working date) = 0.5; a full leave (N days over N dates) = 1 each. hr_days is an
+    // Int32 (never 0.5), so the flag is the authoritative 0.5 source. Fall back to a full day if
+    // hr_days is absent.
+    const weight = String(l.hr_halfday) === 'true'
+      ? 0.5
+      : Math.min(1, Number.isFinite(days) && days > 0 ? days / spanDates.length : 1);
     for (const ds of spanDates) {
       if (ds < start || ds > end) continue;         // clip to the selected month
       if (!perDate.has(ds) || perDate.get(ds) < weight) perDate.set(ds, weight);
@@ -258,13 +262,16 @@ function expandLeaveDays(normLeaves = [], from, capTo, opts = {}) {
     const e = lt > end ? end : lt;
     if (e < s) continue;
     let m = byEmp.get(l.employeeId); if (!m) byEmp.set(l.employeeId, m = new Map());
+    // A half-day leave contributes 0.5 to that date's day count; a full leave contributes 1.
+    // Consumers SUM `weight` (never count map entries) so a half-day is worth 0.5 day.
+    const weight = l.halfDay === true || String(l.halfDay) === 'true' ? 0.5 : 1;
     let d = new Date(`${s}T00:00:00Z`); const stop = new Date(`${e}T00:00:00Z`);
     let guard = 0;
     while (d <= stop && guard++ < 500) {
       const ds = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
       if (!holidays.includes(ds) && !weekOffDays.includes(d.getUTCDay())) {
         const prev = m.get(ds);
-        if (!prev || (prev.status === 'pending' && l.status === 'approved')) m.set(ds, { type: l.type || '', status: l.status });
+        if (!prev || (prev.status === 'pending' && l.status === 'approved')) m.set(ds, { type: l.type || '', status: l.status, weight });
       }
       d.setUTCDate(d.getUTCDate() + 1);
     }

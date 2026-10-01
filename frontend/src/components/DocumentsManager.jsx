@@ -65,7 +65,11 @@ function UploadModal({ employeeId, mode, doc, onClose }) {
     },
     onError: (err) => { setProgress(0); toast.error(err.response?.data?.error || 'Upload failed'); },
   });
-  const pick = (f) => { if (f) { setFile(f); if (!name) setName(f.name.replace(/\.[^.]+$/, '')); } };
+  const pick = (f) => {
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { toast.error('File size must not exceed 10 MB.'); return; }   // match server/proxy cap
+    setFile(f); if (!name) setName(f.name.replace(/\.[^.]+$/, ''));
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">

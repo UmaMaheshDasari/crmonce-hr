@@ -15,12 +15,21 @@ function daysInclusive(fromDate, toDate) {
   return Math.round((b - a) / 86400000) + 1;
 }
 
+/** A leave row (or its stored flag value) is a half-day iff hr_halfday === 'true'. */
+function isHalfDayLeave(halfday) {
+  return String(halfday) === 'true';
+}
+
 /**
- * The number of leave days for a record. Prefer the stored hr_days; when it is
- * blank/zero/non-numeric (legacy or imported leaves often have no hr_days), fall
+ * THE authoritative leave-day weight for a record. A HALF-DAY leave (hr_halfday==='true')
+ * is always 0.5 — hr_days is stored as the integer 1 (Dataverse hr_days is Edm.Int32 and
+ * can never hold 0.5), so the flag is the source of truth and is checked FIRST. Otherwise
+ * prefer the stored hr_days; when blank/zero/non-numeric (legacy/imported leaves), fall
  * back to the inclusive from→to span so an approved leave is never worth 0 days.
+ * `halfday` is the record's hr_halfday value (optional; absent → full-day, backward compatible).
  */
-function resolveDays(rawDays, fromDate, toDate) {
+function resolveDays(rawDays, fromDate, toDate, halfday) {
+  if (isHalfDayLeave(halfday)) return 0.5;
   const n = Number(rawDays);
   if (Number.isFinite(n) && n > 0) return n;
   return daysInclusive(fromDate, toDate);
@@ -50,4 +59,4 @@ function leaveSummary(rows = [], { from, to } = {}) {
   };
 }
 
-module.exports = { leaveSummary, daysInclusive, resolveDays };
+module.exports = { leaveSummary, daysInclusive, resolveDays, isHalfDayLeave };

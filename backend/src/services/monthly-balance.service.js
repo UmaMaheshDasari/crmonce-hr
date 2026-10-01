@@ -123,12 +123,13 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
   const shiftResolver = await require('./shift-history.service').shiftResolverFor(employeeId);
 
   // Approved-leave working dates (holiday/week-off excluded, multi-day expanded).
-  const { data: leaves } = await d365.getList(LEAVE, {
+  const { data: leaves } = await d365.getListOptional(LEAVE, {
     select: 'hr_days,hr_fromdate,hr_todate,hr_status',
+    optionalSelect: 'hr_halfday',   // half-day approved leave → 0.5 (present once provisioned)
     filter: `_hr_hremployee_value eq '${employeeId}' and hr_status eq ${toValue('hr_leave_status', 'approved')}`,
   }).catch(() => ({ data: [] }));
   const leaveMap = expandLeaveDays(
-    (leaves || []).map((l) => ({ employeeId, fromDate: l.hr_fromdate, toDate: l.hr_todate, status: 'approved' })),
+    (leaves || []).map((l) => ({ employeeId, fromDate: l.hr_fromdate, toDate: l.hr_todate, status: 'approved', halfDay: l.hr_halfday === 'true' })),
     from, capTo,
   ).get(employeeId) || new Map();
 
@@ -193,9 +194,11 @@ async function buildMonthlyBalance({ employeeId, year, month } = {}) {
 
     workingDays++;   // a scheduled working day (present / half / approved-leave / absent)
 
-    // Approved leave → reduces the required hours (full day 9h, half day 5h). Never worked,
-    // never Absent, never LOP. (Half-day leave, if ever introduced, would remove 5h.)
-    if (leaveMap.has(ds)) { approvedLeaveDays++; approvedLeaveHours += fd; continue; }
+    // Approved leave → fully excuses the day's required hours (never worked, never Absent,
+    // never LOP — satisfies "approved half-day → 0 LOP"). The Approved-Leave-Days METRIC
+    // counts the leave's weight (0.5 for a half-day, 1 for a full day); the required-hours
+    // reduction stays a full day so an approved leave never produces a phantom shortage.
+    if (leaveMap.has(ds)) { approvedLeaveDays = round2(approvedLeaveDays + (Number(leaveMap.get(ds).weight) || 1)); approvedLeaveHours += fd; continue; }
 
     if (worked) {
       // ATTENDED: credit ACTUAL punch hours (effective = span − breaks; open sessions
