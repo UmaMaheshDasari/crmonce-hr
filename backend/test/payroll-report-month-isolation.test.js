@@ -64,7 +64,8 @@ async function monthsInReport(type, opts, sheetName) {
 }
 
 test('payroll-register August 2026 → ONLY August rows (never July)', async () => {
-  const { months, filter } = await monthsInReport('payroll-register', { year: 2026, month: 8 }, 'Payroll Register');
+  // Single month → one sheet named "<Month> <Year>" (the register is now split month-wise).
+  const { months, filter } = await monthsInReport('payroll-register', { year: 2026, month: 8 }, 'Aug 2026');
   assert.deepEqual([...new Set(months)], ['Aug'], 'every row is August');
   assert.equal(months.length, 2, 'exactly the two August rows');
   assert.ok(!months.includes('Jul'), 'July must never appear in an August export');
@@ -73,7 +74,7 @@ test('payroll-register August 2026 → ONLY August rows (never July)', async () 
 });
 
 test('payroll-register July 2026 → ONLY July rows (never August)', async () => {
-  const { months, filter } = await monthsInReport('payroll-register', { year: 2026, month: 7 }, 'Payroll Register');
+  const { months, filter } = await monthsInReport('payroll-register', { year: 2026, month: 7 }, 'Jul 2026');
   assert.deepEqual([...new Set(months)], ['Jul'], 'every row is July');
   assert.equal(months.length, 2);
   assert.ok(!months.includes('Aug'), 'August must never appear in a July export');
@@ -93,10 +94,16 @@ test('bank-transfer + payslip-register are also month-isolated', async () => {
   assert.deepEqual([...new Set(ps.months)], ['Aug']);
 });
 
-test('no month selected → year-wide (existing behaviour, both months present)', async () => {
-  const { months, filter } = await monthsInReport('payroll-register', { year: 2026 }, 'Payroll Register');
-  assert.equal(months.length, 4, 'all four rows for the year');
-  assert.deepEqual([...new Set(months)].sort(), ['Aug', 'Jul']);
-  assert.match(filter, /hr_year eq 2026/);
-  assert.ok(!/hr_month/.test(filter), 'no month clause when none selected');
+test('no month selected → payroll register is SPLIT into one sheet per month (never mixed)', async () => {
+  const { captured, restore } = stub();
+  try {
+    const wb = await reports.buildReport('payroll-register', { year: 2026 });
+    // Two months in the data → exactly two month sheets (chronological: Jul before Aug).
+    assert.deepEqual(wb.worksheets.map((w) => w.name), ['Jul 2026', 'Aug 2026']);
+    const monthsOf = (name) => { const out = []; wb.getWorksheet(name).eachRow((row, n) => { if (n > 1) out.push(row.getCell(3).value); }); return out; };
+    assert.deepEqual(monthsOf('Jul 2026'), ['Jul', 'Jul'], 'Jul sheet has only July rows');
+    assert.deepEqual(monthsOf('Aug 2026'), ['Aug', 'Aug'], 'Aug sheet has only August rows');
+    assert.match(captured.payrollFilter, /hr_year eq 2026/);
+    assert.ok(!/hr_month/.test(captured.payrollFilter), 'no month clause when none selected');
+  } finally { restore(); }
 });

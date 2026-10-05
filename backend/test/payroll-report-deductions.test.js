@@ -46,7 +46,7 @@ function stub() {
 test('payroll-register: Deductions = Gross − Net (PT included), Net = Gross − Deductions', async () => {
   const restore = stub();
   try {
-    const ws = (await reports.buildReport('payroll-register', { year: 2026, month: 7 })).getWorksheet('Payroll Register');
+    const ws = (await reports.buildReport('payroll-register', { year: 2026, month: 7 })).getWorksheet('Jul 2026');   // register is now split per Month+Year
     const uttej = ws.getRow(2), vish = ws.getRow(3);
 
     // Uttej: ₹200 PT was deducted → Deductions must be 200, NOT the hr_deductions 0.

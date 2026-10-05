@@ -118,15 +118,16 @@ async function buildReport(type, { year, month } = {}) {
 
   if (type === 'payroll-register') {
     const [rows, ids] = await Promise.all([fetchPayroll(year, month), empInfoMap()]);
-    const ws = await titledSheet(wb, 'Payroll Register', company);
-    ws.columns = [
+    // Column set + row shaping are IDENTICAL for every sheet — only the grouping differs.
+    // (Payroll values/calculations are untouched; this is purely export organisation.)
+    const COLUMNS = [
       { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 }, { header: 'Month', key: 'month', width: 8 },
       { header: 'Year', key: 'year', width: 8 }, { header: 'Basic', key: 'basic', width: 12 },
       { header: 'Allowances', key: 'allow', width: 12 }, { header: 'Overtime', key: 'ot', width: 10 },
       { header: 'Gross', key: 'gross', width: 12 }, { header: 'Deductions', key: 'ded', width: 12 },
       { header: 'Net Pay', key: 'net', width: 12 }, { header: 'Status', key: 'status', width: 12 },
     ];
-    for (const r of rows) ws.addRow({
+    const shapeRow = (r) => ({
       eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
       basic: r.hr_basic || 0, allow: r.hr_allowances || 0, ot: r.hr_overtime || 0,
       gross: grossOf(r),
@@ -134,7 +135,38 @@ async function buildReport(type, { year, month } = {}) {
       // hr_deductions "Other" bucket which is ₹0 for most employees.
       ded: totalDeductionsOf(r), net: r.hr_netpay || 0, status: statusLabel(r.hr_status),
     });
-    styleHeader(ws); autoWidth(ws);
+    // Build ONE worksheet for a set of rows, with the SAME columns + header/freeze/width formatting.
+    const buildSheet = (name, groupRows) => {
+      const ws = wb.addWorksheet(name);
+      ws.columns = COLUMNS;
+      for (const r of groupRows) ws.addRow(shapeRow(r));   // preserves the fetched row order within the sheet
+      styleHeader(ws); autoWidth(ws);
+      return ws;
+    };
+    // Group by the EXACT (Year, Month) already stored on each payroll row — never a second
+    // date calculation. A row whose Month or Year is missing/invalid is NEVER merged into
+    // another month: it goes to a clearly-named "Unassigned" sheet.
+    const validMonth = (m) => Number.isInteger(m) && m >= 1 && m <= 12;
+    const groups = new Map();   // "YYYY-MM" → { y, m, rows }
+    const unassigned = [];
+    for (const r of rows) {
+      const y = Number(r.hr_year), m = Number(r.hr_month);
+      if (!Number.isFinite(y) || y <= 0 || !validMonth(m)) { unassigned.push(r); continue; }
+      const key = `${y}-${String(m).padStart(2, '0')}`;
+      if (!groups.has(key)) groups.set(key, { y, m, rows: [] });
+      groups.get(key).rows.push(r);
+    }
+    // Chronological sheet order (Year asc, then Month asc) — NOT alphabetical. Unassigned last.
+    const ordered = [...groups.values()].sort((a, b) => a.y - b.y || a.m - b.m);
+    if (!ordered.length && !unassigned.length) {
+      buildSheet('Payroll Register', []);   // no records → keep the existing single empty-sheet behaviour
+    } else {
+      for (const g of ordered) buildSheet(`${MONTHS[g.m]} ${g.y}`, g.rows);   // e.g. "Aug 2026" (<= 31 chars, valid)
+      if (unassigned.length) {
+        buildSheet('Unassigned', unassigned);
+        (global.logger || console).warn?.(`[payroll-register] ${unassigned.length} row(s) had a missing/invalid Month or Year → "Unassigned" sheet.`);
+      }
+    }
   }
 
   else if (type === 'salary-register') {
