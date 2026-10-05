@@ -38,10 +38,10 @@ test('4/8/10 — past missing final OUT (4h confirmed) → INCOMPLETE bucket, st
   assert.strictEqual(s.inProgress, 0);
 });
 
-test('1/3 — present and half-day land in their own buckets', () => {
+test('1/3 — present + standalone half-day → worked fractions (half adds 0.5 to Present, 0.5 standalone Half)', () => {
   const s = summarizeEmployee([past(['09:00', '18:00']), past(['09:00', '13:00'])], { working: 2 });
-  assert.strictEqual(s.present, 1);
-  assert.strictEqual(s.half, 1);
+  assert.strictEqual(s.present, 1.5);   // 1 full present + 0.5 worked from the half-day (date-level allocation)
+  assert.strictEqual(s.half, 0.5);      // standalone half-day (no approved leave) → 0.5 indicator
   assert.strictEqual(s.incomplete, 0);
   assert.strictEqual(s.inProgress, 0);
 });

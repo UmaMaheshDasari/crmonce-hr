@@ -406,6 +406,11 @@ export default function AttendancePage() {
                 {r.hr_lateloginlabel || 'Late Present'}
               </span>
             )}
+            {r.hr_approvedleavefraction > 0 && (
+              <span title="Approved leave also covers this date — the worked hours and the approved leave share the day" className="inline-flex items-center text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+                {r.hr_approvedleavefraction >= 1 ? 'Approved Leave (Full Day)' : 'Approved Leave (0.5)'}
+              </span>
+            )}
             {canEditAttendance && (
               <button onClick={() => setEditRec(r)} title="Edit attendance"
                 className="p-1 rounded-md text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">

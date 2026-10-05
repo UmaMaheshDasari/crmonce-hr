@@ -32,11 +32,11 @@ test('summarizeEmployee: counts + absent = working - attended - leave', () => {
     { count: 1, status: 'incomplete', effectiveHours: 0, breakHours: 0, overtimeHours: 0 },
   ];
   const s = summarizeEmployee(sessions, { working: 23, leaveDays: 1 });
-  assert.strictEqual(s.present, 2);
-  assert.strictEqual(s.half, 1);
+  assert.strictEqual(s.present, 2.5);     // 2 full present + 0.5 worked from the standalone half-day
+  assert.strictEqual(s.half, 0.5);        // standalone half-day indicator (no approved leave on its date)
   assert.strictEqual(s.incomplete, 1);
   assert.strictEqual(s.attended, 4);
-  assert.strictEqual(s.absent, 18);       // 23 - 4 - 1
+  assert.strictEqual(s.absent, 18);       // 23 - 4 attended - 1 leave (a punch day is never absent)
   assert.strictEqual(s.effectiveHours, 20);
   assert.strictEqual(s.breakHours, 1.5);
 });

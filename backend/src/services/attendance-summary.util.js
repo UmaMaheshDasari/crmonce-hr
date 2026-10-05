@@ -41,22 +41,34 @@ function fmtDate(dateStr) {
  * @param sessions array of computeSession() results, optionally carrying { date, attendanceIssue }
  * Also returns missingPunchDetails: ["05 Jul 2026 – Missing Check Out", …] for incomplete days.
  */
-function summarizeEmployee(sessions = [], { working = 0, leaveDays = 0 } = {}) {
+function summarizeEmployee(sessions = [], { working = 0, approvedLeaveByDate = new Map(), approvedLeaveDays = 0, leaveDays } = {}) {
+  // DATE-LEVEL ALLOCATION: every working date contributes AT MOST 1.0, split into a WORKED
+  // fraction and an APPROVED-LEAVE fraction. Approved leave owns its fraction of the date; the
+  // worked fraction fills only what the leave leaves free. So a half-day worked + half-day
+  // approved leave on the SAME date = 0.5 Present + 0.5 Approved Leave (never 1 full Half Day +
+  // another 0.5). `approvedLeaveByDate` is date→approved weight (0 / 0.5 / 1), APPROVED only.
+  const approvedTotal = round2(approvedLeaveDays || leaveDays || 0);   // `leaveDays` kept for back-compat
+  const fracOf = (date) => {
+    const v = approvedLeaveByDate && typeof approvedLeaveByDate.get === 'function' ? approvedLeaveByDate.get(String(date || '').slice(0, 10)) : 0;
+    return Math.min(1, Math.max(0, Number(v) || 0));
+  };
   let present = 0, half = 0, incomplete = 0, inProgress = 0, attended = 0, eff = 0, brk = 0, ot = 0;
   const missingPunchDetails = [];
   for (const c of sessions) {
-    if ((c.count || 0) > 0) attended++;                 // any punch → not absent (rule 8)
-    if (c.status === 'present') present++;
-    else if (c.status === 'half_day') half++;
-    // in_progress (today's live open session) is its OWN bucket — NEVER lumped into Incomplete,
-    // so the Incomplete count matches the Incomplete detail filter and a working employee is not
-    // mislabelled. A finalized odd/missing-punch day is 'incomplete' (a separate bucket).
+    if ((c.count || 0) > 0) attended++;                 // any punch → a day with activity
+    const approvedFrac = fracOf(c.date);
+    const attendanceFrac = c.status === 'present' ? 1 : c.status === 'half_day' ? 0.5 : 0;
+    // Present/Worked contribution = the worked fraction, capped so worked + approved ≤ 1.
+    present = round2(present + Math.max(0, Math.min(attendanceFrac, 1 - approvedFrac)));
+    // Standalone Half Day = a half-day attendance NOT covered by approved leave (0.5 indicator).
+    // A half-day covered by approved leave (half or full) is NOT a standalone Half Day — its
+    // worked part is Present and its leave part is Approved Leave.
+    if (c.status === 'half_day') { if (approvedFrac === 0) half = round2(half + 0.5); }
+    // in_progress (today's live open session) is its OWN bucket — NEVER lumped into Incomplete.
+    // A finalized odd/missing-punch day is 'incomplete' (a separate bucket).
     else if (c.status === 'incomplete') incomplete++;
     else if (c.status === 'in_progress') inProgress++;
-    // Missing-punch details are keyed off punch PARITY / attendanceIssue (independent
-    // of status), so the "Missing Punch Details" export survives the removal of the
-    // 'incomplete' status. A missing-punch day still classifies (as half_day) above;
-    // this list is a separate reporting detail and does not double-count any bucket.
+    // Missing-punch details keyed off punch PARITY / attendanceIssue (independent of status).
     if (c.date && ((c.count || 0) % 2 === 1)) {
       missingPunchDetails.push(`${fmtDate(c.date)} – ${c.attendanceIssue || 'Missing Check Out'}`);
     }
@@ -64,7 +76,12 @@ function summarizeEmployee(sessions = [], { working = 0, leaveDays = 0 } = {}) {
     brk += c.breakHours || 0;
     ot += c.overtimeHours || 0;
   }
-  const absent = Math.max(0, working - attended - (leaveDays || 0));
+  // Absent = Working − days-with-activity − Approved Leave (never negative). A punched day
+  // (present / half / incomplete / in-progress) is NEVER absent — so `attended`, not the worked
+  // fraction, is subtracted here (an in-progress or incomplete day must not become Absent).
+  // NOTE: buildRangeSummary OVERRIDES this with the enumerated absentDatesFor() so the Absent
+  // CARD stays identical to the Absent LIST (/absentees). This is the fallback for direct callers.
+  const absent = Math.max(0, round2(working - attended - approvedTotal));
   return {
     present, half, incomplete, inProgress, attended, absent, missingPunchDetails,
     effectiveHours: round2(eff), breakHours: round2(brk), overtimeHours: round2(ot),

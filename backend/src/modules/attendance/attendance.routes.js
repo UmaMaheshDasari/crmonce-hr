@@ -134,6 +134,36 @@ router.get('/', requireAnyPermission('attendance.view'), async (req, res, next) 
       }
     } catch (_) { /* overlay is best-effort; attendance must never depend on it */ }
 
+    // Approved-leave overlay: a punched date that ALSO has an APPROVED leave (half or full)
+    // surfaces BOTH portions on the row — e.g. "Half Day" + "Approved Leave (0.5)", or
+    // "Approved Leave (Full Day)" alongside the worked hours. Additive + best-effort: it
+    // annotates rows, NEVER changes the computed status. Matches the date-level allocation
+    // used by the summary (a worked+approved-leave date = worked + approved, not a full Half Day).
+    try {
+      const dates = out.map(r => String(r.hr_date || '').slice(0, 10)).filter(Boolean).sort();
+      if (dates.length) {
+        const approved = toValue('hr_leave_status', 'approved');
+        const lf = targetId
+          ? `hr_status eq ${approved} and _hr_hremployee_value eq '${targetId}'`
+          : `hr_status eq ${approved}`;
+        const { data: lv } = await d365.getListOptional(d365.constructor.entities.leave, {
+          select: 'hr_fromdate,hr_todate,_hr_hremployee_value,hr_leavetype,hr_days', optionalSelect: 'hr_halfday,hr_usecompoff', filter: lf,
+        });
+        const byKey = new Map();   // employee|date → { fraction, type }
+        (lv || []).forEach(l => {
+          const a = String(l.hr_fromdate || '').slice(0, 10);
+          const b = String(l.hr_todate || '').slice(0, 10) || a;
+          const fraction = l.hr_halfday === 'true' ? 0.5 : 1;
+          const type = l.hr_usecompoff === 'true' ? 'Comp Off' : toLabel('hr_leave_type', l.hr_leavetype);
+          for (const ds of dates) if (ds >= a && ds <= b) byKey.set(`${l._hr_hremployee_value}|${ds}`, { fraction, type });
+        });
+        if (byKey.size) out.forEach(r => {
+          const hit = byKey.get(`${r._hr_hremployee_value}|${String(r.hr_date || '').slice(0, 10)}`);
+          if (hit) { r.hr_approvedleavefraction = hit.fraction; r.hr_approvedleavetype = hit.type; }
+        });
+      }
+    } catch (_) { /* overlay is best-effort */ }
+
     out.forEach(r => { delete r._late; delete r._incomplete; });
     res.json(labelsForList('hr_hrattendances', { data: out, count }));
   } catch (err) { next(err); }
@@ -914,13 +944,15 @@ async function buildRangeSummary(from, to, { targetId, department, designation }
     const leaveSet = new Set(leaveMap.keys());                             // approved+pending → NEVER actual Absent
     let approvedDays = 0, pendingDays = 0;
     // SUM per-date weights (0.5 for a half-day, 1 for a full day) — never count entries —
-    // so a half-day leave contributes 0.5 to the approved/pending day totals.
-    for (const info of leaveMap.values()) { const w = Number(info.weight) || 1; if (info.status === 'approved') approvedDays = Math.round((approvedDays + w) * 100) / 100; else if (info.status === 'pending') pendingDays = Math.round((pendingDays + w) * 100) / 100; }
+    // so a half-day leave contributes 0.5 to the approved/pending day totals. `approvedByDate`
+    // (approved weights per date) lets the summary split a worked+approved-leave date correctly.
+    const approvedByDate = new Map();
+    for (const [date, info] of leaveMap) { const w = Number(info.weight) || 1; if (info.status === 'approved') { approvedDays = Math.round((approvedDays + w) * 100) / 100; approvedByDate.set(date, w); } else if (info.status === 'pending') pendingDays = Math.round((pendingDays + w) * 100) / 100; }
     // Prefer the true first-ever date; fall back to the earliest in-range punch so
     // an unavailable aggregate never forces working days (and thus Absent) to 0.
     const firstDate = firstMap.get(e.hr_hremployeeid) || firstInRange[e.hr_hremployeeid] || null;
     const working = effectiveWorking(from, capTo, firstDate);
-    const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, leaveDays: approvedDays });
+    const summary = summarizeEmployee(byEmp[e.hr_hremployeeid] || [], { working, approvedLeaveByDate: approvedByDate, approvedLeaveDays: approvedDays });
     // Absent = ENUMERATED working dates with no record and no approved/pending leave. Today
     // counts only once this employee's own shift-start + grace has passed (spec §7/§8).
     const todayPending = todayInRange && !gracePassedToday(shiftOf(e), graceMin, nowMin);
