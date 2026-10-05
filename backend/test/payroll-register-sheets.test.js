@@ -129,3 +129,45 @@ test('sheet names are valid Excel names (≤ 31 chars, no forbidden chars)', asy
   }
   assert.deepEqual(names(wb), ['Dec 2026', 'Jan 2027']);   // Dec 2026 before Jan 2027 (chronological across year)
 });
+
+// ── Attendance Register + Bank Transfer use the SAME shared month/year split helper ──
+async function buildType(type, rows, opts = {}) {
+  const restore = stub(rows);
+  try { return await reports.buildReport(type, opts); } finally { restore(); }
+}
+
+for (const type of ['attendance-register', 'bank-transfer']) {
+  test(`${type} — one month → one sheet "<Mon> <Year>"; two months → chronological split`, async () => {
+    assert.deepEqual(names(await buildType(type, [row('a', 'A', 8, 2026)])), ['Aug 2026']);
+    assert.deepEqual(names(await buildType(type, [row('a', 'A', 9, 2026), row('b', 'B', 8, 2026)])), ['Aug 2026', 'Sep 2026']);
+  });
+  test(`${type} — Aug 2026 rows never appear in the Sep 2026 sheet (and vice-versa)`, async () => {
+    const wb = await buildType(type, [row('a', 'A', 8, 2026), row('b', 'B', 8, 2026), row('c', 'C', 9, 2026)]);
+    assert.deepEqual([...new Set(months(wb.getWorksheet('Aug 2026')))], ['Aug']);
+    assert.equal(months(wb.getWorksheet('Aug 2026')).length, 2);
+    assert.deepEqual([...new Set(months(wb.getWorksheet('Sep 2026')))], ['Sep']);
+    assert.equal(months(wb.getWorksheet('Sep 2026')).length, 1);
+  });
+  test(`${type} — same month across two years → two sheets, chronological`, async () => {
+    assert.deepEqual(names(await buildType(type, [row('a', 'A', 8, 2026), row('b', 'B', 8, 2025)])), ['Aug 2025', 'Aug 2026']);
+  });
+  test(`${type} — missing/invalid Month or Year → "Unassigned" (never merged)`, async () => {
+    const wb = await buildType(type, [row('a', 'A', 8, 2026), row('b', 'B', null, 2026), row('c', 'C', 13, 2026)]);
+    assert.deepEqual(names(wb), ['Aug 2026', 'Unassigned']);
+    assert.equal(months(wb.getWorksheet('Unassigned')).length, 2);
+  });
+  test(`${type} — no records → single empty sheet keeps its original name`, async () => {
+    const wb = await buildType(type, []);
+    assert.deepEqual(names(wb), [type === 'attendance-register' ? 'Attendance Register' : 'Bank Transfer']);
+  });
+}
+
+test('attendance-register columns are unchanged', async () => {
+  const hdr = (await buildType('attendance-register', [row('a', 'A', 8, 2026)])).getWorksheet('Aug 2026').getRow(1).values.slice(1);
+  assert.deepEqual(hdr, ['Employee ID', 'Employee', 'Month', 'Year', 'Present', 'Absent', 'Salary Working Days', 'Payable Days', 'Absent LOP (₹)', 'Hourly Shortage Deduction (₹)', 'Total Deduction (₹)']);
+});
+
+test('bank-transfer columns are unchanged', async () => {
+  const hdr = (await buildType('bank-transfer', [row('a', 'A', 8, 2026)])).getWorksheet('Aug 2026').getRow(1).values.slice(1);
+  assert.deepEqual(hdr, ['Employee ID', 'Employee', 'Month', 'Year', 'Account Holder', 'Bank', 'Account No', 'IFSC', 'Net Pay']);
+});

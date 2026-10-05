@@ -76,7 +76,7 @@ test('payslip-register: Deductions = Gross − Net', async () => {
 test('attendance-register: Total Deduction = Gross − Net', async () => {
   const restore = stub();
   try {
-    const ws = (await reports.buildReport('attendance-register', { year: 2026, month: 7 })).getWorksheet('Attendance Register');
+    const ws = (await reports.buildReport('attendance-register', { year: 2026, month: 7 })).getWorksheet('Jul 2026');
     assert.strictEqual(ws.getRow(2).getCell(11).value, 200, 'total deduction for Uttej');
   } finally { restore(); }
 });

@@ -58,7 +58,7 @@ function ApplyModal({ isHR, employees, record, onClose }) {
           <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Requested Date</label>
             <input type="date" className={inputCls} {...register('requestedDate')} /></div>
         </div>
-        <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Preferred Monthly EMI (optional)</label>
+        <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Preferred Monthly Installment (optional)</label>
           <input type="number" min="0" className={inputCls} placeholder="Blank = recover in one payroll; HR can change" {...register('emi')} /></div>
         <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Reason<span className="text-red-500">*</span></label>
           <textarea rows={3} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 resize-none" placeholder="Why do you need this advance?" {...register('reason', { required: true })} /></div>
@@ -88,7 +88,7 @@ function ApproveModal({ record, onClose }) {
       <form onSubmit={handleSubmit(v => mut.mutate(v))} className="flex flex-col min-h-0 flex-1">
         <ModalBody className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Monthly EMI</label>
+          <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Monthly Installment</label>
             <input type="number" min="0" className={inputCls} placeholder="0 = one payroll" {...register('emi')} /></div>
           <div className="space-y-1"><label className="block text-xs font-semibold text-gray-600">Recover From</label>
             <input type="month" className={inputCls} {...register('recoverFrom')} /></div>
@@ -161,7 +161,7 @@ function AdvanceCard({ record, isHR, canApprove, onApprove, onReject, onDelete, 
           </div>
           <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, record.percent)}%` }} /></div>
           <div className="flex items-center justify-between text-xs mt-1.5 text-gray-400">
-            <span>EMI {record.emi > 0 ? <><SensitiveAmount value={inr(record.emi)} label="EMI" />/mo</> : 'one payroll'}{record.recoverFrom ? ` · from ${record.recoverFrom}` : ''}</span>
+            <span>Installment {record.emi > 0 ? <><SensitiveAmount value={inr(record.emi)} label="Installment" />/mo</> : 'one payroll'}{record.recoverFrom ? ` · from ${record.recoverFrom}` : ''}</span>
             <span className="font-medium text-gray-600">Remaining <SensitiveAmount value={inr(record.remaining)} label="remaining amount" /></span>
           </div>
           {record.schedule?.length > 0 && (
@@ -237,7 +237,7 @@ export default function AdvanceSalaryPage() {
           <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20"><BanknotesIcon className="w-5 h-5 text-white" /></div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Advance Salary</h1>
-            <p className="text-sm text-gray-400">Request an advance; approved advances are auto-recovered from payroll as EMIs.</p>
+            <p className="text-sm text-gray-400">Request an advance; approved advances are auto-recovered from payroll as installments.</p>
           </div>
         </div>
         <button onClick={() => setShowApply(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 shadow-lg shadow-indigo-500/25 self-start"><PlusIcon className="w-4.5 h-4.5" /> Apply Advance</button>

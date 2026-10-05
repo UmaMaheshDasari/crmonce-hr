@@ -82,13 +82,13 @@ test('payroll-register July 2026 → ONLY July rows (never August)', async () =>
 });
 
 test('attendance-register August 2026 → ONLY August rows', async () => {
-  const { months, filter } = await monthsInReport('attendance-register', { year: 2026, month: 8 }, 'Attendance Register');
+  const { months, filter } = await monthsInReport('attendance-register', { year: 2026, month: 8 }, 'Aug 2026');
   assert.deepEqual([...new Set(months)], ['Aug']);
   assert.match(filter, /hr_month eq 8/);
 });
 
 test('bank-transfer + payslip-register are also month-isolated', async () => {
-  const bt = await monthsInReport('bank-transfer', { year: 2026, month: 7 }, 'Bank Transfer');
+  const bt = await monthsInReport('bank-transfer', { year: 2026, month: 7 }, 'Jul 2026');
   assert.deepEqual([...new Set(bt.months)], ['Jul']);
   const ps = await monthsInReport('payslip-register', { year: 2026, month: 8 }, 'Payslip Register');
   assert.deepEqual([...new Set(ps.months)], ['Aug']);

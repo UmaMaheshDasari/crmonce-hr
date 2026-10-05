@@ -46,6 +46,43 @@ async function titledSheet(wb, name, company, subtitle) {
   return ws;
 }
 
+// Build ONE worksheet per unique (Year, Month) from payroll-style rows (each carrying the
+// stored hr_month/hr_year). Shared by the Payroll Register, Attendance Register and Bank
+// Transfer exports so the month/year splitting lives in ONE place (no duplicated logic).
+//   • `columns`  — the report's existing ExcelJS column set (unchanged).
+//   • `shapeRow` — the report's existing row mapping (unchanged); grouping never alters values.
+//   • `emptyName`— the single sheet created when there are NO rows (preserves prior behaviour).
+// Sheets are named "<Mon> <Year>" (e.g. "Aug 2026", always ≤31 chars / valid), ordered
+// chronologically (Year asc, then Month asc — never alphabetical), each containing ONLY its
+// own rows in the fetched order. Rows with a missing/invalid Month or Year are NEVER merged
+// into a month — they go to a clearly-named "Unassigned" sheet.
+function buildMonthlySheets(wb, rows, columns, shapeRow, emptyName) {
+  const buildSheet = (name, groupRows) => {
+    const ws = wb.addWorksheet(name);
+    ws.columns = columns;
+    for (const r of groupRows) ws.addRow(shapeRow(r));
+    styleHeader(ws); autoWidth(ws);
+    return ws;
+  };
+  const validMonth = (m) => Number.isInteger(m) && m >= 1 && m <= 12;
+  const groups = new Map();   // "YYYY-MM" → { y, m, rows }
+  const unassigned = [];
+  for (const r of rows || []) {
+    const y = Number(r.hr_year), m = Number(r.hr_month);
+    if (!Number.isFinite(y) || y <= 0 || !validMonth(m)) { unassigned.push(r); continue; }
+    const key = `${y}-${String(m).padStart(2, '0')}`;
+    if (!groups.has(key)) groups.set(key, { y, m, rows: [] });
+    groups.get(key).rows.push(r);
+  }
+  const ordered = [...groups.values()].sort((a, b) => a.y - b.y || a.m - b.m);
+  if (!ordered.length && !unassigned.length) { buildSheet(emptyName, []); return; }   // no records → single empty sheet
+  for (const g of ordered) buildSheet(`${MONTHS[g.m]} ${g.y}`, g.rows);
+  if (unassigned.length) {
+    buildSheet('Unassigned', unassigned);
+    (global.logger || console).warn?.(`[${emptyName}] ${unassigned.length} row(s) had a missing/invalid Month or Year → "Unassigned" sheet.`);
+  }
+}
+
 // Employee ID (EMP1039) = the eTime business ID — never the GUID.
 const empId = (e) => e?.hr_employeeid || e?.hr_employeecode || e?.hr_etimecode || '';
 const empCode = (e) => e?.hr_etimecode || '';   // device Empcode (40)
@@ -135,38 +172,7 @@ async function buildReport(type, { year, month } = {}) {
       // hr_deductions "Other" bucket which is ₹0 for most employees.
       ded: totalDeductionsOf(r), net: r.hr_netpay || 0, status: statusLabel(r.hr_status),
     });
-    // Build ONE worksheet for a set of rows, with the SAME columns + header/freeze/width formatting.
-    const buildSheet = (name, groupRows) => {
-      const ws = wb.addWorksheet(name);
-      ws.columns = COLUMNS;
-      for (const r of groupRows) ws.addRow(shapeRow(r));   // preserves the fetched row order within the sheet
-      styleHeader(ws); autoWidth(ws);
-      return ws;
-    };
-    // Group by the EXACT (Year, Month) already stored on each payroll row — never a second
-    // date calculation. A row whose Month or Year is missing/invalid is NEVER merged into
-    // another month: it goes to a clearly-named "Unassigned" sheet.
-    const validMonth = (m) => Number.isInteger(m) && m >= 1 && m <= 12;
-    const groups = new Map();   // "YYYY-MM" → { y, m, rows }
-    const unassigned = [];
-    for (const r of rows) {
-      const y = Number(r.hr_year), m = Number(r.hr_month);
-      if (!Number.isFinite(y) || y <= 0 || !validMonth(m)) { unassigned.push(r); continue; }
-      const key = `${y}-${String(m).padStart(2, '0')}`;
-      if (!groups.has(key)) groups.set(key, { y, m, rows: [] });
-      groups.get(key).rows.push(r);
-    }
-    // Chronological sheet order (Year asc, then Month asc) — NOT alphabetical. Unassigned last.
-    const ordered = [...groups.values()].sort((a, b) => a.y - b.y || a.m - b.m);
-    if (!ordered.length && !unassigned.length) {
-      buildSheet('Payroll Register', []);   // no records → keep the existing single empty-sheet behaviour
-    } else {
-      for (const g of ordered) buildSheet(`${MONTHS[g.m]} ${g.y}`, g.rows);   // e.g. "Aug 2026" (<= 31 chars, valid)
-      if (unassigned.length) {
-        buildSheet('Unassigned', unassigned);
-        (global.logger || console).warn?.(`[payroll-register] ${unassigned.length} row(s) had a missing/invalid Month or Year → "Unassigned" sheet.`);
-      }
-    }
+    buildMonthlySheets(wb, rows, COLUMNS, shapeRow, 'Payroll Register');   // one sheet per Month+Year
   }
 
   else if (type === 'salary-register') {
@@ -201,8 +207,8 @@ async function buildReport(type, { year, month } = {}) {
 
   else if (type === 'attendance-register') {
     const [rows, ids] = await Promise.all([fetchPayroll(year, month), empInfoMap()]);
-    const ws = await titledSheet(wb, 'Attendance Register', company);
-    ws.columns = [
+    // Existing columns + row mapping UNCHANGED — only split into one sheet per Month+Year.
+    const COLUMNS = [
       { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 }, { header: 'Month', key: 'month', width: 8 },
       { header: 'Year', key: 'year', width: 8 }, { header: 'Present', key: 'present', width: 10 },
       { header: 'Absent', key: 'absent', width: 10 }, { header: 'Salary Working Days', key: 'wd', width: 18 },
@@ -211,14 +217,12 @@ async function buildReport(type, { year, month } = {}) {
       { header: 'Absent LOP (₹)', key: 'lop', width: 14 }, { header: 'Hourly Shortage Deduction (₹)', key: 'hrded', width: 26 },
       { header: 'Total Deduction (₹)', key: 'totded', width: 18 },
     ];
-    for (const r of rows) {
-      ws.addRow({
-        eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
-        present: r.hr_presentdays ?? '—', absent: r.hr_absentdays ?? '—', wd: r.hr_workingdays ?? '—', pd: r.hr_paydays ?? '—',
-        lop: r.hr_lop != null ? Number(r.hr_lop) : 0, hrded: r.hr_hourdeduction != null ? Number(r.hr_hourdeduction) : 0, totded: totalDeductionsOf(r),
-      });
-    }
-    styleHeader(ws); autoWidth(ws);
+    const shapeRow = (r) => ({
+      eid: ids.get(r._hr_hremployee_value)?.id || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
+      present: r.hr_presentdays ?? '—', absent: r.hr_absentdays ?? '—', wd: r.hr_workingdays ?? '—', pd: r.hr_paydays ?? '—',
+      lop: r.hr_lop != null ? Number(r.hr_lop) : 0, hrded: r.hr_hourdeduction != null ? Number(r.hr_hourdeduction) : 0, totded: totalDeductionsOf(r),
+    });
+    buildMonthlySheets(wb, rows, COLUMNS, shapeRow, 'Attendance Register');   // one sheet per Month+Year
   }
 
   else if (type === 'employee-master') {
@@ -247,22 +251,21 @@ async function buildReport(type, { year, month } = {}) {
   else if (type === 'bank-transfer') {
     const [rows, emps] = await Promise.all([fetchPayroll(year, month), fetchEmployees()]);
     const byId = new Map(emps.map((e) => [e.hr_hremployeeid, e]));
-    const ws = await titledSheet(wb, 'Bank Transfer', company);
-    ws.columns = [
+    // Existing columns + bank/account mapping UNCHANGED — only split into one sheet per Month+Year.
+    const COLUMNS = [
       { header: 'Employee ID', key: 'eid', width: 12 }, { header: 'Employee', key: 'emp', width: 24 }, { header: 'Month', key: 'month', width: 8 }, { header: 'Year', key: 'year', width: 8 },
       { header: 'Account Holder', key: 'holder', width: 22 }, { header: 'Bank', key: 'bank', width: 18 },
       { header: 'Account No', key: 'acc', width: 20 }, { header: 'IFSC', key: 'ifsc', width: 14 }, { header: 'Net Pay', key: 'net', width: 12 },
     ];
-    const filtered = month ? rows.filter((r) => r.hr_month === month) : rows;
-    for (const r of filtered) {
+    const shapeRow = (r) => {
       const e = byId.get(r._hr_hremployee_value) || {};
-      ws.addRow({
+      return {
         eid: empId(e) || '—', emp: nameOf(r), month: MONTHS[r.hr_month] || r.hr_month, year: r.hr_year,
         holder: e.hr_accountholder || e.hr_hremployee1 || nameOf(r), bank: e.hr_bankname || '—',
         acc: e.hr_accountnumber || '—', ifsc: e.hr_ifsc || '—', net: r.hr_netpay || 0,
-      });
-    }
-    styleHeader(ws); autoWidth(ws);
+      };
+    };
+    buildMonthlySheets(wb, rows, COLUMNS, shapeRow, 'Bank Transfer');   // one sheet per Month+Year
   }
 
   else if (type === 'payslip-register') {
