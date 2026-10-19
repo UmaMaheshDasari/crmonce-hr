@@ -18,6 +18,7 @@ export const employeeApi = {
   update: (id, data) => api.patch(`/employees/${id}`, data),
   delete: (id) => api.delete(`/employees/${id}`),
   departments: () => api.get('/employees/meta/departments'),
+  exportExperience: () => api.get('/employees/export/experience', { responseType: 'blob' }),   // DOJ + total experience (all employees)
   verify: (id, data) => api.patch(`/employees/${id}/verify`, data),   // HR: approve/reject/request_changes
   setWebCheckin: (id, enabled) => api.patch(`/employees/${id}/web-checkin`, { enabled }),   // Admin: enable/disable Web Check-In
   profileAudit: (id) => api.get(`/employees/${id}/profile-audit`),

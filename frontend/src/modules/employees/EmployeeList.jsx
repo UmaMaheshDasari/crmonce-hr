@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { employeeApi } from '../../api/endpoints';
-import { MagnifyingGlassIcon, PlusIcon, EyeIcon, PencilSquareIcon, UserGroupIcon, ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, PlusIcon, EyeIcon, PencilSquareIcon, UserGroupIcon, ArrowPathIcon, XMarkIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import StatusBadge from '../../components/StatusBadge';
 import toast from 'react-hot-toast';
@@ -110,12 +110,36 @@ export default function EmployeeList() {
   const { hasPermission } = useAuth();
   const canCreateEmp = hasPermission('employees.create');   // RBAC Phase D
   const canEditEmp = hasPermission('employees.edit');        // add/edit + eTime sync
+  const canExport = hasPermission('reports.export');         // bulk Employee Experience export (matches backend guard)
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
   const [status, setStatus] = useState('active');
   const [page, setPage] = useState(1);
   const [showSync, setShowSync] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const limit = 15;
+
+  // Download every employee's Date of Joining + total experience (up to today) as .xlsx.
+  // The backend computes the tenure and names the file; we honour that name when present.
+  const exportExperience = async () => {
+    setExporting(true);
+    try {
+      const res = await employeeApi.exportExperience();
+      const cd = res.headers?.['content-disposition'] || '';
+      const match = /filename="?([^"]+)"?/.exec(cd);
+      const name = match ? match[1] : `Employee_Experience_${format(new Date(), 'yyyy-MM-dd')}.xlsx`;
+      const url = URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Employee experience exported');
+    } catch {
+      toast.error('Failed to export employee experience');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['employees', search, dept, status, page],
@@ -140,16 +164,18 @@ export default function EmployeeList() {
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Employees</h1>
           <p className="text-gray-400 text-sm mt-1 font-medium">{total} total employees</p>
         </div>
-        {(canEditEmp || canCreateEmp) && (
-          <div className="flex items-center gap-2">
-            {canEditEmp && <button onClick={() => setShowSync(true)} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-4 bg-white text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-200">
-              <ArrowPathIcon className="w-[18px] h-[18px]" /> Sync from eTime
-            </button>}
-            {canCreateEmp && <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
-              <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
-            </Link>}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {canExport && <button onClick={exportExperience} disabled={exporting} title="Export every employee's joining date and total experience"
+            className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-4 bg-white text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-xl hover:bg-indigo-50 disabled:opacity-50 transition-all duration-200">
+            <ArrowDownTrayIcon className="w-[18px] h-[18px]" /> {exporting ? 'Exporting…' : 'Export Experience'}
+          </button>}
+          {canEditEmp && <button onClick={() => setShowSync(true)} className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-4 bg-white text-indigo-700 border border-indigo-200 text-sm font-semibold rounded-xl hover:bg-indigo-50 transition-all duration-200">
+            <ArrowPathIcon className="w-[18px] h-[18px]" /> Sync from eTime
+          </button>}
+          {canCreateEmp && <Link to="/employees/new" className="inline-flex items-center justify-center whitespace-nowrap gap-2 h-11 px-3.5 sm:px-5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200">
+            <PlusIcon className="w-[18px] h-[18px]" /> Add Employee
+          </Link>}
+        </div>
       </div>
       {showSync && <SyncEtimeModal onClose={() => setShowSync(false)} />}
 

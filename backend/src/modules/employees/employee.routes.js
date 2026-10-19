@@ -145,6 +145,24 @@ router.get('/', requireAnyPermission('employees.view'), async (req, res, next) =
   } catch (err) { next(err); }
 });
 
+// GET /api/employees/export/experience — Excel: every employee's DOJ + total experience
+// (calendar Years/Months/Days) up to today. Declared BEFORE "/:id" so it is not swallowed as
+// an id. This is a BULK export of all employees (no self-scoping), so it is gated on
+// `reports.export` — the same permission as the sibling report-export endpoints — NOT the
+// self-scoped `employees.view` (which `employee`/`recruiter` hold and would use to pull
+// everyone's data). Exposes only id/name/DOJ/experience.
+router.get('/export/experience', requireAnyPermission('reports.export'), async (req, res, next) => {
+  try {
+    const { buildReport } = require('../../services/payroll-reports.service');
+    const wb = await buildReport('employee-experience');
+    const stamp = require('../../services/time.util').istDateStr();   // YYYY-MM-DD (app timezone)
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=Employee_Experience_${stamp}.xlsx`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
 // GET /api/employees/:id
 router.get('/:id', requireAnyPermission('employees.view'), async (req, res, next) => {
   try {

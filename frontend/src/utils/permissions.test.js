@@ -62,6 +62,15 @@ test('attendance-request Delete/Cancel: visible ONLY to HR/Admin (canApprove || 
   assert.equal(canDelete(RECRUITER), false);
 });
 
+test('Export Experience button gate (reports.export): HR/Admin see it; employee + recruiter do not', () => {
+  // Exactly the predicate EmployeeList uses: hasPermission('reports.export').
+  const canExport = (perms) => hasPermission(perms, 'reports.export');
+  assert.equal(canExport(SUPER_ADMIN), true);
+  assert.equal(canExport(HR_MANAGER), true);
+  assert.equal(canExport(EMPLOYEE), false);    // employees.view only → button hidden (matches backend 403)
+  assert.equal(canExport(RECRUITER), false);   // employees.view only → button hidden (matches backend 403)
+});
+
 test('semantics: exact, module.* wildcard, "*", and missing → false (never throws)', () => {
   assert.equal(hasPermission(['payroll.*'], 'payroll.process'), true);   // module wildcard form
   assert.equal(hasPermission(['payroll.*'], 'salary.edit'), false);

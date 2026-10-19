@@ -13,6 +13,8 @@ const ExcelJS = require('exceljs');
 const d365 = require('./d365.service');
 const companySvc = require('./company.service');
 const salaryStructureSvc = require('./salary-structure.service');
+const { istDateStr } = require('./time.util');
+const { experienceRow, EXPERIENCE_COLUMNS } = require('./experience.util');
 
 const E = d365.constructor.entities;
 const PAYROLL = E.payroll;
@@ -245,6 +247,19 @@ async function buildReport(type, { year, month } = {}) {
       blood: e.hr_bloodgroup || '—', ec: e.hr_emergencycontact || '—', ep: e.hr_emergencyphone || '—',
       bank: e.hr_bankname || '—', acc: e.hr_accountnumber || '—', ifsc: e.hr_ifsc || '—',
     });
+    styleHeader(ws); autoWidth(ws);
+  }
+
+  else if (type === 'employee-experience') {
+    // Date of Joining → total experience (calendar Years/Months/Days) up to the CURRENT date.
+    // Current date is resolved in the app timezone (IST) exactly like every other report, and
+    // is identical for every row in a given export. Missing/invalid DOJ and future DOJ are
+    // handled by experienceRow (never a wrong or negative tenure). All employees, no period.
+    const emps = await fetchEmployees();
+    const asOf = istDateStr();   // "YYYY-MM-DD" today in the app timezone (dynamic)
+    const ws = await titledSheet(wb, 'Employee Experience', company);
+    ws.columns = EXPERIENCE_COLUMNS;
+    for (const e of emps) ws.addRow(experienceRow({ eid: empId(e), name: e.hr_hremployee1, doj: e.hr_joiningdate }, asOf));
     styleHeader(ws); autoWidth(ws);
   }
 

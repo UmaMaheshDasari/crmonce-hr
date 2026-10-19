@@ -122,6 +122,18 @@ test('recruiter → recruitment guards allowed, HR/attendance/payroll guards den
   deny(requireAnyPermission('payroll.view'), 'recruiter');
   deny(requireAnyPermission('leave.approve'), 'recruiter');
 });
+// ── Employee Experience bulk export (GET /employees/export/experience) ──
+// A bulk export of ALL employees' DOJ + tenure. It is gated on reports.export (like the
+// sibling report-export endpoints), NOT the self-scoped employees.view — so employee and
+// recruiter (who hold employees.view for their own/limited reads) cannot pull everyone's data.
+test('employee-experience export guard (reports.export): HR + super_admin allowed; employee + recruiter denied', () => {
+  const g = requireAnyPermission('reports.export');
+  allow(g, 'hr_manager');
+  allow(g, 'super_admin');
+  deny(g, 'employee');   // has employees.view (self-scoped) but NOT reports.export
+  deny(g, 'recruiter');  // has employees.view but NOT reports.export
+});
+
 test('recruitment POST /jobs stays requireRole(HR): hr_manager allowed, recruiter denied', () => {
   const g = requireRole('super_admin', 'hr_manager');
   allow(g, 'hr_manager');
