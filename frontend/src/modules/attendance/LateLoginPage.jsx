@@ -8,45 +8,56 @@ import RequestLifecycleActions from '../../components/RequestLifecycleActions';
 import { format, subDays } from 'date-fns';
 import toast from 'react-hot-toast';
 
+// This page serves BOTH Late Login and Early Logout — same design/behaviour (an
+// INFORMATION record, no approval, no attendance punch). `requestType` + CFG swap the
+// wording, the shift reference (shift START for late login / shift END for early logout)
+// and the time direction (late-by vs early-by).
+const CFG = {
+  late_login: {
+    title: 'Late Login',
+    lead: 'Record a late login — informational only (no approval). Attendance stays Present; no leave/salary deducted.',
+    raise: 'Raise Late Login', request: 'Request Late Login', modalNew: 'Late Login Request', modalEdit: 'Edit Late Login',
+    shiftLabel: 'Shift Start Time', timeLabel: 'Late Login Time', diffLabel: 'Late By',
+    colShift: 'Shift Start', colTime: 'Late Login',
+    timePlaceholder: 'Why were you / will you be late?',
+    key: 'late-login', file: 'late-logins',
+  },
+  early_logout: {
+    title: 'Early Logout',
+    lead: 'Record an early logout — informational only (no approval). Attendance is unchanged; no leave/salary deducted.',
+    raise: 'Raise Early Logout', request: 'Request Early Logout', modalNew: 'Early Logout Request', modalEdit: 'Edit Early Logout',
+    shiftLabel: 'Shift End Time', timeLabel: 'Logout Time', diffLabel: 'Early By',
+    colShift: 'Shift End', colTime: 'Logout',
+    timePlaceholder: 'Why do you need to leave early?',
+    key: 'early-logout', file: 'early-logouts',
+  },
+};
+// Permission is allowed only up to 2 hours (spec §2); beyond that the employee applies for leave.
+const MAX_MIN = 120;
+const LIMIT_MSG = 'Permission is allowed only up to 2 hours. Please apply for leave for a longer duration.';
+
 const inp = 'w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400';
-// Late Login is an INFORMATION record (no approval). Statuses: submitted → completed /
-// absent_leave_required (set by the daily attendance-verification job) / cancelled.
-// Legacy pending/approved/rejected are kept only so old records still render.
-// Late Login has NO approval — only these statuses. Legacy pending/approved/rejected
-// (from the old approval era) are mapped to the new set so no approval wording shows.
 const STATUS = {
   submitted: 'bg-blue-50 text-blue-700 border-blue-200',
   completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   absent_leave_required: 'bg-red-50 text-red-700 border-red-200',
   cancelled: 'bg-gray-100 text-gray-500 border-gray-200',
-  pending: 'bg-blue-50 text-blue-700 border-blue-200',        // legacy → Submitted
-  approved: 'bg-emerald-50 text-emerald-700 border-emerald-200', // legacy → Completed
-  rejected: 'bg-gray-100 text-gray-500 border-gray-200',       // legacy → Cancelled
+  pending: 'bg-blue-50 text-blue-700 border-blue-200',
+  approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  rejected: 'bg-gray-100 text-gray-500 border-gray-200',
 };
 const STATUS_LABEL = {
   submitted: 'Submitted', completed: 'Completed', absent_leave_required: 'Leave Required',
   cancelled: 'Cancelled', pending: 'Submitted', approved: 'Completed', rejected: 'Cancelled',
 };
 const fmt = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy') : '—'; } catch { return d || '—'; } };
-// Times in HH:MM (24h). Late By = Late Login Time − Shift Start Time (no grace subtracted).
 const toMin = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 const to12h = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); if (!m) return ''; let h = +m[1]; const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${ap}`; };
-const lateByMin = (start, actual) => { const s = toMin(start), a = toMin(actual); return (s == null || a == null) ? null : a - s; };
-// Compact for the table ("2h 30m"); long for the form ("2 hours 30 minutes").
-const lateByLabel = (start, actual) => {
-  const n = lateByMin(start, actual);
-  if (n == null || n <= 0) return '—';
-  const h = Math.floor(n / 60), m = n % 60;
-  return [h ? `${h}h` : '', m ? `${m}m` : ''].filter(Boolean).join(' ') || '0m';
-};
-const lateByLong = (start, actual) => {
-  const n = lateByMin(start, actual);
-  if (n == null || n <= 0) return '';
-  const h = Math.floor(n / 60), m = n % 60;
-  return [h ? `${h} hour${h === 1 ? '' : 's'}` : '', m ? `${m} minute${m === 1 ? '' : 's'}` : ''].filter(Boolean).join(' ') || '0 minutes';
-};
-// Map a Late Login row to the shared lifecycle canonical status (submitted/completed/
-// absent are all editable-while-open → canonical 'pending'; legacy states preserved).
+// Forward minutes on a 24h clock (overnight-safe). late-by = START→login; early-by = logout→END.
+const fwd = (from, to) => { const f = toMin(from), t = toMin(to); return (f == null || t == null) ? null : (((t - f) % 1440) + 1440) % 1440; };
+const permMin = (rt, shiftTime, time) => (rt === 'early_logout' ? fwd(time, shiftTime) : fwd(shiftTime, time));
+const compact = (n) => { if (n == null) return '—'; const h = Math.floor(n / 60), m = n % 60; return [h ? `${h}h` : '', m ? `${m}m` : ''].filter(Boolean).join(' ') || '0m'; };
+const longDur = (n) => { if (n == null) return ''; const h = Math.floor(n / 60), m = n % 60; return [h ? `${h} hour${h === 1 ? '' : 's'}` : '', m ? `${m} minute${m === 1 ? '' : 's'}` : ''].filter(Boolean).join(' ') || '0 minutes'; };
 const canon = (r) => {
   if (r.status === 'cancelled') return 'cancelled';
   if (r.status === 'rejected') return 'rejected';
@@ -55,58 +66,58 @@ const canon = (r) => {
 };
 const todayStr = new Date().toISOString().slice(0, 10);
 
-function SubmitModal({ isHR, employees, policy, editRecord, onClose }) {
+function SubmitModal({ requestType, cfg, isHR, employees, policy, editRecord, onClose }) {
   const qc = useQueryClient();
   const isEdit = !!editRecord;
   const [f, setF] = useState(isEdit
     ? { employeeId: editRecord.employeeId || '', date: String(editRecord.date || '').slice(0, 10), actualTime: editRecord.actualTime || '', reason: editRecord.reason || '', remarks: editRecord.remarks || '' }
     : { employeeId: '', date: todayStr, actualTime: '', reason: '', remarks: '' });
 
-  // Shift Start Time is AUTO from the employee's shift (source of truth = Attendance
-  // shift config), read-only. For HR it follows the selected employee; for a normal
-  // employee it is their own (page-level policy). On edit, the record's stored shift
-  // start is used. Never hardcoded to 09:00.
+  // Shift reference time is AUTO from the employee's shift (source of truth = Attendance
+  // shift config), read-only. Late Login uses the shift START; Early Logout the shift END.
   const { data: empPolicy } = useQuery({
-    queryKey: ['late-login-shift', f.employeeId],
-    queryFn: () => lateLoginApi.policy({ employeeId: f.employeeId }).then(r => r.data),
+    queryKey: [`${cfg.key}-shift`, f.employeeId],
+    queryFn: () => lateLoginApi.policy({ employeeId: f.employeeId, requestType }).then(r => r.data),
     enabled: !isEdit && isHR && !!f.employeeId,
   });
-  const shiftStart = (isEdit ? (editRecord.expectedTime || policy?.shiftStart)
-    : ((isHR && f.employeeId) ? empPolicy?.shiftStart : policy?.shiftStart)) || '';
+  const shiftOf = (p) => (requestType === 'early_logout' ? p?.shiftEnd : p?.shiftStart);
+  const shiftTime = (isEdit ? (editRecord.expectedTime || shiftOf(policy))
+    : ((isHR && f.employeeId) ? shiftOf(empPolicy) : shiftOf(policy))) || '';
 
   const backdatedDays = Number(policy?.backdatedDays) || 30;
   const minDate = format(subDays(new Date(), backdatedDays), 'yyyy-MM-dd');
   const maxDate = policy?.allowFuture ? undefined : todayStr;
 
-  // Late Login Time must be AFTER Shift Start — otherwise Late By is invalid ("-").
-  const lateBeforeShift = !!(shiftStart && f.actualTime && lateByMin(shiftStart, f.actualTime) <= 0);
+  const diff = (shiftTime && f.actualTime) ? permMin(requestType, shiftTime, f.actualTime) : null;
+  // 0 = on the shift boundary (not late / not early); > 2h = must apply for leave.
+  const timeError = (diff === 0) ? (requestType === 'early_logout' ? 'Logout Time must be earlier than Shift End Time.' : 'Late Login Time must be later than Shift Start Time.')
+    : (diff != null && diff > MAX_MIN) ? LIMIT_MSG : '';
 
   const mut = useMutation({
     mutationFn: () => (isEdit
-      ? requestLifecycleApi.edit('late_login', editRecord.id, { date: f.date, actualTime: f.actualTime, reason: f.reason, remarks: f.remarks })
-      : lateLoginApi.create({ ...f, expectedTime: shiftStart })),
+      ? requestLifecycleApi.edit(requestType, editRecord.id, { date: f.date, actualTime: f.actualTime, reason: f.reason, remarks: f.remarks, expectedTime: shiftTime })
+      : lateLoginApi.create({ ...f, expectedTime: shiftTime, requestType })),
     onSuccess: (res) => {
       const warning = res?.data?.warning;
       if (warning) toast(warning, { icon: '⚠️', duration: 6000 });
-      else toast.success(isEdit ? 'Late Login updated' : 'Late Login submitted');
-      qc.invalidateQueries({ queryKey: ['late-login'] });
+      else toast.success(isEdit ? `${cfg.title} updated` : `${cfg.title} submitted`);
+      qc.invalidateQueries({ queryKey: [cfg.key] });
       onClose();
     },
     onError: (e) => toast.error(e.response?.data?.error || (isEdit ? 'Failed to update' : 'Failed to submit')),
   });
-  const invalid = (isHR && !isEdit && !f.employeeId) || !f.date || !shiftStart || !f.actualTime || !f.reason.trim() || lateBeforeShift;
+  const invalid = (isHR && !isEdit && !f.employeeId) || !f.date || !shiftTime || !f.actualTime || !f.reason.trim() || !!timeError;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl my-8">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-bold text-gray-900">{isEdit ? 'Edit Late Login' : 'Late Login Request'}</h2>
+          <h2 className="text-lg font-bold text-gray-900">{isEdit ? cfg.modalEdit : cfg.modalNew}</h2>
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
-          {policy?.maxPerMonth != null && (
-            <p className="text-xs text-gray-500">Limit {policy.maxPerMonth}/month · Today &amp; future allowed · Backdated up to {backdatedDays} days.</p>
-          )}
+          <p className="text-xs text-gray-500">Permission is allowed only up to 2 hours; for longer, please apply for Leave.
+            {policy?.maxPerMonth != null && <> Limit {policy.maxPerMonth}/month · Backdated up to {backdatedDays} days.</>}</p>
           {isHR && !isEdit && (
             <div><label className="block text-xs font-semibold text-gray-600 mb-1">Employee</label>
               <select className={inp} value={f.employeeId} onChange={e => setF(p => ({ ...p, employeeId: e.target.value }))}>
@@ -119,24 +130,24 @@ function SubmitModal({ isHR, employees, policy, editRecord, onClose }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
-                <span>Shift Start Time</span>
+                <span>{cfg.shiftLabel}</span>
                 <span className="text-[10px] font-medium text-indigo-500 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5">Auto</span>
               </label>
-              <input readOnly value={to12h(shiftStart) || (isHR && !isEdit && !f.employeeId ? 'Select employee' : '—')}
+              <input readOnly value={to12h(shiftTime) || (isHR && !isEdit && !f.employeeId ? 'Select employee' : '—')}
                 className={`${inp} bg-gray-100 text-gray-600 cursor-not-allowed`} />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Late Login Time</label>
-              <input type="time" className={`${inp} ${lateBeforeShift ? 'border-red-300 ring-2 ring-red-500/20' : ''}`} value={f.actualTime} onChange={e => setF(p => ({ ...p, actualTime: e.target.value }))} />
+              <label className="block text-xs font-semibold text-gray-600 mb-1">{cfg.timeLabel}</label>
+              <input type="time" className={`${inp} ${timeError ? 'border-red-300 ring-2 ring-red-500/20' : ''}`} value={f.actualTime} onChange={e => setF(p => ({ ...p, actualTime: e.target.value }))} />
             </div>
           </div>
-          {lateBeforeShift ? (
-            <p className="text-xs font-semibold text-red-600">Late Login Time must be later than Shift Start Time.</p>
-          ) : (shiftStart && f.actualTime && lateByLong(shiftStart, f.actualTime) && (
-            <p className="text-xs font-semibold text-amber-700">Late By: {lateByLong(shiftStart, f.actualTime)}</p>
+          {timeError ? (
+            <p className="text-xs font-semibold text-red-600">{timeError}</p>
+          ) : (shiftTime && f.actualTime && diff > 0 && (
+            <p className="text-xs font-semibold text-amber-700">{cfg.diffLabel}: {longDur(diff)}</p>
           ))}
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
-            <input className={inp} value={f.reason} onChange={e => setF(p => ({ ...p, reason: e.target.value }))} placeholder="Why were you / will you be late?" /></div>
+            <input className={inp} value={f.reason} onChange={e => setF(p => ({ ...p, reason: e.target.value }))} placeholder={cfg.timePlaceholder} /></div>
           <div><label className="block text-xs font-semibold text-gray-600 mb-1">Remarks (optional)</label>
             <input className={inp} value={f.remarks} onChange={e => setF(p => ({ ...p, remarks: e.target.value }))} /></div>
         </div>
@@ -149,7 +160,8 @@ function SubmitModal({ isHR, employees, policy, editRecord, onClose }) {
   );
 }
 
-export default function LateLoginPage() {
+export default function LateLoginPage({ requestType = 'late_login' } = {}) {
+  const cfg = CFG[requestType] || CFG.late_login;
   const { user, isHR } = useAuth();
   const hr = isHR();   // HR scope (see-all vs own) — role concept; no HR mutation actions on this page
   const [show, setShow] = useState(false);
@@ -158,7 +170,7 @@ export default function LateLoginPage() {
   const [statusF, setStatusF] = useState('');
   const [deptF, setDeptF] = useState('');
 
-  const { data: policyRes } = useQuery({ queryKey: ['late-login-policy'], queryFn: () => lateLoginApi.policy().then(r => r.data) });
+  const { data: policyRes } = useQuery({ queryKey: [`${cfg.key}-policy`], queryFn: () => lateLoginApi.policy({ requestType }).then(r => r.data) });
   const policy = policyRes || {};
   const { data: empRes } = useQuery({ queryKey: ['employees-all'], queryFn: () => employeeApi.list({ limit: 500, status: 'active' }), enabled: hr });
   const employees = empRes?.data?.data || empRes?.data || [];
@@ -171,8 +183,8 @@ export default function LateLoginPage() {
     if (period === 'last_month') { const d = new Date(now.getFullYear(), now.getMonth() - 1, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
     return undefined;
   })();
-  const params = { month: monthParam, status: statusF || undefined, department: deptF || undefined };
-  const { data: listRes, isLoading } = useQuery({ queryKey: ['late-login', period, statusF, deptF], queryFn: () => lateLoginApi.list(params).then(r => r.data) });
+  const params = { month: monthParam, status: statusF || undefined, department: deptF || undefined, requestType };
+  const { data: listRes, isLoading } = useQuery({ queryKey: [cfg.key, period, statusF, deptF], queryFn: () => lateLoginApi.list(params).then(r => r.data) });
   const rows = useMemo(() => listRes?.data || [], [listRes]);
 
   const counts = useMemo(() => ({
@@ -185,7 +197,7 @@ export default function LateLoginPage() {
     try {
       const res = await lateLoginApi.export({ ...params, format: fmtType });
       const url = URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a'); a.href = url; a.download = `late-logins.${fmtType === 'csv' ? 'csv' : 'xlsx'}`; a.click();
+      const a = document.createElement('a'); a.href = url; a.download = `${cfg.file}.${fmtType === 'csv' ? 'csv' : 'xlsx'}`; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { toast.error('Export failed'); }
   };
@@ -194,10 +206,10 @@ export default function LateLoginPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Late Login</h1>
-          <p className="text-sm text-gray-500 mt-1">Record a late login — informational only (no approval). Attendance stays Present; no leave/salary deducted.</p>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{cfg.title}</h1>
+          <p className="text-sm text-gray-500 mt-1">{cfg.lead}</p>
         </div>
-        <Button icon={PlusIcon} onClick={() => setShow(true)}>{hr ? 'Raise Late Login' : 'Request Late Login'}</Button>
+        <Button icon={PlusIcon} onClick={() => setShow(true)}>{hr ? cfg.raise : cfg.request}</Button>
       </div>
 
       {/* Summary cards */}
@@ -240,9 +252,9 @@ export default function LateLoginPage() {
               <tr className="text-left">
                 {hr && <th className="px-4 py-3 font-semibold">Employee</th>}
                 <th className="px-4 py-3 font-semibold">Date</th>
-                <th className="px-4 py-3 font-semibold">Shift Start</th>
-                <th className="px-4 py-3 font-semibold">Late Login</th>
-                <th className="px-4 py-3 font-semibold">Late By</th>
+                <th className="px-4 py-3 font-semibold">{cfg.colShift}</th>
+                <th className="px-4 py-3 font-semibold">{cfg.colTime}</th>
+                <th className="px-4 py-3 font-semibold">{cfg.diffLabel}</th>
                 <th className="px-4 py-3 font-semibold">Reason</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold text-right">Actions</th>
@@ -252,28 +264,30 @@ export default function LateLoginPage() {
               {isLoading ? (
                 <tr><td colSpan={hr ? 8 : 7} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={hr ? 8 : 7} className="px-4 py-10 text-center text-gray-400">No late login records.</td></tr>
-              ) : rows.map(r => (
+                <tr><td colSpan={hr ? 8 : 7} className="px-4 py-10 text-center text-gray-400">No {cfg.title.toLowerCase()} records.</td></tr>
+              ) : rows.map(r => {
+                const d = permMin(requestType, r.expectedTime, r.actualTime);
+                return (
                 <tr key={r.id} className="hover:bg-gray-50/50">
                   {hr && <td className="px-4 py-3 font-medium text-gray-800">{r.employeeName || '—'}</td>}
                   <td className="px-4 py-3 text-gray-600">{fmt(r.date)}</td>
                   <td className="px-4 py-3 font-mono text-gray-600">{to12h(r.expectedTime) || '—'}</td>
                   <td className="px-4 py-3 font-mono text-gray-600">{to12h(r.actualTime) || '—'}</td>
-                  <td className="px-4 py-3 font-mono text-gray-600">{lateByLabel(r.expectedTime, r.actualTime)}</td>
+                  <td className="px-4 py-3 font-mono text-gray-600">{d > 0 ? compact(d) : '—'}</td>
                   <td className="px-4 py-3 text-gray-500 max-w-[14rem] truncate" title={r.reason}>{r.reason || '—'}</td>
                   <td className="px-4 py-3"><span className={`inline-flex text-[11px] font-semibold border px-2 py-0.5 rounded-full ${STATUS[r.status] || STATUS.submitted}`}>{STATUS_LABEL[r.status] || r.status}</span></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 justify-end">
                       {r.employeeId === user?.id ? (
                         <RequestLifecycleActions
-                          type="late_login" id={r.id} status={canon(r)}
+                          type={requestType} id={r.id} status={canon(r)}
                           caps={{
                             canEdit: ['submitted', 'pending'].includes(r.status),
                             canDelete: ['submitted', 'pending'].includes(r.status),
                             canResubmit: false, canCancel: false,
                           }}
                           onEdit={() => setEditRec(r)}
-                          invalidateKeys={[['late-login'], ['late-login-summary']]}
+                          invalidateKeys={[[cfg.key]]}
                         />
                       ) : (
                         <span className="text-xs text-gray-300">—</span>
@@ -281,13 +295,13 @@ export default function LateLoginPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
         </div>
       </div>
 
-      {(show || editRec) && <SubmitModal isHR={hr} employees={employees} policy={policy} editRecord={editRec} onClose={() => { setShow(false); setEditRec(null); }} />}
+      {(show || editRec) && <SubmitModal requestType={requestType} cfg={cfg} isHR={hr} employees={employees} policy={policy} editRecord={editRec} onClose={() => { setShow(false); setEditRec(null); }} />}
     </div>
   );
 }

@@ -83,12 +83,13 @@ async function policy() {
   catch { return { graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: false, attendanceMode: 'late_present', penaltyEnabled: false }; }
 }
 
-/** How many requests (pending or approved) the employee already has this month. */
-async function monthlyCount(employeeId, month) {
+/** How many active requests (of this type) the employee already has this month. */
+async function monthlyCount(employeeId, month, requestType) {
   try {
+    const typeClause = requestType ? ` and hr_requesttype eq '${esc(requestType)}'` : '';
     const { data } = await d365.getList(LATE, {
       select: 'hr_lateloginid,hr_status',
-      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_month eq '${esc(month)}'`, top: 200,
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_month eq '${esc(month)}'${typeClause}`, top: 200,
     });
     return (data || []).filter(r => !['rejected', 'cancelled'].includes(r.hr_status)).length;
   } catch { return 0; }
@@ -114,6 +115,25 @@ async function resolveShiftStart(employeeId, date) {
     return attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime)?.start || '';
   } catch { return ''; }
 }
+
+/** The employee's full shift WINDOW { start, end } ("HH:MM") effective on `date` — the
+ *  SAME source Attendance/Late Login use (history-aware, with the configured default as
+ *  fallback). Both '' only on a lookup error. Early Logout measures "early by" against the
+ *  shift END, so it needs the end; Late Login uses start. One lookup serves both. */
+async function resolveShiftWindow(employeeId, date) {
+  try {
+    const emp = await d365.getByIdOptional(EMP, employeeId, { select: 'hr_hremployeeid', optionalSelect: 'hr_shiftname,hr_shiftstarttime,hr_shiftendtime' });
+    if (date) {
+      const s = await require('./shift-history.service').resolveShiftForDate(employeeId, String(date).slice(0, 10), emp);
+      return { start: s?.start || '', end: s?.end || '' };
+    }
+    const attnCfg = require('./attendance.config');
+    const s = attnCfg.resolveEmployeeShift(emp?.hr_shiftname, emp?.hr_shiftstarttime, emp?.hr_shiftendtime);
+    return { start: s?.start || '', end: s?.end || '' };
+  } catch { return { start: '', end: '' }; }
+}
+/** The employee's SHIFT END ("HH:MM") — the reference point for Early Logout. */
+async function resolveShiftEnd(employeeId, date) { return (await resolveShiftWindow(employeeId, date)).end; }
 async function hrEmails() {
   try {
     const { data } = await d365.getList(EMP, {
@@ -133,6 +153,74 @@ function lateByMinutes(expectedTime, actualTime) {
   const e = toMin(expectedTime), a = toMin(actualTime);
   if (e == null || a == null) return null;
   return a - e;   // >0 = late, <=0 = on time / early
+}
+
+// ── Permission window (spec: Late Login AND Early Logout) ─────────────────────
+// Up to and INCLUDING 2 hours → a permission request is allowed; MORE than 2 hours
+// → blocked (the employee must apply for Leave instead). Enforced server-side here
+// (never rely on the UI); the UI mirrors the same rule and message.
+const MAX_PERMISSION_MINUTES = 120;
+const LIMIT_MESSAGE = 'Permission is allowed only up to 2 hours. Please apply for leave for a longer duration.';
+
+/**
+ * Evaluate a Late Login / Early Logout against the employee's shift — PURE & overnight-aware.
+ *   late_login : how LATE the login is  (login − shift START)
+ *   early_logout: how EARLY the logout is (shift END − logout)
+ * Returns { minutes, error, skipped }:
+ *   error 'range' → the time is on the wrong side of the shift (not late / not early at all)
+ *   error 'limit' → within the shift but MORE than 2 hours → must apply for leave
+ *   error null    → OK; `minutes` is the late-by / early-by (1..120)
+ *   skipped true  → not enough shift context to validate (fail-open; never blocks a legit submit)
+ * When the shift END is known, times are placed on an overnight-aware timeline so a shift
+ * that crosses midnight (e.g. 22:00–06:00) is measured correctly. Without a configured end
+ * it falls back to a same-day comparison (legacy Late Login behaviour, overnight unsupported).
+ */
+function evaluatePermission({ requestType, shiftStart, shiftEnd, time }) {
+  const isEarly = requestType === 'early_logout';
+  const sMin = toMin(shiftStart), eMin = toMin(shiftEnd), tMin = toMin(time);
+  if (sMin == null || tMin == null) return { minutes: null, error: null, skipped: true };
+
+  if (eMin != null) {
+    // Overnight-aware: endAbs = shift end on a timeline that starts at sMin (adds a day when
+    // the shift crosses midnight; a 0-length end is treated as a full 24h shift). Each clock
+    // time is mapped into [sMin, sMin+1440) the same way.
+    const endAbs = sMin + ((((eMin - sMin) % 1440) + 1440) % 1440 || 1440);
+    const tAbs = sMin + (((tMin - sMin) % 1440) + 1440) % 1440;
+    if (isEarly) {
+      if (tAbs <= sMin || tAbs >= endAbs) return { minutes: null, error: 'range' };   // not before shift end
+      const early = endAbs - tAbs;
+      return early > MAX_PERMISSION_MINUTES ? { minutes: early, error: 'limit' } : { minutes: early, error: null };
+    }
+    if (tAbs <= sMin || tAbs > endAbs) return { minutes: null, error: 'range' };       // not after shift start / outside shift
+    const late = tAbs - sMin;
+    return late > MAX_PERMISSION_MINUTES ? { minutes: late, error: 'limit' } : { minutes: late, error: null };
+  }
+
+  // Fallback with no configured shift end (legacy same-day semantics).
+  if (isEarly) return { minutes: null, error: null, skipped: true };   // need an end to measure "early" — fail-open
+  if (tMin <= sMin) return { minutes: null, error: 'range' };
+  const late = tMin - sMin;
+  return late > MAX_PERMISSION_MINUTES ? { minutes: late, error: 'limit' } : { minutes: late, error: null };
+}
+
+// The user-facing "wrong side of the shift" message per request type.
+const rangeMessage = (requestType) => requestType === 'early_logout'
+  ? 'Logout Time must be earlier than Shift End Time.'
+  : 'Late Login Time must be later than Shift Start Time.';
+
+/**
+ * Minutes a request is past its shift reference, from JUST the reference + the time
+ * (overnight-safe via forward wrap): late-by (shift START → login) or early-by
+ * (logout → shift END). 0 = on the boundary (invalid), >120 = beyond the 2h window.
+ * Used by the EDIT path, where only the stored reference time is on hand (create() uses
+ * the richer, window-aware evaluatePermission). null when a time is unparseable.
+ */
+function permissionMinutes({ requestType, ref, time }) {
+  const r = toMin(ref), t = toMin(time);
+  if (r == null || t == null) return null;
+  return requestType === 'early_logout'
+    ? (((r - t) % 1440) + 1440) % 1440    // logout → shift END
+    : (((t - r) % 1440) + 1440) % 1440;   // shift START → login
 }
 
 /**
@@ -202,7 +290,9 @@ async function emailLeaveRequired(row) {
 async function verifyTodaysAttendance() {
   const ds = today();
   let rows = [];
-  try { rows = await list({ from: ds, to: ds }); }
+  // Only Late Login records are attendance-verified (check-in → completed / absent-leave).
+  // Early Logout is a standalone permission record and is NOT touched by this job.
+  try { rows = await list({ from: ds, to: ds, requestType: 'late_login' }); }
   catch (e) { global.logger?.error?.(`[late-login] daily verify read failed: ${e.message}`); return { processed: 0, attended: 0, absent: 0 }; }
 
   let attended = 0, absent = 0;
@@ -229,47 +319,59 @@ async function verifyTodaysAttendance() {
  */
 async function create({ employeeId, employeeName, date, expectedTime, actualTime, reason, remarks, attachmentId, requestType = 'late_login', ip, createdBy }) {
   const ds = String(date || '').slice(0, 10);
+  const label = REQ_LABEL[requestType] || 'Late Login';
+  const isEarly = requestType === 'early_logout';
   const p = await policy();
   const t = today();
   // Future / backdated validation (spec §3/§4).
-  if (ds > t && !p.allowFuture) { const e = new Error('Future Late Login requests are not allowed.'); e.status = 400; throw e; }
+  if (ds > t && !p.allowFuture) { const e = new Error(`Future ${label} requests are not allowed.`); e.status = 400; throw e; }
   const earliest = addDays(t, -(Number(p.backdatedDays) || 30));
-  if (ds < earliest) { const e = new Error(`You can submit Late Login requests only within the previous ${Number(p.backdatedDays) || 30} days.`); e.status = 400; throw e; }
+  if (ds < earliest) { const e = new Error(`You can submit ${label} requests only within the previous ${Number(p.backdatedDays) || 30} days.`); e.status = 400; throw e; }
 
-  // DUPLICATE GUARD (backend-enforced, never rely on the UI): one ACTIVE Late Login per
-  // employee + date. Any existing non-cancelled record for the same day blocks a new one.
+  // DUPLICATE GUARD (backend-enforced, never rely on the UI): one ACTIVE request per
+  // employee + date + TYPE. Scoping by type lets an employee have (at most) one Late Login
+  // AND one Early Logout on the same day — both are legitimate — while still blocking a
+  // second of the same kind.
   try {
     const { data: dup } = await d365.getList(LATE, {
       select: 'hr_lateloginid,hr_status',
-      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(ds)}' and hr_status ne 'cancelled'`, top: 1,
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(ds)}' and hr_requesttype eq '${esc(requestType)}' and hr_status ne 'cancelled'`, top: 1,
     });
-    if (dup && dup[0]) { const e = new Error('A Late Login request already exists for this date.'); e.status = 409; throw e; }
+    if (dup && dup[0]) { const e = new Error(`A ${label} request already exists for this date.`); e.status = 409; throw e; }
   } catch (err) { if (err.status) throw err; /* lookup failure (e.g. table not provisioned) must not block a legit submit */ }
 
   const month = ds.slice(0, 7);
-  const priorCount = await monthlyCount(employeeId, month);
+  const priorCount = await monthlyCount(employeeId, month, requestType);
   const warning = (priorCount + 1) > Number(p.maxPerMonth || 0)
-    ? `This is Late Login #${priorCount + 1} this month, exceeding the limit of ${p.maxPerMonth}.`
+    ? `This is ${label} #${priorCount + 1} this month, exceeding the limit of ${p.maxPerMonth}.`
     : '';
   const name = employeeName || '';
-  // Shift Start Time is AUTHORITATIVE from the shift config (source of truth), not the
-  // client — the form shows it read-only, but never trust a submitted value. Fall back
-  // to the client value only if the lookup fails.
-  const shiftStart = (await resolveShiftStart(employeeId, ds)) || String(expectedTime || '');
-  // Late Login Time must be LATER than Shift Start (else Late By is negative / "-"). This
-  // also catches an AM/PM mistake (e.g. 11:30 AM entered against a 4:30 PM shift).
-  const sMin = toMin(shiftStart), aMin = toMin(actualTime);
-  if (sMin != null && aMin != null && aMin <= sMin) {
-    const e = new Error('Late Login Time must be later than Shift Start Time.'); e.status = 400; throw e;
+  // Shift window is AUTHORITATIVE from the shift config (source of truth), not the client —
+  // the form shows it read-only, but a submitted value is never trusted. Late Login is
+  // measured against the shift START; Early Logout against the shift END.
+  const window = await resolveShiftWindow(employeeId, ds);
+  const shiftStart = window.start || (isEarly ? '' : String(expectedTime || ''));
+  const shiftEnd = window.end || '';
+  const refTime = isEarly ? shiftEnd : shiftStart;   // stored in hr_expectedtime (authoritative reference)
+
+  // 2-HOUR PERMISSION RULE (spec §2) + wrong-side-of-shift guard — enforced server-side
+  // (the UI mirrors it). Validated only when the shift reference resolved; a shift-lookup
+  // miss fails open (never blocks a legitimate submit), matching this service's resilience.
+  if (refTime) {
+    const ev = evaluatePermission({ requestType, shiftStart, shiftEnd, time: actualTime });
+    if (!ev.skipped) {
+      if (ev.error === 'range') { const e = new Error(rangeMessage(requestType)); e.status = 400; throw e; }
+      if (ev.error === 'limit') { const e = new Error(LIMIT_MESSAGE); e.status = 400; throw e; }
+    }
   }
-  // Late Login is an INFORMATION record — NOT an approval workflow. New records are
-  // always 'submitted' (never pending/approved/rejected). The daily verification job
-  // later moves them to 'completed' or 'absent_leave_required'. Attachment is not
-  // stored for Late Login (the column stays for backward compatibility).
+  // An INFORMATION record — NOT an approval workflow. New records are always 'submitted'
+  // (never pending/approved/rejected); NO attendance punch is inserted or modified, and no
+  // leave/salary/attendance status is changed. Attachment is not stored (column kept for
+  // backward compatibility).
   let payload = {
-    hr_name: `${name || employeeId} · ${REQ_LABEL[requestType] || 'Late Login'} · ${ds}`.slice(0, 250),
+    hr_name: `${name || employeeId} · ${label} · ${ds}`.slice(0, 250),
     hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,
-    hr_expectedtime: String(shiftStart || ''), hr_actualtime: String(actualTime || ''),
+    hr_expectedtime: String(refTime || ''), hr_actualtime: String(actualTime || ''),
     hr_reason: reason || '', hr_remarks: remarks || '',
     hr_status: 'submitted', hr_managerstatus: '',
     hr_createdby: createdBy || '', hr_requesttype: requestType || 'late_login',
@@ -285,15 +387,17 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
     }
   }
 
-  const label = REQ_LABEL[requestType] || 'Late Login';
   notifyUser(employeeId, 'latelogin:submitted', { date: ds });
   broadcast('latelogin:submitted', { employeeName: name, date: ds });
   audit({ category: 'Attendance', type: 'latelogin_submitted', title: `${label} submitted`, name, meta: { date: ds, requestType, ip, exceeded: !!warning } });
 
   // INFORMATION-ONLY email to HR (from the employee's mailbox). Fire-and-forget: a mail
-  // failure never blocks or fails the submission — the record is already saved.
-  emailLateLoginInfoToHR({ employeeId, employeeName: name, date: ds, expectedTime: shiftStart, actualTime, reason, remarks })
-    .catch(e => global.logger?.warn?.(`[late-login] HR info email error: ${e.message}`));
+  // failure never blocks or fails the submission — the record is already saved. Only the
+  // Late Login HR email template exists; Early Logout is recorded without a mislabelled email.
+  if (!isEarly) {
+    emailLateLoginInfoToHR({ employeeId, employeeName: name, date: ds, expectedTime: shiftStart, actualTime, reason, remarks })
+      .catch(e => global.logger?.warn?.(`[late-login] HR info email error: ${e.message}`));
+  }
 
   return { record: shape({ ...payload, hr_lateloginid: created.hr_lateloginid }), warning };
 }
@@ -307,8 +411,8 @@ async function cancel(id, by) {
 }
 
 /** Dashboard counts for an employee (or all, for HR). */
-async function summary({ employeeId, month } = {}) {
-  const rows = await list({ employeeId, month });
+async function summary({ employeeId, month, requestType } = {}) {
+  const rows = await list({ employeeId, month, requestType });
   const n = (s) => rows.filter(r => r.status === s).length;
   return {
     total: rows.length,
@@ -326,13 +430,18 @@ async function summary({ employeeId, month } = {}) {
 // 'absent_leave_required' / 'rejected' / 'cancelled'. Used only to LABEL the attendance
 // grid ("Late Present"); it never changes the computed attendance status.
 const PRESENT_LATE_STATUSES = `(hr_status eq 'submitted' or hr_status eq 'completed' or hr_status eq 'approved')`;
+// The "Late Present" label is for LATE LOGIN only — the shared table also holds Early Logout
+// permission records, which must NEVER label a day as late-present. `ne 'early_logout'` is
+// null-safe in OData (a legacy row with no request type evaluates true), so older Late Login
+// records keep their existing behaviour.
+const NOT_EARLY_LOGOUT = `hr_requesttype ne 'early_logout'`;
 
 /** Is there a recorded (present-late) late login for this employee on this date? */
 async function approvedOn(employeeId, date) {
   try {
     const { data } = await d365.getList(LATE, {
       select: 'hr_lateloginid',
-      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(String(date).slice(0, 10))}' and ${PRESENT_LATE_STATUSES}`, top: 1,
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(String(date).slice(0, 10))}' and ${PRESENT_LATE_STATUSES} and ${NOT_EARLY_LOGOUT}`, top: 1,
     });
     return !!(data && data[0]);
   } catch { return false; }
@@ -345,7 +454,7 @@ async function approvedOn(employeeId, date) {
  */
 async function approvedSet({ from, to, employeeId } = {}) {
   try {
-    const filters = [PRESENT_LATE_STATUSES];
+    const filters = [PRESENT_LATE_STATUSES, NOT_EARLY_LOGOUT];
     if (employeeId) filters.push(`hr_employeeid eq '${esc(employeeId)}'`);
     if (from) filters.push(`hr_date ge '${esc(String(from).slice(0, 10))}'`);
     if (to) filters.push(`hr_date le '${esc(String(to).slice(0, 10))}'`);
@@ -356,5 +465,7 @@ async function approvedSet({ from, to, employeeId } = {}) {
 
 module.exports = {
   list, getRaw, shape, create, cancel, monthlyCount, summary, approvedOn, approvedSet, policy, REQ_LABEL,
-  lateByMinutes, emailLateLoginInfoToHR, emailLeaveRequired, hasCheckIn, verifyTodaysAttendance, resolveShiftStart,
+  lateByMinutes, emailLateLoginInfoToHR, emailLeaveRequired, hasCheckIn, verifyTodaysAttendance,
+  resolveShiftStart, resolveShiftEnd, resolveShiftWindow,
+  evaluatePermission, permissionMinutes, rangeMessage, MAX_PERMISSION_MINUTES, LIMIT_MESSAGE,
 };

@@ -32,10 +32,13 @@ export default function AttendanceRequestsPage({ kind } = {}) {
     queryFn: () => attendanceRequestApi.list({ status: statusFilter || undefined }),
     placeholderData: (prev) => prev,
   });
-  // Keep Early Logout and Attendance Corrections in SEPARATE tabs — never merged: the
-  // Early Logout page shows only early_logout rows; Attendance Requests shows the rest.
-  const rows = (data?.data?.data || []).filter(r =>
-    isEarlyLogout ? r.punchType === 'early_logout' : r.punchType !== 'early_logout');
+  // LEGACY Early Logout requests (punchType 'early_logout') were created by the OLD
+  // correction flow, before Early Logout became a 2-hour permission record on its own page.
+  // They remain VISIBLE here so authorized HR can still approve / reject / delete them via the
+  // existing attendance-request workflow (approval never inserts a punch — early_logout is a
+  // non-punch type). NEW Early Logouts are created ONLY on the Early Logout permission page
+  // (this correction modal's kind toggle never offers early_logout), so none are created here.
+  const rows = (data?.data?.data || []);
 
   const act = useMutation({
     mutationFn: ({ id, action, finalAction: fa }) => action === 'approved'

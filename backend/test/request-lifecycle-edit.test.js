@@ -84,6 +84,43 @@ test('a non-owner cannot edit a historical attendance → 403', async () => {
   await assert.rejects(() => lifecycle.edit({ type: 'historical_attendance', id: 'h1', edits: { reason: 'x' }, user: OTHER }), /Access denied/);
 });
 
+// ── Late Login / Early Logout: EDIT enforces the 2-hour permission window (spec §2/§3) ──
+// The permission adapters validate the time on EDIT too (never rely on the client); the
+// form submits the shift reference as expectedTime (shift START for late / END for early).
+const permRow = (over = {}) => ({ hr_lateloginid: 'll1', hr_employeeid: OWNER.id, hr_employeename: 'V', hr_status: 'submitted', hr_managerstatus: '', hr_date: '2026-05-20', ...over });
+
+test('edit Late Login within 2h → times patched, status untouched', async () => {
+  let patch; d365.getByIdOptional = async () => permRow(); d365.update = async (_e, _id, p) => { patch = p; return {}; };
+  await lifecycle.edit({ type: 'late_login', id: 'll1', edits: { expectedTime: '09:00', actualTime: '10:30', reason: 'bus' }, user: OWNER });
+  assert.strictEqual(patch.hr_actualtime, '10:30');
+  assert.strictEqual(patch.hr_expectedtime, '09:00');
+  assert.ok(!('hr_status' in patch), 'status never touched by an edit');
+});
+
+test('edit Late Login beyond 2h → 400 leave message, nothing written', async () => {
+  let updated = false; d365.getByIdOptional = async () => permRow(); d365.update = async () => { updated = true; return {}; };
+  await assert.rejects(
+    () => lifecycle.edit({ type: 'late_login', id: 'll1', edits: { expectedTime: '09:00', actualTime: '11:30', reason: 'x' }, user: OWNER }),
+    (e) => e.status === 400 && /only up to 2 hours/i.test(e.message),
+  );
+  assert.strictEqual(updated, false, 'over-limit edit never reaches Dataverse');
+});
+
+test('edit Early Logout within 2h early → patched', async () => {
+  let patch; d365.getByIdOptional = async () => permRow(); d365.update = async (_e, _id, p) => { patch = p; return {}; };
+  await lifecycle.edit({ type: 'early_logout', id: 'll1', edits: { expectedTime: '18:00', actualTime: '16:30', reason: 'leave early' }, user: OWNER });
+  assert.strictEqual(patch.hr_actualtime, '16:30');
+});
+
+test('edit Early Logout beyond 2h early → 400 leave message, nothing written', async () => {
+  let updated = false; d365.getByIdOptional = async () => permRow(); d365.update = async () => { updated = true; return {}; };
+  await assert.rejects(
+    () => lifecycle.edit({ type: 'early_logout', id: 'll1', edits: { expectedTime: '18:00', actualTime: '15:30', reason: 'x' }, user: OWNER }),
+    (e) => e.status === 400 && /only up to 2 hours/i.test(e.message),
+  );
+  assert.strictEqual(updated, false);
+});
+
 // Leave adapter uses getByIdOptional + numeric option-set status; edit maps dates/days/reason.
 test('owner edits own PENDING leave → dates/days/reason patched, type/status untouched', async () => {
   const leaveRow = { hr_hrleaveid: 'l1', _hr_hremployee_value: OWNER.id, hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_leavetype: toValue('hr_leave_type', 'Casual Leave'), hr_startdate: '2026-05-10', hr_enddate: '2026-05-12' };

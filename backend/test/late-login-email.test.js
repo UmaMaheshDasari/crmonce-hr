@@ -130,9 +130,31 @@ test('Late Login AFTER shift start → allowed; status=submitted; shift start is
 });
 
 test('AM/PM preserved: a 11:30 PM late login is stored as 23:30 (not 11:30)', async () => {
-  const created = stubCreate({ shiftStart: '16:30' });
-  await lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, expectedTime: '16:30', actualTime: '23:30', reason: 'x' });
+  const created = stubCreate({ shiftStart: '22:00' });   // 23:30 is 90 min late (within the 2h window)
+  await lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, expectedTime: '22:00', actualTime: '23:30', reason: 'x' });
   assert.strictEqual(created[0].hr_actualtime, '23:30', 'PM value kept as 24h 23:30');
+});
+
+// ── 2-hour permission window (spec §2) — Late Login ──────────────────────────
+test('Late Login 30 min late → allowed', async () => {
+  const created = stubCreate({ shiftStart: '09:00' });
+  const r = await lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, actualTime: '09:30', reason: 'bus' });
+  assert.strictEqual(r.record.status, 'submitted');
+  assert.strictEqual(created.length, 1);
+});
+
+test('Late Login EXACTLY 2 hours late → allowed (boundary inclusive)', async () => {
+  const created = stubCreate({ shiftStart: '09:00' });
+  await lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, actualTime: '11:00', reason: 'traffic' });
+  assert.strictEqual(created.length, 1, '2h is allowed');
+});
+
+test('Late Login 2h 1min late → blocked with the exact leave message (400)', async () => {
+  stubCreate({ shiftStart: '09:00' });
+  await assert.rejects(
+    () => lateLogin.create({ employeeId: 'E1', employeeName: 'V', date: TODAY, actualTime: '11:01', reason: 'late' }),
+    (e) => e.status === 400 && e.message === 'Permission is allowed only up to 2 hours. Please apply for leave for a longer duration.',
+  );
 });
 
 test('resolveShiftStart: reads the employee shift start (Attendance source of truth), never hardcoded 09:00', async () => {

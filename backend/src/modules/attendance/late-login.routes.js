@@ -49,16 +49,18 @@ router.get('/policy', async (req, res, next) => {
     // Shift Start defaults to the SELECTED employee's shift (HR picks an employee);
     // otherwise the requesting employee's own shift. Same source Attendance uses.
     const targetId = (isHR(req.user) && req.query.employeeId) ? req.query.employeeId : req.user.id;
-    const shiftStart = await lateLogin.resolveShiftStart(targetId);
-    res.json({ graceMinutes: p.graceMinutes, maxPerMonth: p.maxPerMonth, backdatedDays: p.backdatedDays, allowFuture: p.allowFuture, approvalRequired: p.approvalRequired, attendanceMode: p.attendanceMode, shiftStart });
-  } catch (_) { res.json({ graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present', shiftStart: '' }); }
+    // Return the full shift WINDOW: Late Login defaults to the shift START, Early Logout to
+    // the shift END. One lookup serves both (the page reads the field it needs).
+    const window = await lateLogin.resolveShiftWindow(targetId);
+    res.json({ graceMinutes: p.graceMinutes, maxPerMonth: p.maxPerMonth, backdatedDays: p.backdatedDays, allowFuture: p.allowFuture, approvalRequired: p.approvalRequired, attendanceMode: p.attendanceMode, shiftStart: window.start || '', shiftEnd: window.end || '' });
+  } catch (_) { res.json({ graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present', shiftStart: '', shiftEnd: '' }); }
 });
 
 // GET /summary — dashboard counts (self, or HR ?employeeId; ?month=YYYY-MM).
 router.get('/summary', async (req, res, next) => {
   try {
     const employeeId = isHR(req.user) ? (req.query.employeeId || undefined) : req.user.id;
-    res.json(await withTable(() => lateLogin.summary({ employeeId, month: req.query.month })));
+    res.json(await withTable(() => lateLogin.summary({ employeeId, month: req.query.month, requestType: req.query.requestType })));
   } catch (err) { next(err); }
 });
 
@@ -66,7 +68,7 @@ router.get('/summary', async (req, res, next) => {
 router.get('/', async (req, res, next) => {
   try {
     const employeeId = isHR(req.user) ? (req.query.employeeId || undefined) : req.user.id;
-    let rows = await withTable(() => lateLogin.list({ employeeId, month: req.query.month, status: req.query.status, from: req.query.from, to: req.query.to }));
+    let rows = await withTable(() => lateLogin.list({ employeeId, month: req.query.month, status: req.query.status, from: req.query.from, to: req.query.to, requestType: req.query.requestType }));
     if (isHR(req.user) && req.query.department) {
       rows = await withDepartments(rows);
       rows = rows.filter(r => r.department === req.query.department);
@@ -79,7 +81,7 @@ router.get('/', async (req, res, next) => {
 router.get('/export', async (req, res, next) => {
   try {
     const employeeId = isHR(req.user) ? (req.query.employeeId || undefined) : req.user.id;
-    let rows = await withTable(() => lateLogin.list({ employeeId, month: req.query.month, status: req.query.status }));
+    let rows = await withTable(() => lateLogin.list({ employeeId, month: req.query.month, status: req.query.status, requestType: req.query.requestType }));
     if (isHR(req.user)) { rows = await withDepartments(rows); if (req.query.department) rows = rows.filter(r => r.department === req.query.department); }
     const cols = [
       ['Employee', r => r.employeeName], ['Department', r => r.department || ''], ['Date', r => r.date],

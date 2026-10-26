@@ -94,9 +94,22 @@ registerAdapter({
   employeeContact: (r) => contactFor(r._hr_hremployee_value),
 });
 
-// ── 2. Late Login (text status + hr_managerstatus) ────────────────────────────
-registerAdapter({
-  type: 'late_login', label: 'Late Login', entity: E.lateLogin,
+// ── 2. Late Login / Early Logout (text status + hr_managerstatus) ─────────────
+// Both are permission/information records on the SAME table (hr_requesttype distinguishes
+// them). Editing a time must honour the SAME 2-hour permission window the create path
+// enforces — never rely on the client. The reference time submitted as hr_expectedtime is
+// the shift START (Late Login) / shift END (Early Logout); permissionMinutes is overnight-safe.
+const lateLoginSvc = require('./late-login.service');
+function enforcePermissionWindow(requestType, e) {
+  // Only when an edit changes BOTH the reference and the time (the form sends both).
+  if (e.expectedTime === undefined || e.actualTime === undefined) return;
+  const mins = lateLoginSvc.permissionMinutes({ requestType, ref: e.expectedTime, time: e.actualTime });
+  if (mins == null) return;   // unparseable → leave it to the normal flow (fail-open)
+  if (mins === 0) { const err = new Error(lateLoginSvc.rangeMessage(requestType)); err.status = 400; throw err; }
+  if (mins > lateLoginSvc.MAX_PERMISSION_MINUTES) { const err = new Error(lateLoginSvc.LIMIT_MESSAGE); err.status = 400; throw err; }
+}
+const permissionRecordAdapter = (type, label) => ({
+  type, label, entity: E.lateLogin,
   async get(id) { return d365.getByIdOptional(E.lateLogin, id, { select: 'hr_lateloginid,hr_employeeid,hr_employeename,hr_status,hr_managerstatus,hr_date', optionalSelect: '' }); },
   ownerId: (r) => r.hr_employeeid,
   ownerName: (r) => r.hr_employeename || '',
@@ -110,12 +123,14 @@ registerAdapter({
   },
   cancelledPatch: () => ({ hr_status: 'cancelled' }),
   resubmitPatch: () => ({ hr_status: 'pending', hr_managerstatus: 'pending', hr_approvedby: '', hr_approveddate: '' }),
-  applyEdits: (e) => mapEdits(e, { reason: 'hr_reason', remarks: 'hr_remarks', expectedTime: 'hr_expectedtime', actualTime: 'hr_actualtime', date: 'hr_date' }),
-  summary: (r) => `Late Login ${String(r.hr_date || '').slice(0, 10)}`,
+  applyEdits: (e) => { enforcePermissionWindow(type, e); return mapEdits(e, { reason: 'hr_reason', remarks: 'hr_remarks', expectedTime: 'hr_expectedtime', actualTime: 'hr_actualtime', date: 'hr_date' }); },
+  summary: (r) => `${label} ${String(r.hr_date || '').slice(0, 10)}`,
   managerRecipients: (r) => managerRecipientsFor(r.hr_employeeid),
   hrRecipients,
   employeeContact: (r) => contactFor(r.hr_employeeid),
 });
+registerAdapter(permissionRecordAdapter('late_login', 'Late Login'));
+registerAdapter(permissionRecordAdapter('early_logout', 'Early Logout'));
 
 // ── 3. Comp Off (text status; balance is a STORED ledger) ─────────────────────
 registerAdapter({
