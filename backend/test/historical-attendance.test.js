@@ -189,3 +189,15 @@ test('12 — list resolves blank names from employeeId (display recovery); unrec
   assert.strictEqual(byId.H2.employeeName, 'Already', 'an already-stored name is untouched');
   assert.strictEqual(byId.H3.employeeName, '', 'an unresolvable id stays blank — never invented');
 });
+
+test('13 — list({status:"pending"}) filters server-side by hr_status eq pending and returns only pending (dashboard count contract)', async () => {
+  let captured;
+  d365.getListResilient = async (_e, opts) => { captured = opts.filter || ''; return { data: [row({ id: 'P1', status: 'pending' }), row({ id: 'P2', status: 'pending' })] }; };
+  const rows = await svc.list({ status: 'pending' });
+  assert.match(captured, /hr_status eq 'pending'/, "the 'pending' status filter is pushed to the query (Dataverse returns only pending)");
+  assert.strictEqual(rows.length, 2, 'both pending rows surface');
+  assert.ok(rows.every(r => r.status === 'pending'), 'only pending rows — more_info/approved/rejected are excluded by the filter');
+  // Sanity: no status → no status filter is applied (the all-status list).
+  await svc.list({});
+  assert.ok(!/hr_status eq/.test(captured || ''), 'an unfiltered list adds no status clause');
+});

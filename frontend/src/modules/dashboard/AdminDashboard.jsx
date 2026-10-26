@@ -9,7 +9,7 @@ import {
   PencilSquareIcon, UserPlusIcon, DocumentTextIcon, ArrowRightOnRectangleIcon,
   ArrowLeftOnRectangleIcon, SignalIcon,
 } from '@heroicons/react/24/outline';
-import { dashboardApi, attendanceApi, lateLoginApi, leaveApi, attendanceRequestApi, compOffApi } from '../../api/endpoints';
+import { dashboardApi, attendanceApi, lateLoginApi, leaveApi, attendanceRequestApi, compOffApi, historicalAttendanceApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 // ActivityFeed is intentionally not imported — Recent Activity is withdrawn
 // from this dashboard for every role. See the note in the attendance section.
@@ -76,7 +76,7 @@ function Stat({ label, value, tone = 'text-gray-800' }) {
 const cap = (s) => { const t = String(s ?? '').replace(/_/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : '—'; };
 // HR standard display date DD-MM-YYYY (never a raw ISO string).
 const fmtDate = (d) => { try { const s = String(d ?? '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? format(new Date(s + 'T00:00:00'), 'dd-MM-yyyy') : '—'; } catch { return '—'; } };
-const TYPE_PILL = { 'Leave': 'bg-indigo-50 text-indigo-700', 'Attendance Correction': 'bg-orange-50 text-orange-700', 'Comp Off': 'bg-violet-50 text-violet-700' };
+const TYPE_PILL = { 'Leave': 'bg-indigo-50 text-indigo-700', 'Attendance Correction': 'bg-orange-50 text-orange-700', 'Comp Off': 'bg-violet-50 text-violet-700', 'Historical Attendance': 'bg-sky-50 text-sky-700' };
 const statusPillClass = (s) => {
   const k = String(s || '').toLowerCase();
   if (k.includes('approve')) return 'bg-emerald-50 text-emerald-700';
@@ -151,6 +151,9 @@ export default function AdminDashboard() {
   const leaveQ = useQuery({ queryKey: ['pending', 'leave'], queryFn: () => leaveApi.list({ status: 'pending' }).then(r => r.data?.data || []), refetchInterval: 60000, refetchOnWindowFocus: true, retry: 1 });
   const corrQ = useQuery({ queryKey: ['pending', 'correction'], queryFn: () => attendanceRequestApi.list({ status: 'pending' }).then(r => r.data?.data || []), refetchInterval: 60000, refetchOnWindowFocus: true, retry: 1 });
   const compQ = useQuery({ queryKey: ['pending', 'compoff'], queryFn: () => compOffApi.list({ status: 'pending' }).then(r => r.data?.data || []), refetchInterval: 60000, refetchOnWindowFocus: true, retry: 1 });
+  // Historical Attendance pending requests (HR/Super Admin action queue). status:'pending' only —
+  // more_info is waiting on the employee, approved/rejected are done, so none count here.
+  const histQ = useQuery({ queryKey: ['pending', 'historical'], queryFn: () => historicalAttendanceApi.list({ status: 'pending' }).then(r => r.data?.data || []), refetchInterval: 60000, refetchOnWindowFocus: true, retry: 1 });
 
   const leaveName = (l) => l['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue'] || 'Employee';
   const leaveLevel = (l) => {
@@ -177,11 +180,17 @@ export default function AdminDashboard() {
     details: `Comp Off${r.days ? ` · ${r.days} day${Number(r.days) === 1 ? '' : 's'}` : ''}${r.reason ? ` · ${r.reason}` : ''}`,
     status: cap(r.status),
   }));
-  const pendingRows = [...leaveRows, ...correctionRows, ...compOffRows]
+  const historicalRows = (histQ.data || []).map(r => ({
+    key: 'hist-' + r.id, type: 'Historical Attendance', to: '/historical-attendance-requests',
+    employee: r.employeeName || 'Employee', date: r.date,
+    details: `Historical Attendance${r.inTime || r.outTime ? ` · ${r.inTime || '—'} / ${r.outTime || '—'}` : ''}`,
+    status: cap(r.status),
+  }));
+  const pendingRows = [...leaveRows, ...correctionRows, ...compOffRows, ...historicalRows]
     .sort((a, b) => String(b.date).slice(0, 10).localeCompare(String(a.date).slice(0, 10)));
-  const pendingLoading = leaveQ.isLoading || corrQ.isLoading || compQ.isLoading;
-  const pendingError = leaveQ.isError || corrQ.isError || compQ.isError;
-  const refreshPending = () => { leaveQ.refetch(); corrQ.refetch(); compQ.refetch(); };
+  const pendingLoading = leaveQ.isLoading || corrQ.isLoading || compQ.isLoading || histQ.isLoading;
+  const pendingError = leaveQ.isError || corrQ.isError || compQ.isError || histQ.isError;
+  const refreshPending = () => { leaveQ.refetch(); corrQ.refetch(); compQ.refetch(); histQ.refetch(); };
   const lateLoginInfoCount = ll ? (Number(ll.submitted) || 0) : 0;
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admin-summary'] });
@@ -252,10 +261,11 @@ export default function AdminDashboard() {
         </div>
 
         {/* Summary cards — live counts from the module pending lists */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           <ApprovalCard icon={CalendarDaysIcon} label="Leave Approvals" count={leaveRows.length} to="/leave" loading={leaveQ.isLoading && !leaveQ.data} error={leaveQ.isError} iconBg="bg-amber-50" iconColor="text-amber-600" />
           <ApprovalCard icon={PencilSquareIcon} label="Attendance Corrections" count={correctionRows.length} to="/attendance-requests" loading={corrQ.isLoading && !corrQ.data} error={corrQ.isError} iconBg="bg-orange-50" iconColor="text-orange-600" />
           <ApprovalCard icon={CalendarDaysIcon} label="Comp Off" count={compOffRows.length} to="/comp-off" loading={compQ.isLoading && !compQ.data} error={compQ.isError} iconBg="bg-violet-50" iconColor="text-violet-600" />
+          <ApprovalCard icon={ClockIcon} label="Historical Attendance" count={historicalRows.length} to="/historical-attendance-requests" loading={histQ.isLoading && !histQ.data} error={histQ.isError} iconBg="bg-sky-50" iconColor="text-sky-600" />
         </div>
 
         {/* Late Login is INFORMATIONAL-only (no approval) — shown as a note, never as an approve action */}
