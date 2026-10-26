@@ -125,7 +125,8 @@ test('lateLoginNotice template: subject + employee/date/start/grace/check-in/lat
   assert.match(html, /5 minutes/);           // grace period
   assert.match(html, /09:17 AM/);            // actual check-in
   assert.match(html, /17 minutes/);          // late by (from shift start, not grace end)
-  assert.match(html, /does not affect your salary/i);   // no payroll impact
+  assert.match(html, /This notification is for your information\./);   // informational wording
+  assert.doesNotMatch(html, /salary/i);      // salary wording removed entirely
 });
 
 // ── §7/§14: missing-punch email goes to the EMPLOYEE ONLY (no CC) and once ──

@@ -356,7 +356,7 @@ function lateLoginNotice(d) {
   const graceTxt = (d.grace != null && Number(d.grace) > 0) ? mins(d.grace) : '5 minutes';
   const content =
     greet(d.employeeName) +
-    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Our attendance system recorded a <strong>Late Entry</strong> for <strong>${esc(d.date)}</strong>. This is for your information only — it does not affect your salary, attendance, or leave, and no action is required.</p>` +
+    `<p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.6;">Our attendance system recorded a <strong>Late Entry</strong> for <strong>${esc(d.date)}</strong>. This notification is for your information.</p>` +
     summaryCard('Attendance', [
       ['Employee', esc(d.employeeName || '—')],
       ['Date', esc(d.date)],
