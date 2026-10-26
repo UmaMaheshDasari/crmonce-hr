@@ -63,12 +63,23 @@ async function getRaw(id) {
   return r;
 }
 
+// HOTFIX: request-type OData clause. Legacy hr_latelogins rows created before hr_requesttype was
+// populated have a NULL type; they ARE late-login records, so a late_login query must INCLUDE
+// null-typed rows — otherwise they silently disappear from the list/counts (the production
+// "Total 0 / No late login records" bug). Early Logout stays STRICT so null rows never leak in.
+const typeClause = (requestType) => {
+  if (!requestType) return null;
+  if (requestType === 'late_login') return `(hr_requesttype eq 'late_login' or hr_requesttype eq null)`;
+  return `hr_requesttype eq '${esc(requestType)}'`;
+};
+
 async function list({ employeeId, month, status, requestType, from, to } = {}) {
   const filters = [];
   if (employeeId) filters.push(`hr_employeeid eq '${esc(employeeId)}'`);
   if (month) filters.push(`hr_month eq '${esc(month)}'`);
   if (status) filters.push(`hr_status eq '${esc(status)}'`);
-  if (requestType) filters.push(`hr_requesttype eq '${esc(requestType)}'`);
+  const tc = typeClause(requestType);
+  if (tc) filters.push(tc);
   if (from) filters.push(`hr_date ge '${esc(from)}'`);
   if (to) filters.push(`hr_date le '${esc(to)}'`);
   const { data } = await d365.getListOptional(LATE, { select: SELECT_BASE, optionalSelect: SELECT_OPT, filter: filters.join(' and ') || undefined, orderby: 'createdon desc', top: 5000 });
@@ -86,10 +97,11 @@ async function policy() {
 /** How many active requests (of this type) the employee already has this month. */
 async function monthlyCount(employeeId, month, requestType) {
   try {
-    const typeClause = requestType ? ` and hr_requesttype eq '${esc(requestType)}'` : '';
+    const tc = typeClause(requestType);
+    const typeFilter = tc ? ` and ${tc}` : '';
     const { data } = await d365.getList(LATE, {
       select: 'hr_lateloginid,hr_status',
-      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_month eq '${esc(month)}'${typeClause}`, top: 200,
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_month eq '${esc(month)}'${typeFilter}`, top: 200,
     });
     return (data || []).filter(r => !['rejected', 'cancelled'].includes(r.hr_status)).length;
   } catch { return 0; }
