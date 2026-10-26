@@ -72,7 +72,18 @@ async function list({ employeeId, status, month } = {}) {
   // schema drift degrades gracefully (blank fields) instead of returning an empty/failed list.
   // Filter columns (employeeid/status/month) and ordering (createdon) are provisioned core fields.
   const { data } = await d365.getListResilient(HIST, { select: SELECT_REQUIRED, optionalSelect: SELECT_OPTIONAL, filter: f.join(' and ') || undefined, orderby: 'createdon desc', top: 2000 });
-  return (data || []).map(shape);
+  const rows = (data || []).map(shape);
+  // Display-safe name recovery: rows saved before hr_employeename existed (or by HR without a
+  // name) have a blank name but a valid employeeId. Resolve the CURRENT name from the authoritative
+  // employee record — looked up once per distinct id (bounded), never invented. Date/in-time that
+  // were never stored stay blank (not derivable) and are reported for manual HR verification.
+  const missingIds = [...new Set(rows.filter(r => !String(r.employeeName || '').trim() && r.employeeId).map(r => r.employeeId))];
+  if (missingIds.length) {
+    const names = new Map();
+    for (const id of missingIds) { try { const e = await getEmployee(id); const n = String(e?.hr_hremployee1 || '').trim(); if (n) names.set(id, n); } catch { /* skip; leave blank */ } }
+    for (const r of rows) { if (!String(r.employeeName || '').trim() && names.has(r.employeeId)) r.employeeName = names.get(r.employeeId); }
+  }
+  return rows;
 }
 
 async function policy() {
@@ -136,7 +147,11 @@ async function create({ employeeId, employeeName, date, inTime, outTime, reason,
   }
 
   const month = ds.slice(0, 7);
-  const name = employeeName || '';
+  // Always store the employee NAME. The frontend omits it when HR raises on behalf of someone,
+  // so resolve it from the authoritative employee record (by the stored ID) rather than saving a
+  // blank. Never invented — only the real name for that ID; blank only if the lookup has none.
+  let name = employeeName || '';
+  if (!name) { try { const emp = await getEmployee(employeeId); name = emp?.hr_hremployee1 || ''; } catch { /* leave blank; display-time resolution still covers it */ } }
   let payload = {
     hr_name: `${name || employeeId} · Historical Attendance · ${ds}`.slice(0, 250),
     hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,

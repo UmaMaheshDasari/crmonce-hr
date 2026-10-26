@@ -160,3 +160,32 @@ test('10 — employee scoping is honored: a scoped list filters by employee; HR 
   await svc.list({});
   assert.ok(!/hr_employeeid eq/.test(captured || ''), 'HR all-view adds no employee filter');
 });
+
+test('11 — create stores the employee NAME resolved from employeeId when omitted (HR-on-behalf), plus date/in/out/status', async () => {
+  let payload;
+  d365.getByIdOptional = async () => ({ hr_hremployee1: 'Bob', hr_email: 'bob@crmonce.com' });   // getEmployee(id)
+  d365.getList = async () => ({ data: [] });                                                      // dup-guard none + hrEmails none
+  d365.create = async (_e, p) => { payload = p; return { hr_histattendanceid: 'H9' }; };
+  await svc.create({ employeeId: 'E9', date: RECENT, inTime: '09:15', outTime: '18:00', reason: 'HR raised on behalf' });
+  assert.strictEqual(payload.hr_employeename, 'Bob', 'name resolved from id, never left blank');
+  assert.strictEqual(payload.hr_employeeid, 'E9');
+  assert.strictEqual(payload.hr_date, RECENT);
+  assert.strictEqual(payload.hr_intime, '09:15');
+  assert.strictEqual(payload.hr_outtime, '18:00');
+  assert.strictEqual(payload.hr_status, 'pending');
+});
+
+test('12 — list resolves blank names from employeeId (display recovery); unrecoverable fields stay blank, never invented', async () => {
+  d365.getListResilient = async () => ({ data: [
+    { hr_histattendanceid: 'H1', hr_employeeid: 'E1', hr_employeename: '', hr_date: '', hr_outtime: '18:00', hr_status: 'pending', hr_month: '2026-04' },  // legacy: blank name+date+in
+    { hr_histattendanceid: 'H2', hr_employeeid: 'E2', hr_employeename: 'Already', hr_status: 'approved' },                                                 // name already stored
+    { hr_histattendanceid: 'H3', hr_employeeid: 'EX', hr_employeename: '', hr_status: 'rejected' },                                                        // id resolves to nothing
+  ] });
+  d365.getByIdOptional = async (_e, id) => (id === 'E1' ? { hr_hremployee1: 'Amy' } : { hr_hremployee1: '' });
+  const byId = Object.fromEntries((await svc.list({})).map(r => [r.id, r]));
+  assert.strictEqual(byId.H1.employeeName, 'Amy', 'blank name recovered from the stored id');
+  assert.strictEqual(byId.H1.outTime, '18:00', 'other stored fields preserved');
+  assert.strictEqual(byId.H1.date, '', 'date was never stored → stays blank (not invented)');
+  assert.strictEqual(byId.H2.employeeName, 'Already', 'an already-stored name is untouched');
+  assert.strictEqual(byId.H3.employeeName, '', 'an unresolvable id stays blank — never invented');
+});

@@ -189,7 +189,10 @@ registerAdapter({
 registerAdapter({
   type: 'historical_attendance', label: 'Historical Attendance', entity: 'hr_histattendances',
   canCancel: false,
-  async get(id) { return d365.getById('hr_histattendances', id, { select: 'hr_histattendanceid,hr_employeeid,hr_employeename,hr_status,hr_date' }); },
+  // hr_date is OPTIONAL in the select: on a table where the column isn't provisioned yet it is
+  // stripped (resilient) instead of 400-ing the whole Edit/lifecycle read. id/employeeid/name/
+  // status are core and always present.
+  async get(id) { return d365.getByIdResilient('hr_histattendances', id, { select: 'hr_histattendanceid,hr_employeeid,hr_employeename,hr_status', optionalSelect: 'hr_date' }); },
   ownerId: (r) => r.hr_employeeid,
   ownerName: (r) => r.hr_employeename || '',
   status(r) {
