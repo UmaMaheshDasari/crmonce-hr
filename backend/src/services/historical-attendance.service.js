@@ -33,6 +33,12 @@ const broadcast = (ev, p) => { try { notif?.broadcast?.(ev, p); } catch (_) {} }
 async function sendEmail(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { meta: { type: 'hist_attendance' } }); } catch (e) { global.logger?.warn?.(`[hist-attendance] email skipped: ${e.message}`); } }
 
 const SELECT = 'hr_histattendanceid,hr_employeeid,hr_employeename,hr_date,hr_month,hr_intime,hr_outtime,hr_reason,hr_comments,hr_attachmentid,hr_status,hr_approvedby,hr_approveddate,hr_approvercomment,hr_oldstatus,hr_newstatus,createdon';
+// Core columns the list + approval flow REQUIRE (id, scoping, status, ordering) — always present.
+// Display/audit columns are OPTIONAL so a not-yet-provisioned column (schema drift) degrades to a
+// blank value instead of 400-ing the WHOLE query. getListResilient/getByIdResilient strip ONLY the
+// specific missing column(s), keeping every column that does exist.
+const SELECT_REQUIRED = 'hr_histattendanceid,hr_employeeid,hr_status,createdon';
+const SELECT_OPTIONAL = 'hr_employeename,hr_date,hr_month,hr_intime,hr_outtime,hr_reason,hr_comments,hr_attachmentid,hr_approvedby,hr_approveddate,hr_approvercomment,hr_oldstatus,hr_newstatus';
 
 const shape = (r) => ({
   id: r.hr_histattendanceid,
@@ -54,14 +60,18 @@ const shape = (r) => ({
   createdOn: r.createdon,
 });
 
-async function getRaw(id) { return d365.getById(HIST, id, { select: SELECT }); }
+// Resilient read: a missing OPTIONAL column (schema drift) is stripped, never failing the read.
+async function getRaw(id) { return d365.getByIdResilient(HIST, id, { select: SELECT_REQUIRED, optionalSelect: SELECT_OPTIONAL }); }
 
 async function list({ employeeId, status, month } = {}) {
   const f = [];
   if (employeeId) f.push(`hr_employeeid eq '${esc(employeeId)}'`);
   if (status) f.push(`hr_status eq '${esc(status)}'`);
   if (month) f.push(`hr_month eq '${esc(month)}'`);
-  const { data } = await d365.getList(HIST, { select: SELECT, filter: f.join(' and ') || undefined, orderby: 'createdon desc', top: 2000 });
+  // getListResilient keeps every provisioned display column and drops only the missing one(s), so
+  // schema drift degrades gracefully (blank fields) instead of returning an empty/failed list.
+  // Filter columns (employeeid/status/month) and ordering (createdon) are provisioned core fields.
+  const { data } = await d365.getListResilient(HIST, { select: SELECT_REQUIRED, optionalSelect: SELECT_OPTIONAL, filter: f.join(' and ') || undefined, orderby: 'createdon desc', top: 2000 });
   return (data || []).map(shape);
 }
 
@@ -109,11 +119,21 @@ async function create({ employeeId, employeeName, date, inTime, outTime, reason,
   if (ds < earliest) { const e = new Error(`You can raise Historical Attendance only within the last ${p.monthsBack} months.`); e.status = 400; throw e; }
   if (!String(reason || '').trim()) { const e = new Error('Reason is required.'); e.status = 400; throw e; }
 
-  // No duplicate pending for the same employee + date (spec §10).
+  // No duplicate pending for the same employee + date (spec §10). The guard FILTERS on hr_date —
+  // if that column is not provisioned the check cannot run, so we FAIL EXPLICITLY rather than
+  // silently treat "no rows" as "no duplicate" (which would let dateless duplicates pile up).
   try {
     const { data } = await d365.getList(HIST, { select: 'hr_histattendanceid', filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(ds)}' and hr_status eq 'pending'`, top: 1 });
     if (data && data[0]) { const e = new Error('A Historical Attendance request for this date is already pending.'); e.status = 409; throw e; }
-  } catch (e) { if (e.status === 409) throw e; /* table not provisioned → create handles it */ }
+  } catch (e) {
+    if (e.status === 409) throw e;
+    if (d365._isMissingProperty?.(e)) {
+      const prop = d365._missingPropertyName?.(e) || 'hr_date';
+      const err = new Error(`Historical Attendance is not fully set up (missing column '${prop}'), so duplicate requests can't be verified. Please contact an administrator.`);
+      err.status = 503; throw err;
+    }
+    /* entity-not-found / transient → leave to the route's self-heal + create retry (don't block a legit submit) */
+  }
 
   const month = ds.slice(0, 7);
   const name = employeeName || '';
@@ -189,6 +209,14 @@ async function decide(id, action, approver, comment) {
   let warning = null;
 
   if (action === 'approved') {
+    // Approval WRITES the day's attendance record keyed by this date. A request with no valid
+    // stored date (e.g. a legacy row saved before hr_date was provisioned) must NOT be approved —
+    // that would apply attendance to an empty/wrong date. Fail explicitly for authorized review;
+    // never guess or infer the date. (Reject / more-info remain allowed so HR can resolve it.)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
+      const e = new Error('This request has no valid recorded date and cannot be approved. Please ask the employee to re-submit with a date, or reject it.');
+      e.status = 422; throw e;
+    }
     const emp = await getEmployee(empId);
     // Shift EFFECTIVE on the historical date (history-aware; falls back to current fields).
     const shift = await require('./shift-history.service').resolveShiftForDate(empId, ds, emp);

@@ -62,34 +62,82 @@ const isLocked = (m) => /CustomizationLockException|customization is already run
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function post(path, body) { const headers = await d365.getHeaders({ 'Content-Type': 'application/json' }); return axios.post(`${d365.baseUrl}/${path}`, body, { headers }); }
 
-async function createSchema(log) {
+async function createEntity(log) {
   try { await post('EntityDefinitions', ENTITY_BODY); log?.info?.('[provision] created entity hr_HistAttendance'); }
   catch (e) { const m = e.response?.data?.error?.message || e.message; if (isExists(m)) log?.info?.('[provision] entity hr_HistAttendance already exists'); else if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); else throw new Error(m); }
-  for (const c of COLUMNS) {
-    try { await post(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes`, c); }
-    catch (e) { const m = e.response?.data?.error?.message || e.message; if (isLocked(m)) throw Object.assign(new Error(m), { locked: true }); if (!isExists(m)) log?.warn?.(`[provision] hist-attendance column ${c.SchemaName}: ${m}`); }
-  }
 }
 
-async function ensureHistoricalAttendanceTable(log = console, opts = {}) {
+/**
+ * Idempotently ensure EVERY column in COLUMNS exists — safe whether the table was just created
+ * or already existed (schema-drift repair). An "already exists" column is left untouched (never
+ * recreated/overwritten/deleted). A lock bubbles up (so the caller can retry); any OTHER failure
+ * (e.g. insufficient privilege) is COLLECTED and returned so the caller can surface it — it is
+ * never swallowed as success. Returns { added:[], existing:[], failed:[{column,error}] }.
+ */
+async function ensureColumns(log) {
+  const added = [], existing = [], failed = [];
+  for (const c of COLUMNS) {
+    try { await post(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes`, c); added.push(c.SchemaName); }
+    catch (e) {
+      const m = e.response?.data?.error?.message || e.message;
+      if (isExists(m)) existing.push(c.SchemaName);
+      else if (isLocked(m)) throw Object.assign(new Error(m), { locked: true });
+      else { failed.push({ column: c.SchemaName, error: m }); log?.warn?.(`[provision] hist-attendance column ${c.SchemaName}: ${m}`); }
+    }
+  }
+  return { added, existing, failed };
+}
+
+// Coalesce concurrent in-process callers onto ONE provisioning attempt (no overlap / duplicate
+// metadata POSTs within this worker). Cross-process safety relies on Dataverse's own
+// customization lock + the retry loop below (matches the other provisioners' pattern).
+let _inflight = null;
+
+async function _run(log, opts) {
   const { retry = false, retryIntervalMs = 30000, retryTimeoutMs = 10 * 60 * 1000 } = opts;
-  try { await d365.getList(ENTITY_SET, { top: 1 }); return { status: 'exists' }; }
+
+  // 1) Probe existence. "Missing" → create; any OTHER probe error is inconclusive (don't guess).
+  let tableExists = false;
+  try { await d365.getList(ENTITY_SET, { top: 1 }); tableExists = true; }
   catch (e) {
     const m = e.response?.data?.error?.message || e.message;
     if (!isMissing(m)) { log?.warn?.(`[provision] hist-attendance probe inconclusive (${m}); skipping`); return { status: 'unavailable', reason: m }; }
   }
+
+  // 2) Lock-aware loop: create the entity if absent, then ALWAYS ensure columns (repairs drift on
+  //    an existing table). Column failures are surfaced as 'incomplete' — never a false success.
   const started = Date.now();
   for (;;) {
-    try { await createSchema(log); log?.info?.('[provision] hr_histattendances ready'); return { status: 'created' }; }
-    catch (e) {
+    try {
+      if (!tableExists) await createEntity(log);
+      const res = await ensureColumns(log);
+      if (res.failed.length) {
+        return { status: 'incomplete', created: !tableExists, added: res.added, existing: res.existing, failed: res.failed.map(f => f.column), reason: res.failed[0].error };
+      }
+      log?.info?.(`[provision] hr_histattendances ready (added ${res.added.length}, existing ${res.existing.length})`);
+      return { status: tableExists ? 'exists' : 'created', added: res.added, existing: res.existing };
+    } catch (e) {
       if (e.locked && retry && Date.now() - started + retryIntervalMs <= retryTimeoutMs) {
         log?.warn?.(`[provision] hist-attendance: Dataverse locked — retrying in ${retryIntervalMs / 1000}s`);
         await sleep(retryIntervalMs); continue;
       }
-      log?.warn?.(`[provision] could not auto-create hr_histattendances: ${e.message}`);
+      log?.warn?.(`[provision] could not provision hr_histattendances: ${e.message}`);
       return { status: e.locked ? 'locked' : 'unavailable', reason: e.message };
     }
   }
 }
 
-module.exports = { ensureHistoricalAttendanceTable, ENTITY_SET };
+/**
+ * Ensure the hr_histattendances table AND all its columns exist (idempotent, drift-repairing,
+ * lock-aware). On an existing table it verifies/adds any missing column; it never recreates,
+ * overwrites or deletes an existing one. Returns a status object: 'created' | 'exists' |
+ * 'incomplete' (some columns could not be added — e.g. privilege) | 'locked' | 'unavailable'.
+ * NEVER reports success when a column add failed.
+ */
+async function ensureHistoricalAttendanceTable(log = console, opts = {}) {
+  if (_inflight) return _inflight;
+  _inflight = _run(log, opts).finally(() => { _inflight = null; });
+  return _inflight;
+}
+
+module.exports = { ensureHistoricalAttendanceTable, ensureColumns, ENTITY_SET, COLUMNS };

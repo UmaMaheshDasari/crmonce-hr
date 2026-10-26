@@ -129,8 +129,9 @@ export default function HistoricalAttendanceRequestsPage() {
   const { data: empRes } = useQuery({ queryKey: ['employees-all'], queryFn: () => employeeApi.list({ limit: 500, status: 'active' }), enabled: hr });
   const employees = empRes?.data?.data || empRes?.data || [];
 
-  const { data: listRes, isLoading } = useQuery({ queryKey: ['hist-attendance', statusF], queryFn: () => historicalAttendanceApi.list({ status: statusF || undefined }).then(r => r.data) });
+  const { data: listRes, isLoading, isError, error } = useQuery({ queryKey: ['hist-attendance', statusF], queryFn: () => historicalAttendanceApi.list({ status: statusF || undefined }).then(r => r.data) });
   const rows = useMemo(() => listRes?.data || [], [listRes]);
+  const listErrorMsg = error?.response?.data?.error || 'Could not load historical attendance requests. Please retry in a moment.';
   const counts = useMemo(() => ({
     total: rows.length,
     pending: rows.filter(r => r.status === 'pending').length,
@@ -167,10 +168,17 @@ export default function HistoricalAttendanceRequestsPage() {
         {[{ label: 'Total', v: counts.total, a: 'text-gray-900' }, { label: 'Pending', v: counts.pending, a: 'text-amber-600' }, { label: 'Approved', v: counts.approved, a: 'text-emerald-600' }].map(c => (
           <div key={c.label} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{c.label}</p>
-            <p className={`text-2xl font-bold mt-1 ${c.a}`}>{c.v}</p>
+            {/* Never show a confident "0" when the request failed — a failure is '—', not zero. */}
+            <p className={`text-2xl font-bold mt-1 ${c.a}`}>{isError ? '—' : isLoading ? '…' : c.v}</p>
           </div>
         ))}
       </div>
+
+      {isError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {listErrorMsg}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <select value={statusF} onChange={e => setStatusF(e.target.value)} className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm">
@@ -197,6 +205,8 @@ export default function HistoricalAttendanceRequestsPage() {
             <tbody className="divide-y divide-gray-50">
               {isLoading ? (
                 <tr><td colSpan={hr ? 8 : 7} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>
+              ) : isError ? (
+                <tr><td colSpan={hr ? 8 : 7} className="px-4 py-10 text-center text-red-600">{listErrorMsg}</td></tr>
               ) : rows.length === 0 ? (
                 <tr><td colSpan={hr ? 8 : 7} className="px-4 py-10 text-center text-gray-400">No historical attendance requests.</td></tr>
               ) : rows.map(r => (
