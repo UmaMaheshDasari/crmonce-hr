@@ -121,6 +121,48 @@ function initJobs() {
     global.logger?.info('Late Login attendance verification scheduled (21:00 IST daily)');
   }
 
+  // Late Login monthly-policy scan — daily at 22:00 IST (AFTER the 21:00 verify and 21:30
+  // exception scan, so the day's attendance is finalized). Detects ACTUAL late punch-ins (even
+  // with NO permission request) over a short window of recent days, applies the monthly tier
+  // (1st/2nd auto · 3rd manager approval · 4th+ 0.5-day CL or HR review), reconciles each event
+  // once, and reverses auto penalties when a later correction makes the day on-time. Effective
+  // 2026-11-01 only; never retroactive. Idempotent + single-instance (safe to retry). Does NOT
+  // touch attendance punches and never scans punch-OUTS (no auto Early Logout). Disable with
+  // LATE_LOGIN_POLICY_SCAN=false.
+  if (process.env.LATE_LOGIN_POLICY_SCAN !== 'false') {
+    const scanner = require('../services/late-login-scanner.service');
+    const runHistory = require('../services/late-login-run-history.service');   // interim, best-effort
+    cron.schedule('0 22 * * *', async () => {
+      const scanStart = new Date().toISOString();
+      try {
+        const r = await scanner.runDaily();
+        const t = (r?.results || []).reduce((a, s) => ({ created: a.created + (s.created || 0), cl: a.cl + (s.clDeducted || 0), hr: a.hr + (s.hrReview || 0), rev: a.rev + (s.reversedCorrections || 0), err: a.err + (s.errors || 0) }), { created: 0, cl: 0, hr: 0, rev: 0, err: 0 });
+        global.logger?.info(`[late-login-policy] scan ${r?.endDate} (window ${r?.window}d): created ${t.created}, CL ${t.cl}, HR-review ${t.hr}, reversed ${t.rev}, errors ${t.err}`);
+        runHistory.record({ jobType: 'scanner', startedAt: scanStart, status: t.err > 0 ? 'partial' : 'success', window: { from: r?.results?.[0]?.date, to: r?.endDate }, counters: t, errorCount: t.err });
+      } catch (e) {
+        global.logger?.error(`[late-login-policy] daily scan failed: ${e.message}`);
+        runHistory.record({ jobType: 'scanner', startedAt: scanStart, status: 'failed', errorCount: 1 });
+      }
+
+      // Ledger-driven reconciliation runs SEQUENTIALLY AFTER the forward scan (same cron callback
+      // → no overlap, no competing scheduler, same instance-guard + Asia/Kolkata). Gated by the
+      // same master flag; can be independently turned off with LATE_LOGIN_RECONCILE=false.
+      if (process.env.LATE_LOGIN_RECONCILE !== 'false') {
+        const recStart = new Date().toISOString();
+        try {
+          const reconciler = require('../services/late-login-reconciler.service');
+          const rr = await reconciler.runDaily();
+          global.logger?.info(`[late-login-reconcile] ${rr?.from}..${rr?.to}: events ${rr?.events}, legacy-penalties ${rr?.legacyPenalties}, flagged ${rr?.flagged}, errors ${rr?.errors} (read-only)`);
+          runHistory.record({ jobType: 'reconciler', startedAt: recStart, status: rr?.partial ? 'partial' : (rr?.errors > 0 ? 'partial' : 'success'), window: { from: rr?.from, to: rr?.to }, counters: { events: rr?.events, legacyPenalties: rr?.legacyPenalties, flagged: rr?.flagged, invalidReason: rr?.invalidReason }, truncated: rr?.truncated, partial: rr?.partial, errorCount: rr?.errors });
+        } catch (e) {
+          global.logger?.error(`[late-login-reconcile] daily reconcile failed: ${e.message}`);
+          runHistory.record({ jobType: 'reconciler', startedAt: recStart, status: 'failed', errorCount: 1 });
+        }
+      }
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Late Login monthly-policy scan + ledger reconcile scheduled (22:00 IST daily, effective 2026-11-01)');
+  }
+
   // Casual Leave carry-forward — year-end rollover. On 1 Jan at 03:00 IST, carry each
   // active employee's leftover Casual Leave (MIN(remaining, max — default 5)) from the
   // just-ended year into the new year as a 'carry_forward' ledger credit, so the new

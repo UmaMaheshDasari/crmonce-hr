@@ -13,6 +13,8 @@ const ExcelJS = require('exceljs');
 const d365 = require('../../services/d365.service');
 const lateLogin = require('../../services/late-login.service');
 const { ensureLateLoginTable } = require('../../services/provision-late-login');
+const { requireAnyPermission } = require('../../middleware/auth.middleware');
+const integrity = require('../../services/late-login-integrity.service');
 
 const EMP = d365.constructor.entities.employee;
 const HR = ['super_admin', 'hr_manager'];
@@ -50,10 +52,16 @@ router.get('/policy', async (req, res, next) => {
     // otherwise the requesting employee's own shift. Same source Attendance uses.
     const targetId = (isHR(req.user) && req.query.employeeId) ? req.query.employeeId : req.user.id;
     // Return the full shift WINDOW: Late Login defaults to the shift START, Early Logout to
-    // the shift END. One lookup serves both (the page reads the field it needs).
-    const window = await lateLogin.resolveShiftWindow(targetId);
-    res.json({ graceMinutes: p.graceMinutes, maxPerMonth: p.maxPerMonth, backdatedDays: p.backdatedDays, allowFuture: p.allowFuture, approvalRequired: p.approvalRequired, attendanceMode: p.attendanceMode, shiftStart: window.start || '', shiftEnd: window.end || '' });
-  } catch (_) { res.json({ graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present', shiftStart: '', shiftEnd: '' }); }
+    // the shift END. One lookup serves both (the page reads the field it needs). `usage` is the
+    // monthly permission-policy snapshot (used / auto-remaining) for the current month + type.
+    const requestType = req.query.requestType === 'early_logout' ? 'early_logout' : 'late_login';
+    const month = require('../../services/time.util').istDateStr().slice(0, 7);
+    const [window, usage] = await Promise.all([
+      lateLogin.resolveShiftWindow(targetId),
+      lateLogin.monthlyUsage(targetId, month, requestType).catch(() => null),
+    ]);
+    res.json({ graceMinutes: p.graceMinutes, maxPerMonth: p.maxPerMonth, backdatedDays: p.backdatedDays, allowFuture: p.allowFuture, approvalRequired: p.approvalRequired, attendanceMode: p.attendanceMode, shiftStart: window.start || '', shiftEnd: window.end || '', usage });
+  } catch (_) { res.json({ graceMinutes: 15, maxPerMonth: 3, backdatedDays: 30, allowFuture: true, approvalRequired: true, attendanceMode: 'late_present', shiftStart: '', shiftEnd: '', usage: null }); }
 });
 
 // GET /summary — dashboard counts (self, or HR ?employeeId; ?month=YYYY-MM).
@@ -107,6 +115,40 @@ router.get('/export', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /integrity-report — READ-ONLY HR/Admin integrity report (negative CL balances, ledger-net
+// discrepancies, unresolved reconciliation flags, run-history availability). Gated on
+// `reports.view` (the same permission guarding the admin dashboard summary + activity log).
+// Generation performs NO writes (dry-run reconcile + read-only balance scan). Query:
+// ?from=&to=&eventType=&category=&page=&pageSize=&includeBalances=.
+router.get('/integrity-report', requireAnyPermission('reports.view'), async (req, res, next) => {
+  try {
+    const report = await integrity.buildReport({
+      from: req.query.from, to: req.query.to,
+      eventType: req.query.eventType, category: req.query.category,
+      page: req.query.page, pageSize: req.query.pageSize,
+      includeBalances: req.query.includeBalances !== 'false',
+    });
+    res.json(report);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    global.logger?.warn?.(`[late-login] integrity report failed: ${err.message}`);   // detail logged, not returned
+    return res.status(500).json({ error: 'Failed to generate the integrity report.' });
+  }
+});
+
+// GET /run-history — READ-ONLY recent scanner/reconciler run records (interim single-host JSONL
+// store). Gated on `reports.view` (same as the integrity report). Never exposes a filesystem path.
+// Query: ?limit=&jobType=scanner|reconciler&status=success|partial|failed.
+router.get('/run-history', requireAnyPermission('reports.view'), async (req, res, next) => {
+  try {
+    const runHistory = require('../../services/late-login-run-history.service');
+    res.json(runHistory.list({ limit: req.query.limit, jobType: req.query.jobType, status: req.query.status }));
+  } catch (err) {
+    global.logger?.warn?.(`[late-login] run-history read failed: ${err.message}`);   // detail logged, not returned
+    return res.status(500).json({ error: 'Failed to read run history.' });
+  }
+});
+
 // POST /  — submit a Late Login. Returns { record, warning }. Captures the source IP.
 router.post('/', async (req, res, next) => {
   try {
@@ -132,6 +174,23 @@ router.post('/', async (req, res, next) => {
 // manager/HR decision endpoints (PATCH /:id/manager, /:id/hr) and the email-action
 // Approve/Reject endpoint have been REMOVED. Employees edit/delete their own record via
 // the shared Request Lifecycle (/api/requests/late_login/:id/...). Cancel remains below.
+
+// PATCH /:id/approve  &  /:id/reject  — manager/HR decision on a 3rd (manager_pending)
+// permission (monthly policy, effective 2026-11-01). Authorized to HR/Admin (this HRMS has no
+// distinct manager login role; the reporting manager is notified for awareness). Approve →
+// counts; Reject → does not count. No attendance punch is touched.
+router.patch('/:id/approve', async (req, res, next) => {
+  try {
+    if (!isHR(req.user)) return res.status(403).json({ error: 'Only HR / Admin can approve a permission request.' });
+    res.json(await lateLogin.managerDecision(req.params.id, 'approved', req.user));
+  } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
+router.patch('/:id/reject', async (req, res, next) => {
+  try {
+    if (!isHR(req.user)) return res.status(403).json({ error: 'Only HR / Admin can reject a permission request.' });
+    res.json(await lateLogin.managerDecision(req.params.id, 'rejected', req.user));
+  } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); next(err); }
+});
 
 // PATCH /:id/cancel  — employee cancels their own submitted request (or HR).
 router.patch('/:id/cancel', async (req, res, next) => {

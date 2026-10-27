@@ -118,7 +118,10 @@ export const lateLoginApi = {
   summary: (params) => api.get('/attendance/late-login/summary', { params }),
   create: (data) => api.post('/attendance/late-login', data),
   cancel: (id) => api.patch(`/attendance/late-login/${id}/cancel`),
+  approve: (id) => api.patch(`/attendance/late-login/${id}/approve`),   // HR/Admin: approve a 3rd (pending) permission
+  reject: (id) => api.patch(`/attendance/late-login/${id}/reject`),     // HR/Admin: reject a 3rd (pending) permission
   export: (params) => api.get('/attendance/late-login/export', { params, responseType: 'blob' }),
+  integrityReport: (params) => api.get('/attendance/late-login/integrity-report', { params }),   // HR/Admin read-only
 };
 
 // ── Leave Opening Balance (historical migration) ─────────────────

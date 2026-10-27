@@ -45,10 +45,18 @@ const STATUS = {
   pending: 'bg-blue-50 text-blue-700 border-blue-200',
   approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   rejected: 'bg-gray-100 text-gray-500 border-gray-200',
+  auto_approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  manager_pending: 'bg-amber-50 text-amber-700 border-amber-200',
+  manager_approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  manager_rejected: 'bg-red-50 text-red-700 border-red-200',
+  cl_deducted: 'bg-violet-50 text-violet-700 border-violet-200',
+  hr_review: 'bg-orange-50 text-orange-700 border-orange-200',
 };
 const STATUS_LABEL = {
   submitted: 'Submitted', completed: 'Completed', absent_leave_required: 'Leave Required',
   cancelled: 'Cancelled', pending: 'Submitted', approved: 'Completed', rejected: 'Cancelled',
+  auto_approved: 'Auto-approved', manager_pending: 'Pending Approval', manager_approved: 'Approved',
+  manager_rejected: 'Rejected', cl_deducted: 'CL Deducted (0.5)', hr_review: 'HR Review',
 };
 const fmt = (d) => { try { return d ? format(new Date(d), 'dd-MM-yyyy') : '—'; } catch { return d || '—'; } };
 const toMin = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
@@ -116,8 +124,11 @@ function SubmitModal({ requestType, cfg, isHR, employees, policy, editRecord, on
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"><XMarkIcon className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
-          <p className="text-xs text-gray-500">Permission is allowed only up to 2 hours; for longer, please apply for Leave.
-            {policy?.maxPerMonth != null && <> Limit {policy.maxPerMonth}/month · Backdated up to {backdatedDays} days.</>}</p>
+          <div className="text-xs text-gray-500 space-y-1">
+            <p>Max <b>2 hours</b> per request; for longer, please apply for Leave.</p>
+            <p>Monthly policy (per type): first <b>2 auto-approved</b> · <b>3rd</b> needs manager approval · <b>4th+</b> deducts <b>0.5 day CL</b> (HR review if CL is insufficient; salary deduction deferred).</p>
+            {policy?.usage && <p className="font-semibold text-gray-700">This month: {policy.usage.used} used · {policy.usage.autoRemaining} automatic {policy.usage.autoRemaining === 1 ? 'permission' : 'permissions'} remaining.</p>}
+          </div>
           {isHR && !isEdit && (
             <div><label className="block text-xs font-semibold text-gray-600 mb-1">Employee</label>
               <select className={inp} value={f.employeeId} onChange={e => setF(p => ({ ...p, employeeId: e.target.value }))}>
@@ -162,8 +173,9 @@ function SubmitModal({ requestType, cfg, isHR, employees, policy, editRecord, on
 
 export default function LateLoginPage({ requestType = 'late_login' } = {}) {
   const cfg = CFG[requestType] || CFG.late_login;
+  const qc = useQueryClient();
   const { user, isHR } = useAuth();
-  const hr = isHR();   // HR scope (see-all vs own) — role concept; no HR mutation actions on this page
+  const hr = isHR();   // HR scope (see-all vs own); HR also decides 3rd-event (manager_pending) requests
   const [show, setShow] = useState(false);
   const [editRec, setEditRec] = useState(null);   // the record being edited (employee, own)
   const [period, setPeriod] = useState('this_month');
@@ -186,6 +198,13 @@ export default function LateLoginPage({ requestType = 'late_login' } = {}) {
   const params = { month: monthParam, status: statusF || undefined, department: deptF || undefined, requestType };
   const { data: listRes, isLoading } = useQuery({ queryKey: [cfg.key, period, statusF, deptF], queryFn: () => lateLoginApi.list(params).then(r => r.data) });
   const rows = useMemo(() => listRes?.data || [], [listRes]);
+
+  // HR/Admin decision on a 3rd (manager_pending) permission.
+  const decide = useMutation({
+    mutationFn: ({ id, action }) => (action === 'approve' ? lateLoginApi.approve(id) : lateLoginApi.reject(id)),
+    onSuccess: (_r, v) => { toast.success(`Request ${v.action === 'approve' ? 'approved' : 'rejected'}`); qc.invalidateQueries({ queryKey: [cfg.key] }); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Action failed'),
+  });
 
   const counts = useMemo(() => ({
     total: rows.length,
@@ -231,6 +250,8 @@ export default function LateLoginPage({ requestType = 'late_login' } = {}) {
         </select>
         <select value={statusF} onChange={e => setStatusF(e.target.value)} className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm">
           <option value="">All Status</option>
+          <option value="auto_approved">Auto-approved</option><option value="manager_pending">Pending Approval</option><option value="manager_approved">Approved</option>
+          <option value="cl_deducted">CL Deducted</option><option value="hr_review">HR Review</option><option value="manager_rejected">Rejected</option>
           <option value="submitted">Submitted</option><option value="completed">Completed</option><option value="absent_leave_required">Absent - Leave Required</option><option value="cancelled">Cancelled</option>
         </select>
         {hr && (
@@ -275,10 +296,20 @@ export default function LateLoginPage({ requestType = 'late_login' } = {}) {
                   <td className="px-4 py-3 font-mono text-gray-600">{to12h(r.actualTime) || '—'}</td>
                   <td className="px-4 py-3 font-mono text-gray-600">{d > 0 ? compact(d) : '—'}</td>
                   <td className="px-4 py-3 text-gray-500 max-w-[14rem] truncate" title={r.reason}>{r.reason || '—'}</td>
-                  <td className="px-4 py-3"><span className={`inline-flex text-[11px] font-semibold border px-2 py-0.5 rounded-full ${STATUS[r.status] || STATUS.submitted}`}>{STATUS_LABEL[r.status] || r.status}</span></td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex text-[11px] font-semibold border px-2 py-0.5 rounded-full ${STATUS[r.status] || STATUS.submitted}`}>{STATUS_LABEL[r.status] || r.status}</span>
+                    {String(r.createdBy || '').includes('(auto)') && <span className="ml-1 inline-flex text-[10px] font-medium text-gray-500 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded-full" title="Detected from the attendance punch — no permission request was submitted">Punch-only</span>}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 justify-end">
-                      {r.employeeId === user?.id ? (
+                      {hr && r.status === 'manager_pending' ? (
+                        <>
+                          <button onClick={() => decide.mutate({ id: r.id, action: 'approve' })} disabled={decide.isPending}
+                            className="px-2 py-1 text-xs font-semibold rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">Approve</button>
+                          <button onClick={() => decide.mutate({ id: r.id, action: 'reject' })} disabled={decide.isPending}
+                            className="px-2 py-1 text-xs font-semibold rounded-lg bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50">Reject</button>
+                        </>
+                      ) : r.employeeId === user?.id ? (
                         <RequestLifecycleActions
                           type={requestType} id={r.id} status={canon(r)}
                           caps={{

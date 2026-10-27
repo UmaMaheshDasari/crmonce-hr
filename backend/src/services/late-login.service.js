@@ -18,6 +18,8 @@ const { resolveSender } = require('./email/sender');              // dynamic emp
 const ledger = require('./notification-ledger.service');          // one-email idempotency (reused)
 const time = require('./time.util');                             // company-timezone (IST) "today"
 const T = require('./email/templates');                          // shared HTML email templates
+const PP = require('./permission-policy.service');                // monthly tier policy + CL debit
+const { withKeyLock } = require('./concurrency.util');            // process-local per-event serialisation
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
 
@@ -63,10 +65,11 @@ async function getRaw(id) {
   return r;
 }
 
-// HOTFIX: request-type OData clause. Legacy hr_latelogins rows created before hr_requesttype was
-// populated have a NULL type; they ARE late-login records, so a late_login query must INCLUDE
-// null-typed rows — otherwise they silently disappear from the list/counts (the production
-// "Total 0 / No late login records" bug). Early Logout stays STRICT so null rows never leak in.
+// OData clause for the request-type filter. Legacy Late Login rows created before hr_requesttype
+// was populated have a NULL type; they ARE late-login records (the table only ever held those),
+// so a late_login query must INCLUDE null-typed rows — otherwise those rows silently disappear
+// from the list/counts. Early Logout stays strict (eq) so null-typed legacy rows never leak into
+// it. Returns null when no type filter applies.
 const typeClause = (requestType) => {
   if (!requestType) return null;
   if (requestType === 'late_login') return `(hr_requesttype eq 'late_login' or hr_requesttype eq null)`;
@@ -107,8 +110,48 @@ async function monthlyCount(employeeId, month, requestType) {
   } catch { return 0; }
 }
 
+/** QUALIFYING events this month for a type (drives the monthly tier; a rejected 3rd request
+ *  and cancellations never count — spec §2). */
+async function qualifyingCount(employeeId, month, requestType) {
+  try {
+    const tc = typeClause(requestType);
+    const typeFilter = tc ? ` and ${tc}` : '';
+    const { data } = await d365.getList(LATE, {
+      select: 'hr_lateloginid,hr_status',
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_month eq '${esc(month)}'${typeFilter}`, top: 200,
+    });
+    return (data || []).filter(r => PP.isQualifying(r.hr_status)).length;
+  } catch { return 0; }
+}
+
+/** Monthly usage snapshot for the UI/policy route: qualifying count + remaining auto permissions. */
+async function monthlyUsage(employeeId, month, requestType) {
+  const used = await qualifyingCount(employeeId, month, requestType);
+  return {
+    used,
+    autoApprovals: PP.POLICY.autoApprovals,
+    autoRemaining: Math.max(0, PP.POLICY.autoApprovals - used),
+    managerApprovalAt: PP.POLICY.managerApprovalAt,
+    clPerEvent: PP.POLICY.clPerEvent,
+    effectiveFrom: PP.POLICY.effectiveFrom,
+  };
+}
+
 // ── email helpers (best-effort; never throw / block) ──────────────────────────
 async function getEmployee(id) { try { return await d365.getByIdOptional(EMP, id, { select: 'hr_email,hr_hremployee1,hr_department', optionalSelect: '_hr_manager_value,hr_employeeid,hr_employeecode,hr_etimecode' }); } catch { return null; } }
+// The employee's reporting-manager email (for policy approval notifications). '' if none.
+// Note: this HRMS has no distinct "manager" login role — HR/Admin perform approvals — so the
+// manager is notified for awareness while the authorized decision is made via the approve/
+// reject endpoints (latelogin.approve / earlylogout.approve permissions). Best-effort.
+async function managerEmailFor(employeeId) {
+  try {
+    const emp = await getEmployee(employeeId);
+    const mid = emp?._hr_manager_value;
+    if (!mid) return '';
+    const mgr = await d365.getByIdOptional(EMP, mid, { select: 'hr_email' });
+    return mgr?.hr_email || '';
+  } catch { return ''; }
+}
 
 /** The employee's SHIFT START ("HH:MM") — the SAME source of truth Attendance uses
  *  (attendance.config.resolveEmployeeShift). Never a hardcoded 09:00; when no shift is
@@ -344,23 +387,12 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   // employee + date + TYPE. Scoping by type lets an employee have (at most) one Late Login
   // AND one Early Logout on the same day — both are legitimate — while still blocking a
   // second of the same kind.
-  try {
-    const { data: dup } = await d365.getList(LATE, {
-      select: 'hr_lateloginid,hr_status',
-      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(ds)}' and hr_requesttype eq '${esc(requestType)}' and hr_status ne 'cancelled'`, top: 1,
-    });
-    if (dup && dup[0]) { const e = new Error(`A ${label} request already exists for this date.`); e.status = 409; throw e; }
-  } catch (err) { if (err.status) throw err; /* lookup failure (e.g. table not provisioned) must not block a legit submit */ }
-
   const month = ds.slice(0, 7);
-  const priorCount = await monthlyCount(employeeId, month, requestType);
-  const warning = (priorCount + 1) > Number(p.maxPerMonth || 0)
-    ? `This is ${label} #${priorCount + 1} this month, exceeding the limit of ${p.maxPerMonth}.`
-    : '';
   const name = employeeName || '';
   // Shift window is AUTHORITATIVE from the shift config (source of truth), not the client —
   // the form shows it read-only, but a submitted value is never trusted. Late Login is
-  // measured against the shift START; Early Logout against the shift END.
+  // measured against the shift START; Early Logout against the shift END. (Pure validation —
+  // computed BEFORE the per-event lock since it needs no serialisation.)
   const window = await resolveShiftWindow(employeeId, ds);
   const shiftStart = window.start || (isEarly ? '' : String(expectedTime || ''));
   const shiftEnd = window.end || '';
@@ -376,42 +408,197 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
       if (ev.error === 'limit') { const e = new Error(LIMIT_MESSAGE); e.status = 400; throw e; }
     }
   }
-  // An INFORMATION record — NOT an approval workflow. New records are always 'submitted'
-  // (never pending/approved/rejected); NO attendance punch is inserted or modified, and no
-  // leave/salary/attendance status is changed. Attachment is not stored (column kept for
-  // backward compatibility).
-  let payload = {
-    hr_name: `${name || employeeId} · ${label} · ${ds}`.slice(0, 250),
-    hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,
-    hr_expectedtime: String(refTime || ''), hr_actualtime: String(actualTime || ''),
-    hr_reason: reason || '', hr_remarks: remarks || '',
-    hr_status: 'submitted', hr_managerstatus: '',
-    hr_createdby: createdBy || '', hr_requesttype: requestType || 'late_login',
-    hr_ip: ip || '',
-  };
-  // Resilient create — strip a not-yet-provisioned optional column and retry.
-  let created;
-  for (let i = 0; i < 5; i++) {
-    try { created = await d365.create(LATE, payload); break; }
-    catch (err) {
-      if (d365._isMissingProperty?.(err)) { const prop = d365._missingPropertyName?.(err); if (prop && payload[prop] !== undefined) { delete payload[prop]; continue; } }
-      throw err;
+  const policyActive = PP.effectiveFor(ds);
+
+  // ── Dedupe-critical section, serialised per (type, employee, date) WITHIN this process ──
+  // The duplicate guard, tier decision, CL debit, and record create run under a process-local
+  // lock so two submissions on the SAME worker for the same event cannot interleave. Under PM2
+  // cluster (2 workers) this does NOT serialise a submission on another worker or the scanner on
+  // instance 0 — the CL debit stays event-keyed/idempotent and the daily scan reconciles the net,
+  // so the financial outcome is safe; see the residual-risk note in the report.
+  const lockKey = `late:${requestType}:${employeeId}:${ds}`;
+  const result = await withKeyLock(lockKey, async () => {
+    // DUPLICATE GUARD (backend-enforced): one ACTIVE request per employee + date + TYPE.
+    try {
+      const { data: dup } = await d365.getList(LATE, {
+        select: 'hr_lateloginid,hr_status',
+        filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(ds)}' and hr_requesttype eq '${esc(requestType)}' and hr_status ne 'cancelled'`, top: 1,
+      });
+      if (dup && dup[0]) { const e = new Error(`A ${label} request already exists for this date.`); e.status = 409; throw e; }
+    } catch (err) { if (err.status) throw err; /* lookup failure (e.g. table not provisioned) must not block a legit submit */ }
+
+    // ── Monthly permission policy (effective 2026-11-01), applied PER TYPE (spec §2) ──
+    // Pre-effective dates keep the legacy information-only behaviour ('submitted'). From the
+    // effective date the Nth QUALIFYING event this month decides the outcome. NO attendance
+    // punch is ever inserted/modified and no attendance status changes — this only sets the
+    // permission record's own workflow state (+ a CL ledger debit for the 4th+ event).
+    let decision = null, warning = '';
+    let finalStatus = 'submitted', finalManagerStatus = '';
+    if (policyActive) {
+      const priorQualifying = await qualifyingCount(employeeId, month, requestType);
+      decision = PP.decide(priorQualifying);
+      // Revised policy: EVERY qualifying event is auto-approved — NO leave or salary penalty is
+      // ever applied. Only the notification stage escalates (handled by notifyPolicyOutcome).
+      finalStatus = PP.STATUS.AUTO_APPROVED;
+      warning = policyWarningText(decision, label);
     }
-  }
+    const payloadInner = {
+      hr_name: `${name || employeeId} · ${label} · ${ds}`.slice(0, 250),
+      hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,
+      hr_expectedtime: String(refTime || ''), hr_actualtime: String(actualTime || ''),
+      hr_reason: reason || '', hr_remarks: remarks || '',
+      hr_status: finalStatus, hr_managerstatus: finalManagerStatus,
+      hr_createdby: createdBy || '', hr_requesttype: requestType || 'late_login',
+      hr_ip: ip || '',
+    };
+    // Resilient create — strip a not-yet-provisioned optional column and retry.
+    let createdInner;
+    for (let i = 0; i < 5; i++) {
+      try { createdInner = await d365.create(LATE, payloadInner); break; }
+      catch (err) {
+        if (d365._isMissingProperty?.(err)) { const prop = d365._missingPropertyName?.(err); if (prop && payloadInner[prop] !== undefined) { delete payloadInner[prop]; continue; } }
+        throw err;
+      }
+    }
+    return { created: createdInner, payload: payloadInner, decision, warning };
+  });
+  const { created, payload, decision, warning } = result;
 
   notifyUser(employeeId, 'latelogin:submitted', { date: ds });
   broadcast('latelogin:submitted', { employeeName: name, date: ds });
-  audit({ category: 'Attendance', type: 'latelogin_submitted', title: `${label} submitted`, name, meta: { date: ds, requestType, ip, exceeded: !!warning } });
+  audit({ category: 'Attendance', type: 'latelogin_submitted', title: `${label} submitted`, name, meta: { date: ds, requestType, ip, status: payload.hr_status, policyEvent: decision?.n, outcome: decision?.outcome } });
 
-  // INFORMATION-ONLY email to HR (from the employee's mailbox). Fire-and-forget: a mail
-  // failure never blocks or fails the submission — the record is already saved. Only the
-  // Late Login HR email template exists; Early Logout is recorded without a mislabelled email.
-  if (!isEarly) {
+  if (policyActive) {
+    // The employee SUBMITTED a request (requested:true): 1st–3rd send a normal confirmation (no
+    // "no-request" warning); 4th+ send the existing HR/Super Admin/escalation emails unchanged.
+    notifyPolicyOutcome({ employeeId, name, label, requestType, date: ds, status: payload.hr_status, decision, requested: true })
+      .catch(e => global.logger?.warn?.(`[late-login] policy notify error: ${e.message}`));
+  } else if (!isEarly) {
+    // Legacy (pre-effective) Late Login → the existing information-only HR email.
     emailLateLoginInfoToHR({ employeeId, employeeName: name, date: ds, expectedTime: shiftStart, actualTime, reason, remarks })
       .catch(e => global.logger?.warn?.(`[late-login] HR info email error: ${e.message}`));
   }
 
   return { record: shape({ ...payload, hr_lateloginid: created.hr_lateloginid }), warning };
+}
+
+// Short banner returned to the submitter (toast). Never mentions a penalty — there is none.
+function policyWarningText(decision, label) {
+  switch (decision?.stage) {
+    case 'hr_warning': return `This is your 4th ${label} this month — an HR warning has been sent. Please arrive on time going forward.`;
+    case 'final_warning': return `This is your 5th ${label} this month — a FINAL warning has been sent. Please correct your arrival time.`;
+    case 'escalation': return `This is ${label} #${decision.n} this month — please contact HR or your manager to discuss repeated late arrivals.`;
+    default: return '';
+  }
+}
+
+// Super Admin recipients = employees with the super_admin ROLE (reliable, config-free). '' list
+// on error. (There is no separate "Super Admin mailbox" — the role query IS the mechanism.)
+async function superAdminEmails() {
+  try {
+    const { data } = await d365.getList(EMP, {
+      select: 'hr_email',
+      filter: `hr_role eq ${toValue('hr_role', 'super_admin')} and hr_status eq ${toValue('hr_employee_status', 'active')}`,
+    });
+    return (data || []).map(e => e.hr_email).filter(Boolean);
+  } catch { return []; }
+}
+
+/**
+ * Stage-based policy notification (revised policy — NO penalty wording ever). Every email is
+ * idempotent via the notification ledger (employee + date + type), so retries, re-scans and
+ * multiple workers never duplicate, and a failed send is recorded 'failed' (retryable), never
+ * 'sent'. `requested` = did the employee SUBMIT a Late Login request for this real-world event?
+ *
+ *   1st–3rd (no escalation stage) — keyed per EVENT (the event DATE, so each of the three
+ *            distinct events gets its own notification; a monthly-count key would wrongly
+ *            suppress the 2nd/3rd):
+ *      • requested  → a normal confirmation that the request was recorded/auto-approved.
+ *      • !requested → a "late without submitting a request" warning (employee only).
+ *   4th  → HR warning to the employee (+ HR recipients)            — keyed per MONTH.
+ *   5th  → FINAL warning via the Super Admin role recipients (+ employee) — keyed per MONTH.
+ *   6th+ → escalation to contact HR/manager (+ manager + HR)       — keyed per EVENT COUNT.
+ * The 4th/5th/6th+ stages fire regardless of `requested`. Best-effort; never throws.
+ */
+async function notifyPolicyOutcome({ employeeId, name, label, requestType, date, decision, requested = false }) {
+  try {
+    const stage = decision?.stage || null;
+    const n = decision?.n;
+    const month = String(date).slice(0, 7);
+    const eventDate = String(date).slice(0, 10);   // per-event idempotency key (1st–3rd)
+    const monthKeyDate = `${month}-01`;            // per-month idempotency key (4th / 5th)
+    const emp = await getEmployee(employeeId);
+    const empTo = emp?.hr_email && !requestNotify.isPlaceholderEmail(emp.hr_email) ? emp.hr_email : null;
+    const prettyMonth = time.fmtDate(`${month}-01`).replace(/^\d+ /, '');   // e.g. "November 2026"
+    const prettyDate = time.fmtDate(eventDate);
+    const footer = `<p style="color:#6b7280;font-size:12px;">CRMONCE HRMS · ${label} · ${prettyMonth}${n != null ? ` · event #${n}` : ''}</p>`;
+    const send = (keyDate, to, cc, type, subject, body) => ledger.sendOnce({
+      employeeId, date: keyDate, type, to, cc, subject,
+      html: `<p>Dear ${esc(name || 'Employee')},</p>${body}${footer}`, entity: 'attendance',
+    }).catch((e) => global.logger?.warn?.(`[late-login] email (${type}) failed: ${e.message}`));
+
+    if (!stage) {
+      // 1st–3rd qualifying event. Keyed by the EVENT DATE so the three distinct events are not
+      // collapsed onto a single monthly key (spec §3). No HR/salary/leave action at this tier.
+      if (requested) {
+        await send(eventDate, empTo, null, 'LATE_LOGIN_CONFIRM',
+          `${label} Recorded (${prettyDate})`,
+          `<p>Your ${label.toLowerCase()} request for <b>${prettyDate}</b> has been <b>recorded and auto-approved</b> under the monthly policy. No leave or salary is deducted.</p>`);
+      } else {
+        await send(eventDate, empTo, null, 'LATE_LOGIN_NO_REQUEST',
+          `${label} Without a Request (${prettyDate})`,
+          `<p>Our attendance system recorded a <b>late login on ${prettyDate}</b> for which <b>no ${label} request was submitted</b>. Please submit a ${label} request when you arrive late. This notice is for your information — no leave or salary is deducted.</p>`);
+      }
+      return;
+    }
+
+    if (stage === 'hr_warning') {
+      const hrs = await hrEmails();
+      await send(monthKeyDate, empTo, hrs, 'LATE_LOGIN_HR_WARNING',
+        `${label} — HR Warning (${prettyMonth})`,
+        `<p>You have reached <b>four ${label.toLowerCase()}s</b> during ${prettyMonth}. Please ensure you arrive on time going forward.</p>`);
+    } else if (stage === 'final_warning') {
+      const admins = await superAdminEmails();
+      await send(monthKeyDate, empTo, admins, 'LATE_LOGIN_FINAL_WARNING',
+        `${label} — FINAL Warning (${prettyMonth})`,
+        `<p>This is a <b>final warning</b> for repeated late arrival during ${prettyMonth} (${n} ${label.toLowerCase()}s). Immediate improvement is expected.</p>`);
+    } else if (stage === 'escalation') {
+      const mgr = await managerEmailFor(employeeId);
+      const hrs = await hrEmails();
+      const cc = [...new Set([mgr, ...(hrs || [])])].filter(Boolean);
+      await send(`${month}-01`, empTo, cc, `LATE_LOGIN_ESCALATION_${n}`,   // per-count key → one per event, retry-safe
+        `${label} — Please contact HR/Manager (${prettyMonth})`,
+        `<p>You now have <b>${n} ${label.toLowerCase()}s</b> during ${prettyMonth}. Please <b>contact HR or your manager</b> to discuss the repeated late arrivals.</p>`);
+    }
+  } catch (e) { global.logger?.warn?.(`[late-login] notifyPolicyOutcome error: ${e.message}`); }
+}
+
+/**
+ * Manager/HR decision on a 3rd (manager_pending) permission. 'approved' → manager_approved
+ * (now counts); 'rejected' → manager_rejected (does NOT count). Employee is notified. No
+ * attendance punch is touched.
+ */
+async function managerDecision(id, decision, by) {
+  const row = await getRaw(id);
+  if (String(row.hr_status) !== PP.STATUS.MANAGER_PENDING) {
+    const e = new Error('Only a request pending manager approval can be decided.'); e.status = 409; throw e;
+  }
+  const status = decision === 'approved' ? PP.STATUS.MANAGER_APPROVED : PP.STATUS.MANAGER_REJECTED;
+  await d365.update(LATE, id, { hr_status: status, hr_managerstatus: decision, hr_approvedby: by?.name || '', hr_approveddate: today() });
+  const label = REQ_LABEL[row.hr_requesttype] || 'Late Login';
+  audit({ category: 'Attendance', type: `permission_${decision}`, title: `${label} ${decision}`, name: row.hr_employeename, meta: { by: by?.name, id } });
+  // Notify the employee of the decision (best-effort).
+  (async () => {
+    const emp = await getEmployee(row.hr_employeeid);
+    const to = emp?.hr_email && !requestNotify.isPlaceholderEmail(emp.hr_email) ? emp.hr_email : null;
+    if (to && notif?.sendEmail) {
+      const msg = decision === 'approved'
+        ? `Your ${label} on ${time.fmtDate(row.hr_date)} has been approved by ${by?.name || 'your manager'}.`
+        : `Your ${label} on ${time.fmtDate(row.hr_date)} has been rejected by ${by?.name || 'your manager'}. It will not count toward your monthly permissions.`;
+      try { await notif.sendEmail(to, `${label} ${decision === 'approved' ? 'Approved' : 'Rejected'} (${time.fmtDate(row.hr_date)})`, `<p>Dear ${esc(row.hr_employeename || 'Employee')},</p><p>${msg}</p>`, { meta: { type: 'permission_policy' } }); } catch (_) {}
+    }
+  })().catch(() => {});
+  return shape({ ...row, hr_status: status, hr_managerstatus: decision, hr_approvedby: by?.name || '', hr_approveddate: today() });
 }
 
 // Employee cancels their own submitted request (or HR).
@@ -441,7 +628,11 @@ async function summary({ employeeId, month, requestType } = {}) {
 // (claimed), 'completed' (verified check-in) — plus legacy 'approved'. It is NOT
 // 'absent_leave_required' / 'rejected' / 'cancelled'. Used only to LABEL the attendance
 // grid ("Late Present"); it never changes the computed attendance status.
-const PRESENT_LATE_STATUSES = `(hr_status eq 'submitted' or hr_status eq 'completed' or hr_status eq 'approved')`;
+// A recorded late login (present-but-late) in ANY of these states: legacy submitted/completed/
+// approved, plus the policy states that still mean "a late login happened that day"
+// (auto_approved, manager_pending/approved, cl_deducted, hr_review). manager_rejected and
+// cancelled are NOT present-late.
+const PRESENT_LATE_STATUSES = `(hr_status eq 'submitted' or hr_status eq 'completed' or hr_status eq 'approved' or hr_status eq 'auto_approved' or hr_status eq 'manager_pending' or hr_status eq 'manager_approved' or hr_status eq 'cl_deducted' or hr_status eq 'hr_review')`;
 // The "Late Present" label is for LATE LOGIN only — the shared table also holds Early Logout
 // permission records, which must NEVER label a day as late-present. `ne 'early_logout'` is
 // null-safe in OData (a legacy row with no request type evaluates true), so older Late Login
@@ -475,9 +666,97 @@ async function approvedSet({ from, to, employeeId } = {}) {
   } catch { return new Set(); }
 }
 
+// Marker that distinguishes a SCANNER-created (punch-only) record from an employee-submitted
+// one — so the scanner can reconcile/reverse only its OWN records, and the UI can badge them.
+const AUTO_CREATED_BY = 'Late Login Policy (auto)';
+
+/** The non-cancelled late_login record for (employee, date), or null. Used by the scanner to
+ *  reconcile a punch with an existing permission request → the SAME event is counted once.
+ *  With { strict:true } a lookup FAILURE re-throws instead of returning null, so a caller can
+ *  tell "no matching request exists" apart from "could not determine" — the latter must NOT be
+ *  treated as a no-request event (spec §2: never warn when the request lookup is ambiguous). */
+async function existingLateFor(employeeId, date, requestType = 'late_login', { strict = false } = {}) {
+  try {
+    const { data } = await d365.getList(LATE, {
+      select: 'hr_lateloginid,hr_status,hr_createdby,hr_date,hr_employeeid,hr_employeename,hr_requesttype,hr_actualtime',
+      filter: `hr_employeeid eq '${esc(employeeId)}' and hr_date eq '${esc(String(date).slice(0, 10))}' and hr_requesttype eq '${esc(requestType)}' and hr_status ne 'cancelled'`, top: 1,
+    });
+    return (data && data[0]) || null;
+  } catch (e) { if (strict) throw e; return null; }
+}
+
+/**
+ * Record a PUNCH-ONLY qualifying Late Login event (no permission request was submitted) and
+ * apply the monthly tier: 1st/2nd auto_approved · 3rd manager_pending · 4th+ 0.5 CL debit or
+ * hr_review. Creates an auto-tagged hr_lateLogin record (the auditable event identity) and
+ * NEVER touches attendance punches. The CL debit is event-keyed (employee+date), so it can
+ * never double with the request path. Returns { recordId, status, decision }.
+ */
+async function recordPunchLateEvent({ employeeId, employeeName, date, firstPunch, shiftStart, createdBy }) {
+  const ds = String(date).slice(0, 10);
+  const month = ds.slice(0, 7);
+  const requestType = 'late_login';
+  const name = employeeName || '';
+  // DEFENCE IN DEPTH (spec §3): never create/penalise a pre-effective event, even if a caller
+  // forgets the gate. The scanner already gates; this makes the function safe on its own.
+  if (!PP.effectiveFor(ds)) return { skipped: 'pre_effective' };
+
+  // Serialise per (type, employee, date) WITHIN this process, and RE-CHECK existence inside the
+  // lock so two same-process scanner/record calls for one event cannot both create a record.
+  // (Process-local only — see concurrency.util; cross-worker races rely on the event-keyed CL
+  // debit + the daily reconciliation pass for financial safety.)
+  const lockKey = `late:${requestType}:${employeeId}:${ds}`;
+  return withKeyLock(lockKey, async () => {
+    // STRICT: a lookup FAILURE here must abort (throw) — never fall through and create a record
+    // (and a no-request warning) when we cannot confirm whether a matching request already exists.
+    const already = await existingLateFor(employeeId, ds, requestType, { strict: true });
+    if (already) return { recordId: already.hr_lateloginid, status: already.hr_status, skipped: 'exists' };
+
+    const priorQualifying = await qualifyingCount(employeeId, month, requestType);
+    const decision = PP.decide(priorQualifying);
+    // Revised policy: always auto-approved, NO CL/salary penalty — only the notification escalates.
+    const status = PP.STATUS.AUTO_APPROVED;
+    const managerStatus = '';
+    let payload = {
+      hr_name: `${name || employeeId} · Late Login (auto) · ${ds}`.slice(0, 250),
+      hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,
+      hr_expectedtime: String(shiftStart || ''), hr_actualtime: String(firstPunch || ''),
+      hr_reason: 'Auto-detected late punch-in (no permission request)', hr_remarks: `Punch-in ${firstPunch || ''}`,
+      hr_status: status, hr_managerstatus: managerStatus,
+      hr_createdby: AUTO_CREATED_BY, hr_requesttype: requestType, hr_ip: '',
+    };
+    let created;
+    for (let i = 0; i < 5; i++) {
+      try { created = await d365.create(LATE, payload); break; }
+      catch (err) { if (d365._isMissingProperty?.(err)) { const prop = d365._missingPropertyName?.(err); if (prop && payload[prop] !== undefined) { delete payload[prop]; continue; } } throw err; }
+    }
+    audit({ category: 'Attendance', type: 'latelogin_auto_detected', title: 'Late Login auto-detected', name, meta: { date: ds, status, policyEvent: decision.n, outcome: decision.outcome } });
+    // Punch-only event → the employee did NOT submit a request (requested:false): 1st–3rd send a
+    // "late without a request" warning; 4th+ send the existing HR/Super Admin/escalation emails.
+    notifyPolicyOutcome({ employeeId, name, label: 'Late Login', requestType, date: ds, status, decision, requested: false })
+      .catch(e => global.logger?.warn?.(`[late-login] auto notify error: ${e.message}`));
+    return { recordId: created.hr_lateloginid, status, decision };
+  });
+}
+
+/** Cancel a SCANNER-created auto record when a later correction makes the day on-time. The
+ *  revised policy applies NO leave/salary penalty, so this ONLY cancels the record — it never
+ *  writes to the CL ledger. (Legacy penalty rows are never auto-reversed; they are flagged for an
+ *  approved remediation plan by the reconciler.) Only auto records. */
+async function reversePunchAutoRecord(record) {
+  const id = record.hr_lateloginid;
+  const ds = String(record.hr_date).slice(0, 10);
+  try { await d365.update(LATE, id, { hr_status: 'cancelled', hr_remarks: 'Cancelled: attendance corrected to on-time (within grace)' }); } catch (e) { global.logger?.warn?.(`[late-login] auto cancel update failed for ${id}: ${e.message}`); }
+  audit({ category: 'Attendance', type: 'latelogin_auto_cancelled', title: 'Late Login auto-cancelled (correction)', name: record.hr_employeename, meta: { date: ds } });
+  return { cancelled: true };
+}
+
 module.exports = {
-  list, getRaw, shape, create, cancel, monthlyCount, summary, approvedOn, approvedSet, policy, REQ_LABEL,
+  list, getRaw, shape, create, cancel, monthlyCount, qualifyingCount, monthlyUsage, managerDecision,
+  summary, approvedOn, approvedSet, policy, REQ_LABEL,
   lateByMinutes, emailLateLoginInfoToHR, emailLeaveRequired, hasCheckIn, verifyTodaysAttendance,
   resolveShiftStart, resolveShiftEnd, resolveShiftWindow,
   evaluatePermission, permissionMinutes, rangeMessage, MAX_PERMISSION_MINUTES, LIMIT_MESSAGE,
+  existingLateFor, recordPunchLateEvent, reversePunchAutoRecord, AUTO_CREATED_BY,
+  notifyPolicyOutcome,
 };
