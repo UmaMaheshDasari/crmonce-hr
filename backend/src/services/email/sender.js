@@ -65,4 +65,85 @@ function resolveSender({ email, label = 'Employee' } = {}) {
   return v.ok ? { ok: true, sender: v.email } : { ok: false, reason: v.reason };
 }
 
-module.exports = { resolveSender, validateCompanyEmail, isPlaceholder, inTenant, tenantDomains, PLACEHOLDER_DOMAINS };
+// ── Purpose-based sender routing ──────────────────────────────────────────────
+// Centralised so every caller routes by BUSINESS PURPOSE, not ad-hoc:
+//   • HR-owned (HR approvals/rejections, ALL Late Login notifications, HR notices)
+//     → the configured HR mailbox (HR_EMAIL_SENDER, default HR@crmonce.com).
+//   • INFO-owned (genuinely informational: celebrations, generic notices)
+//     → the configured INFO mailbox (GRAPH_SENDER, default info@crmonce.com).
+//   • Employee request submissions → the employee's OWN mailbox when it is a valid
+//     company mailbox; otherwise fall back to the INFO system mailbox with Reply-To
+//     set to the employee (never spoof an external From).
+const HR_SENDER_DEFAULT = 'HR@crmonce.com';
+const INFO_SENDER_DEFAULT = 'info@crmonce.com';
+function hrSender() { return process.env.HR_EMAIL_SENDER || HR_SENDER_DEFAULT; }
+function infoSender() { return process.env.GRAPH_SENDER || INFO_SENDER_DEFAULT; }
+
+/**
+ * Employee-origin routing with a safe, non-spoofing fallback (sync; no mailbox-existence
+ * check — callers that already verify the mailbox via Graph keep doing so). Returns an opts
+ * fragment to spread into sendEmail: { from } when the employee has a valid company mailbox,
+ * else { from: INFO, replyTo: <employee email if syntactically valid> }.
+ */
+function employeeOrigin(email) {
+  const v = resolveSender({ email, label: 'Employee' });
+  if (v.ok) return { from: v.sender };
+  const e = String(email || '').trim();
+  return EMAIL_RE.test(e) ? { from: infoSender(), replyTo: e } : { from: infoSender() };
+}
+
+// ── Recipient / CC routing (spec §A–§E) ───────────────────────────────────────
+/** Normalize an address input (string | comma/semicolon list | array of
+ *  strings/{email}|{address}) into a clean string[] (trimmed, empties dropped). */
+function toAddrArray(v) {
+  if (!v) return [];
+  const arr = Array.isArray(v) ? v : String(v).split(/[,;]/);
+  return arr
+    .map(x => (typeof x === 'string' ? x : (x?.email || x?.address || '')))
+    .map(s => String(s).trim())
+    .filter(Boolean);
+}
+
+/**
+ * Merge one or more CC inputs into a clean, de-duplicated CC list:
+ *   • accepts strings, comma/semicolon lists, or arrays (mixed),
+ *   • drops placeholder/seed-domain addresses,
+ *   • drops any address already on the TO line (`excludeTo`),
+ *   • drops the sender itself (`from`) so a mailbox is never CC'd on its own mail.
+ * Returns string[] (possibly empty). Case-insensitive de-dup; preserves first-seen casing.
+ */
+function mergeCc(lists = [], { excludeTo = [], from = null } = {}) {
+  const ex = new Set(toAddrArray(excludeTo).map(s => s.toLowerCase()));
+  if (from) ex.add(String(from).trim().toLowerCase());
+  const seen = new Set();
+  const out = [];
+  for (const list of (Array.isArray(lists) ? lists : [lists])) {
+    for (const addr of toAddrArray(list)) {
+      const lc = addr.toLowerCase();
+      if (ex.has(lc) || seen.has(lc) || isPlaceholder(addr)) continue;
+      seen.add(lc);
+      out.push(addr);
+    }
+  }
+  return out;
+}
+
+/**
+ * Approval / rejection routing (spec §C/§D). Derived from the AUTHENTICATED approver's
+ * own identity (the server-side `approver` object built from req.user) — NEVER from an
+ * untrusted request-body field:
+ *   • the approver IS the INFO mailbox  → From info@, CC HR@   (§D)
+ *   • any other authorized approver     → From HR@,  CC info@  (§C: HR / Super Admin / manager)
+ * @param {{email?:string}} approver
+ * @returns {{ from:string, cc:string }}
+ */
+function decisionRouting(approver = {}) {
+  const email = String(approver?.email || '').trim().toLowerCase();
+  if (email && email === infoSender().toLowerCase()) return { from: infoSender(), cc: hrSender() };
+  return { from: hrSender(), cc: infoSender() };
+}
+
+module.exports = {
+  resolveSender, validateCompanyEmail, isPlaceholder, inTenant, tenantDomains, PLACEHOLDER_DOMAINS,
+  hrSender, infoSender, employeeOrigin, toAddrArray, mergeCc, decisionRouting,
+};

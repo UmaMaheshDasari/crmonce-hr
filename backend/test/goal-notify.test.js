@@ -67,7 +67,7 @@ test('template: goalAssigned subject + all goal fields present', () => {
 });
 
 // ── Email TO/CC/FROM ──────────────────────────────────────────────────────────
-test('email: TO employee, CC manager, FROM assigner mailbox', async () => {
+test('email: FROM HR@ (§E), TO employee, CC info@ + manager', async () => {
   stubD365();
   const captured = [];
   notif.setTransport((req) => captured.push(req));
@@ -76,20 +76,21 @@ test('email: TO employee, CC manager, FROM assigner mailbox', async () => {
 
   assert.strictEqual(captured.length, 1);
   const msg = captured[0].body.message;
-  assert.strictEqual(captured[0].sender, 'umamahesh@crmonce.com');               // FROM = assigner
+  assert.strictEqual(captured[0].sender, 'HR@crmonce.com');                      // §E: goal notification FROM HR
   assert.deepStrictEqual(msg.toRecipients, [{ emailAddress: { address: 'vishwesh@crmonce.com' } }]);
-  assert.deepStrictEqual(msg.ccRecipients, [{ emailAddress: { address: 'manager@crmonce.com' } }]);
+  // §E: INFO mailbox CC'd first, reporting manager kept.
+  assert.deepStrictEqual(msg.ccRecipients.map(x => x.emailAddress.address), ['info@crmonce.com', 'manager@crmonce.com']);
   assert.strictEqual(msg.subject, 'New Performance Goal Assigned');
   assert.strictEqual(audit.emailSent, true);
   assert.ok(audit.emailSentTime);
 });
 
-test('email: FROM falls back to info@crmonce.com when assigner mailbox is external', async () => {
+test('email: FROM is always HR@ (§E) regardless of who the assigner is', async () => {
   stubD365();
   const captured = [];
   notif.setTransport((req) => captured.push(req));
   await goalNotify.notifyGoalAssigned({ goal: GOAL, assigner: { name: 'Ext', email: 'ext@gmail.com' }, employeeId: EMP });
-  assert.strictEqual(captured[0].sender, notif.GRAPH_SENDER);   // info@crmonce.com
+  assert.strictEqual(captured[0].sender, 'HR@crmonce.com');   // §E: system-generated HR notification
 });
 
 // ── In-app notification + activity ────────────────────────────────────────────

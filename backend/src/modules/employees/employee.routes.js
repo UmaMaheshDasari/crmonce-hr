@@ -5,7 +5,7 @@ const d365 = require('../../services/d365.service');
 const authService = require('../../services/auth.service');
 const { requireRole, requirePermission, requireAnyPermission } = require('../../middleware/auth.middleware');
 const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
-const { validateCompanyEmail } = require('../../services/email/sender');
+const { validateCompanyEmail, hrSender, infoSender, mergeCc } = require('../../services/email/sender');
 const { validateEmployeeIdentity } = require('../../services/validators');
 const profile = require('../../services/profile.service');
 const { sendEmail } = require('../../services/notification.service');
@@ -504,7 +504,7 @@ router.patch('/:id/verify', requireAnyPermission('employees.edit'), async (req, 
         `<p style="margin:0 0 4px;color:#374151;">Your recent profile update has been <strong>${label.toLowerCase()}</strong> by HR.</p>` +
         T.summaryCard('Details', [['Decision', T._esc(label)], ['Reason', T._esc(note || '—')]]) +
         T.banner('Please review the note, update your profile in the HR Portal and resubmit.');
-      sendEmail(email, `Profile Update ${label} — Action Needed`, T.layout({ title: 'Profile Update', preheader: `Your profile update was ${label.toLowerCase()}`, content }), { meta: { type: 'profile_decision' } })
+      sendEmail(email, `Profile Update ${label} — Action Needed`, T.layout({ title: 'Profile Update', preheader: `Your profile update was ${label.toLowerCase()}`, content }), { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [email], from: hrSender() }), meta: { type: 'profile_decision' } })   // §C: HR decision → HR sender, CC info@
         .catch((e) => global.logger?.warn?.(`[profile] reject email failed: ${e.message}`));
     }
     res.json({ ...emp, _verifystatus: status });

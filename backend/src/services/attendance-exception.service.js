@@ -18,6 +18,7 @@ const templates = require('./email/templates');
 const notification = require('./notification.service');
 const requestNotify = require('./request-notify.service');
 const ledger = require('./notification-ledger.service');
+const { hrSender, infoSender, mergeCc } = require('./email/sender');   // §E: HR-owned notices FROM HR, CC info@
 const ecfg = require('./email/config');
 
 const ATT = d365.constructor.entities.attendance;
@@ -82,8 +83,10 @@ async function notifyException(emp, alert, { cc = [], shift, inTime, outTime } =
     });
     const res = await ledger.sendOnce({
       employeeId: emp.hr_hremployeeid, date: alert.date, type: 'MISSING_PUNCH',
-      to, cc: (cc || []).map(c => c.email).filter(Boolean), subject, html, entity: 'attendance',
-    });   // `from` defaults to info@crmonce.com (GRAPH_SENDER)
+      to, from: hrSender(),   // §E: HR-owned notice → HR sender (was defaulting to info@)
+      cc: mergeCc([(cc || []).map(c => c.email), infoSender()], { excludeTo: [to], from: hrSender() }),   // keep any escalation CC + add info@
+      subject, html, entity: 'attendance',
+    });
     global.logger?.info?.(`[exception] missing-punch → ${to} (${alert.code} on ${alert.date}): ${res.sent ? 'sent' : (res.skipped ? `skipped(${res.reason})` : (res.error || 'failed'))}`);
   }
   // In-app bell.
@@ -106,7 +109,7 @@ async function sendLateLoginNotice(emp, { date, shift, expectedTime, actualTime,
   });
   // ONE email per employee + attendance date (LATE_LOGIN) — the ledger de-dupes so a
   // re-scan / real-time check-in / recalc never re-sends the same day's late entry.
-  return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance' });
+  return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance', from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }) });
 }
 
 // ── SAME-DAY Late Login sweep ─────────────────────────────────────────────────
@@ -172,7 +175,7 @@ async function sendLateLoginApplyPrompt(emp, { date, shift, expectedTime, grace 
     employeeName: emp.hr_hremployee1, date: time.fmtDate(date), shift, expectedTime, actualTime: '',
     grace: grace != null ? grace : LATE_ENTRY_GRACE_MIN,
   });
-  return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance' });
+  return ledger.sendOnce({ employeeId: emp.hr_hremployeeid, date, type: 'LATE_LOGIN', to, subject, html, entity: 'attendance', from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }) });
 }
 
 /** Employees on an APPROVED leave that covers `date` (skip — respect existing rules). */

@@ -24,6 +24,7 @@
 const d365 = require('./d365.service');
 const { AUDIT_SET, CANCEL_SET } = require('./provision-request-lifecycle');
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
+const { hrSender, infoSender, mergeCc } = require('./email/sender');
 
 const esc = (v) => String(v ?? '').replace(/'/g, "''");
 const nowIso = () => new Date().toISOString();
@@ -62,7 +63,10 @@ async function getAudit({ type, id }) {
 }
 
 // ── notifications (email + in-app) ────────────────────────────────────────────
-async function email(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { meta: { type: 'lifecycle' } }); } catch (e) { global.logger?.warn?.(`[lifecycle] email skipped: ${e.message}`); } }
+// §B/§E: request-lifecycle emails (resubmit, cancellation request, HR cancellation decisions
+// across Leave / Late Login / Attendance Correction / Comp Off / Document Verification) route
+// from the configured HR mailbox.
+async function email(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }), meta: { type: 'lifecycle' } }); } catch (e) { global.logger?.warn?.(`[lifecycle] email skipped: ${e.message}`); } }
 function ping(ids, event, payload) { try { for (const id of ids || []) notif?.notifyUser?.(id, event, payload); notif?.broadcast?.(event, payload); } catch (_) {} }
 async function notifyMany(recipients, event, subject, html, payload) {
   const emails = [...new Set((recipients?.emails || []).filter(Boolean))];

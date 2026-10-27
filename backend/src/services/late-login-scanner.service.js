@@ -25,6 +25,7 @@ const PP = require('./permission-policy.service');
 const detect = require('./permission-attendance.util');
 const lateLogin = require('./late-login.service');
 const shiftHistory = require('./shift-history.service');
+const eligibility = require('./late-login-eligibility.service');   // single leave/holiday-aware decision
 
 const EMP = d365.constructor.entities.employee;
 const ATT = d365.constructor.entities.attendance;
@@ -59,9 +60,10 @@ async function attendanceRecordFor(employeeId, date) {
  */
 async function scanDate(dateStr, { employees } = {}) {
   const ds = String(dateStr || '').slice(0, 10);
-  const summary = { date: ds, scanned: 0, detected: 0, created: 0, reconciledExisting: 0, reversedCorrections: 0, hrReview: 0, clDeducted: 0, errors: 0 };
+  const summary = { date: ds, scanned: 0, detected: 0, created: 0, reconciledExisting: 0, reversedCorrections: 0, excused: 0, review: 0, hrReview: 0, clDeducted: 0, errors: 0 };
   if (!PP.effectiveFor(ds)) { summary.skipped = 'pre_effective'; return summary; }
 
+  const cfg = eligibility.nonWorkingConfig();   // holidays + weekly-offs (env + HR calendar)
   const emps = employees || await activeEmployees();
   for (const emp of emps) {
     const employeeId = emp.hr_hremployeeid;
@@ -69,32 +71,30 @@ async function scanDate(dateStr, { employees } = {}) {
     try {
       const shift = await shiftHistory.resolveShiftForDate(employeeId, ds, emp).catch(() => null);
       const record = await attendanceRecordFor(employeeId, ds);
-      // STRICT: if the permission lookup FAILS we must not proceed to record a punch event and
-      // send a "no request" warning on incomplete information (spec §2). A throw here is caught
-      // below (errors++) and the day is retried on the next idempotent scan.
+      // STRICT: a FAILED permission lookup must not lead to recording an event on incomplete
+      // info (§2); the throw is caught below (errors++) and retried on the next idempotent scan.
       const existing = await lateLogin.existingLateFor(employeeId, ds, 'late_login', { strict: true });
-      // No finalized record at all → nothing defensible to count (incomplete/absent handled elsewhere).
-      const ev = record ? detect.lateEventForDate(record, shift, ds, { effectiveFrom: PP.POLICY.effectiveFrom }) : { qualifies: false };
+      // SINGLE eligibility decision (punch + shift + grace layered with leave/holiday/week-off).
+      const leaves = await eligibility.leavesFor(employeeId);
+      const v = eligibility.classify({ record, shift, date: ds, leaves, holidays: cfg.holidays, weekOffDays: cfg.weekOffDays, effectiveFrom: PP.POLICY.effectiveFrom });
 
-      if (ev.qualifies) {
+      if (v.verdict === 'eligible') {
         summary.detected++;
-        if (existing) {
-          // Same event already counted (permission or a prior auto record) → count once. The
-          // revised policy applies NO CL penalty, so there is nothing to reconcile here.
-          summary.reconciledExisting++;
-          continue;
-        }
-        const first = (detect.punchTimes(record)[0]) || ev.firstPunch || '';
+        if (existing) { summary.reconciledExisting++; continue; }   // same real-world event → counted once
+        const first = (detect.punchTimes(record)[0]) || '';
         const r = await lateLogin.recordPunchLateEvent({ employeeId, employeeName: emp.hr_hremployee1, date: ds, firstPunch: first, shiftStart: shift?.start || '' });
         summary.created++;
         if (r.status === PP.STATUS.CL_DEDUCTED) summary.clDeducted++;
         if (r.status === PP.STATUS.HR_REVIEW) summary.hrReview++;
       } else if (existing && existing.hr_createdby === lateLogin.AUTO_CREATED_BY) {
-        // Previously auto-flagged late, but the authoritative record is now on-time → reconcile.
-        await lateLogin.reversePunchAutoRecord(existing);
-        summary.reversedCorrections++;
+        // Previously auto-counted, but now NOT eligible (corrected to on-time, or now covered by
+        // leave/holiday/week-off, or held for review) → cancel the auto event (keeps audit).
+        if (v.verdict === 'not_late') { await lateLogin.reversePunchAutoRecord(existing); summary.reversedCorrections++; }
+        else { await lateLogin.markAutoRecordIneligible(existing, v.reason || v.verdict); if (v.verdict === 'excused') summary.excused++; else summary.review++; }
+      } else if (v.verdict === 'review') {
+        summary.review++;   // held (half-day/pending leave over a late punch) — not counted, no new event
       }
-      // (not qualifying + an employee-submitted record) → leave it; the employee owns that request.
+      // (not eligible + an employee-submitted record) → leave it; the employee owns that request.
     } catch (e) {
       summary.errors++;
       global.logger?.warn?.(`[late-login-scan] ${ds} ${employeeId}: ${e.message}`);

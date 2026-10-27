@@ -5,7 +5,7 @@
  */
 const d365 = require('./d365.service');
 const { sendEmail, notifyUser, GRAPH_SENDER } = require('./notification.service');
-const { resolveSender, isPlaceholder } = require('./email/sender');
+const { isPlaceholder, hrSender, infoSender, mergeCc } = require('./email/sender');
 const activity = require('./activity.service');
 const T = require('./email/templates');
 const requestNotify = require('./request-notify.service');
@@ -15,7 +15,9 @@ const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
 
 async function emailTo(email, subject, title, contentHtml, from) {
   if (!email || isPlaceholder(email)) return { success: false };
-  return sendEmail(email, subject, T.layout({ title, preheader: title, content: contentHtml }), { from: from || GRAPH_SENDER, meta: { type: 'advance' } }).catch(() => ({ success: false }));
+  const sender = from || GRAPH_SENDER;
+  const cc = mergeCc([infoSender()], { excludeTo: [email], from: sender });   // §E: CC info@ (dropped when the sender IS info@)
+  return sendEmail(email, subject, T.layout({ title, preheader: title, content: contentHtml }), { from: sender, cc, meta: { type: 'advance' } }).catch(() => ({ success: false }));
 }
 
 /** Employee applied → notify HR approvers (in-app + email) + activity. */
@@ -31,7 +33,7 @@ async function notifyRequested({ advance, applicant }) {
       T.banner(`${applicant?.name || 'Employee'} requested ${amount}. Reason: ${T._esc(advance.reason || '—')}`);
     for (const ap of approvers) {
       try { notifyUser(ap.hr_hremployeeid, 'advance:requested', { id: advance.id, amount: advance.amount, employeeName: applicant?.name }); } catch {}
-      emailTo(ap.hr_email, `Advance Salary Request — ${applicant?.name || 'Employee'} (${amount})`, 'Advance Salary Request', content);
+      emailTo(ap.hr_email, `Advance Salary Request — ${applicant?.name || 'Employee'} (${amount})`, 'Advance Salary Request', content, hrSender());   // §E: HR-owned → HR sender
     }
   } catch (e) { global.logger?.error?.(`notifyRequested failed: ${e.message}`); }
 }
@@ -53,10 +55,8 @@ async function notifyDecision({ advance, decision, approver }) {
           T.banner(`Amount ${amount}. Monthly EMI ${inr(advance.emi || advance.amount)}, recovered from your payroll starting ${advance.recoverFrom || 'the next payroll'}.`, 'success')
         : `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Your advance salary request of ${amount} has been <strong>rejected</strong>.</p>` +
           T.banner(advance.remarks ? `Reason: ${T._esc(advance.remarks)}` : 'Please contact HR for details.', 'warn');
-      let from = GRAPH_SENDER;
-      const s = resolveSender({ email: approver?.email, label: 'Approver' });
-      if (s.ok) from = s.sender;
-      await emailTo(emp.hr_email, `Advance Salary ${approved ? 'Approved' : 'Rejected'} — ${amount}`, `Advance Salary ${approved ? 'Approved' : 'Rejected'}`, content, from);
+      // §B: HR approval/rejection emails come FROM the configured HR mailbox.
+      await emailTo(emp.hr_email, `Advance Salary ${approved ? 'Approved' : 'Rejected'} — ${amount}`, `Advance Salary ${approved ? 'Approved' : 'Rejected'}`, content, hrSender());
     }
   } catch (e) { global.logger?.error?.(`notifyDecision failed: ${e.message}`); }
 }

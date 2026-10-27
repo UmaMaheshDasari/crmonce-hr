@@ -1,9 +1,10 @@
 /**
  * Attendance Correction (missing_punch) submission email — audit fix.
  * Validates: FROM = employee's own company mailbox (a REAL Graph sender, not just a
- * header), TO = ALL active authorized HR + Super Admin on ONE email (NO CC), the
- * submission subject wording, no fake fallback when the employee has no mailbox,
- * and no duplicate sends. The decision email keeps its own "Missing Punch" wording.
+ * header), TO = ALL active authorized HR + Super Admin on ONE email, CC = the INFO
+ * mailbox (spec §B), the submission subject wording, no fake fallback when the
+ * employee has no mailbox, and no duplicate sends. The decision email keeps its own
+ * "Missing Punch" wording.
  *
  * No network: transport is mocked (setTransport) + EMAIL_DRY_RUN; the payload
  * builder is pure. No production data.
@@ -53,13 +54,19 @@ async function submitCorrection(actor = EMP, rows = HR_ROWS) {
   return sent;
 }
 
-test('correction: ONE email, FROM employee mailbox (real Graph sender), TO all HR+Super Admin, NO CC', async () => {
+test('correction: ONE email, FROM employee mailbox (real Graph sender), TO all HR+Super Admin, CC info@ (§B)', async () => {
   const sent = await submitCorrection();
   assert.strictEqual(sent.length, 1);                                     // single email, not one-per-recipient
   assert.strictEqual(sent[0].req.sender, EMP.email);                      // actual Graph sender = employee
   assert.ok(sent[0].req.url.includes(encodeURIComponent(EMP.email)));     // sent AS the employee mailbox, not a From header
   assert.deepStrictEqual(toOf(sent[0].req).sort(), ['admin@crmonce.com', 'hr1@crmonce.com', 'hr2@crmonce.com']);  // ALL HR on TO
-  assert.deepStrictEqual(ccOf(sent[0].req), []);                          // NO CC
+  assert.deepStrictEqual(ccOf(sent[0].req), ['info@crmonce.com']);        // §B: INFO mailbox CC'd on the submission
+});
+
+test('correction: INFO-fallback send (employee has no company mailbox) does NOT self-CC info@', async () => {
+  const sent = await submitCorrection({ id: 'E1', name: 'No Email', email: '' });
+  assert.strictEqual(sent[0].req.sender, 'info@crmonce.com');             // fallback sender IS info@
+  assert.deepStrictEqual(ccOf(sent[0].req), []);                          // mergeCc drops a CC equal to the sender
 });
 
 test('correction: subject "Attendance Correction Request - {name}", actionable, details present', async () => {
@@ -71,9 +78,19 @@ test('correction: subject "Attendance Correction Request - {name}", actionable, 
   assert.ok(/18:30/.test(sent[0].ctx.html));                              // Requested Time
 });
 
-test('correction: employee with NO company email → nothing sent (no fake FROM, never info@)', async () => {
+test('correction: employee with NO email → §A fallback: ONE email from INFO system mailbox, NO Reply-To (no address to use), still TO HR', async () => {
   const sent = await submitCorrection({ id: 'E1', name: 'No Email', email: '' });
-  assert.strictEqual(sent.length, 0);                                     // resolveSender fails → skipped + audited
+  assert.strictEqual(sent.length, 1);                                     // no longer skipped — safe fallback send
+  assert.strictEqual(sent[0].req.sender, 'info@crmonce.com');             // system INFO sender (never spoofed)
+  assert.ok(!sent[0].req.body.message.replyTo);                           // empty address → no Reply-To
+  assert.deepStrictEqual(toOf(sent[0].req).sort(), ['admin@crmonce.com', 'hr1@crmonce.com', 'hr2@crmonce.com']);  // recipients unchanged
+});
+
+test('correction: employee with an EXTERNAL (non-company) email → §A fallback: from INFO, Reply-To = employee (no spoof)', async () => {
+  const sent = await submitCorrection({ id: 'E1', name: 'Gmail User', email: 'user@gmail.com' });
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].req.sender, 'info@crmonce.com');             // cannot send AS an external address
+  assert.strictEqual(sent[0].req.body.message.replyTo?.[0]?.emailAddress?.address, 'user@gmail.com');  // replies route to the employee
 });
 
 test('correction: no HR recipients configured → nothing sent (safe, no crash)', async () => {

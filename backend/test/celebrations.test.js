@@ -163,29 +163,31 @@ async function withCapturedEmail(fn) {
   finally { notifSvc.sendEmail = origSend; notifSvc.notifyUser = origNotify; if (activitySvc) activitySvc.record = origAct; }
 }
 
-test('sendOne birthday: TO = employee, CC = cleaned info list, subject has the name', async () => {
+test('sendOne birthday: FROM HR@ (§E), TO = employee, CC = info@ + cleaned info list, subject has the name', async () => {
   const emp = { id: 'e1', name: 'Vishwesh Boina', firstName: 'Vishwesh', email: 'vishwesh@crmonce.com', department: 'Sales', designation: 'Executive' };
   const { captured, res } = await withCapturedEmail(() =>
-    svc.sendOne('birthday', emp, settingsFixture('hr@crmonce.com, vishwesh@crmonce.com, hr@crmonce.com')));
+    svc.sendOne('birthday', emp, settingsFixture('manager@crmonce.com, vishwesh@crmonce.com, manager@crmonce.com')));
   assert.strictEqual(res.emailStatus, 'sent');
-  assert.strictEqual(captured.to, 'vishwesh@crmonce.com');       // TO = the employee
-  assert.deepStrictEqual(captured.opts.cc, ['hr@crmonce.com']);  // employee excluded + dup folded
+  assert.strictEqual(captured.opts.from, 'HR@crmonce.com');                       // §E: wishes FROM HR
+  assert.strictEqual(captured.to, 'vishwesh@crmonce.com');                        // TO = the employee
+  assert.deepStrictEqual(captured.opts.cc, ['manager@crmonce.com', 'info@crmonce.com']); // employee excluded + dup folded + §E info@
   assert.match(captured.subject, /Happy Birthday/);
   assert.match(captured.subject, /Vishwesh Boina/);
   assert.match(captured.html, /On behalf of HR/);               // congratulations addressed to employee
   assert.match(captured.html, /For Information/);               // CC info strip present
 });
-test('sendOne birthday: no CC configured → single TO email, no info strip', async () => {
+test('sendOne birthday: no CC configured → still CC info@ (§E), info strip present', async () => {
   const emp = { id: 'e1', name: 'A B', firstName: 'A', email: 'a@crmonce.com' };
   const { captured } = await withCapturedEmail(() => svc.sendOne('birthday', emp, settingsFixture('')));
-  assert.strictEqual(captured.opts.cc, undefined);
-  assert.doesNotMatch(captured.html, /For Information/);
+  assert.strictEqual(captured.opts.from, 'HR@crmonce.com');
+  assert.deepStrictEqual(captured.opts.cc, ['info@crmonce.com']);   // §E: INFO mailbox always CC'd
+  assert.match(captured.html, /For Information/);
 });
-test('sendOne marriage: correct completed-years line; CC excludes the employee', async () => {
+test('sendOne marriage: correct completed-years line; CC = info@ + configured (employee excluded)', async () => {
   const emp = { id: 'e2', name: 'Priya Sharma', firstName: 'Priya', email: 'priya@crmonce.com', years: 5 };
   const { captured } = await withCapturedEmail(() =>
-    svc.sendOne('marriage_anniversary', emp, settingsFixture('priya@crmonce.com, hr@crmonce.com')));
-  assert.deepStrictEqual(captured.opts.cc, ['hr@crmonce.com']);
+    svc.sendOne('marriage_anniversary', emp, settingsFixture('priya@crmonce.com, manager@crmonce.com')));
+  assert.deepStrictEqual(captured.opts.cc, ['manager@crmonce.com', 'info@crmonce.com']);
   assert.match(captured.html, /Celebrating 5 wonderful years of togetherness/);
 });
 test('sendOne: employee without an email → email skipped, sendEmail never called', async () => {

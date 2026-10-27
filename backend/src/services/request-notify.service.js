@@ -16,7 +16,7 @@ const time = require('./time.util');
 const { toValue } = require('./picklist');
 const { sendEmail, notifyUser, verifyMailbox } = require('./notification.service');
 const { signApprovalToken } = require('./approval-token');
-const { resolveSender } = require('./email/sender');
+const { resolveSender, hrSender, infoSender, mergeCc, decisionRouting } = require('./email/sender');
 const T = require('./email/templates');
 const ecfg = require('./email/config');
 const { buildLeaveICS, icsAttachment } = require('./email/ics');
@@ -60,6 +60,19 @@ function auditSkip(type, metaType, from, to, reason) {
   const title = (TYPE_CFG[type] || { title: type }).title;
   global.logger?.error(`${title} email NOT sent — ${reason}`);
   global.logger?.info(`EMAIL_AUDIT ${JSON.stringify({ from: from || null, to: to || null, type: metaType, status: 'skipped', reason, at: new Date().toISOString() })}`);
+}
+
+/**
+ * Employee-origin routing for request SUBMISSIONS (spec §A): send FROM the employee's own
+ * company mailbox when it is valid AND exists in Graph; otherwise fall back to the INFO system
+ * mailbox with Reply-To set to the employee (never spoof an external From, never silently drop).
+ * Returns an opts fragment to spread into sendEmail.
+ */
+async function employeeFrom(email) {
+  const s = resolveSender({ email, label: 'Employee' });
+  if (s.ok) { const v = await verifyMailbox(s.sender); if (v.ok) return { from: s.sender }; }
+  const e = String(email || '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? { from: infoSender(), replyTo: e } : { from: infoSender() };
 }
 
 /** Active HR Managers + Super Admins — the only valid approvers. */
@@ -131,12 +144,9 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
       return;
     }
 
-    // Dynamic sender = the applicant's OWN mailbox. Never fall back to info@ — if
-    // the mailbox can't be used, log the exact reason and skip (audited).
-    const s = resolveSender({ email: actor?.email, label: 'Employee' });
-    if (!s.ok) return auditSkip(type, `${type}_new_approver`, actor?.email, approver.email, s.reason);
-    const v = await verifyMailbox(s.sender);
-    if (!v.ok) return auditSkip(type, `${type}_new_approver`, s.sender, approver.email, v.reason);
+    // Employee-origin (spec §A): FROM the applicant's own mailbox when usable; otherwise the
+    // INFO system mailbox with Reply-To = applicant (safe fallback, never skip/spoof).
+    const origin = await employeeFrom(actor?.email);
 
     // Employee card shows the HUMAN Employee ID (EMP1039), never the GUID actor.id.
     const cardInfo = await employeeCardInfo(actor.id);
@@ -151,11 +161,14 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     const a = T.newRequestApprover({
       moduleTitle: cfg.title, employee, rows: details, applyTime: applyTimeFmt, approverName: approver.name, approveUrl, rejectUrl, status,
     });
+    // §A: the submission is CC'd to the INFO mailbox (once, on the primary approver email —
+    // the per-recipient CC emails below are distinct recipients and are not re-CC'd to info@).
+    const infoCc = mergeCc([infoSender()], { excludeTo: [approver.email], from: origin.from });
     const ra = await sendEmail(approver.email, a.subject, a.html, {
-      from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_approver` },
+      ...origin, cc: infoCc, saveToSentItems: false, meta: { type: `${type}_new_approver` },
     });
     global.logger?.[ra?.success ? 'info' : 'error'](
-      `${cfg.title} approver email FROM ${s.sender} → ${approver.email}: ${ra?.success ? 'sent' : (ra?.error || 'failed')}`);
+      `${cfg.title} approver email FROM ${origin.from} → ${approver.email}: ${ra?.success ? 'sent' : (ra?.error || 'failed')}`);
 
     // 2) CC recipients — RECIPIENT-SPECIFIC content (never one identical email):
     //      • CC WITH an authorized HR/Admin approval role → actionable email WITH
@@ -174,19 +187,19 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
           moduleTitle: cfg.title, employee, rows: details, applyTime: applyTimeFmt, approverName: c.name, approveUrl, rejectUrl, status,
         });
         const rc = await sendEmail(c.email, am.subject, am.html, {
-          from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc_approver` },
+          ...origin, saveToSentItems: false, meta: { type: `${type}_new_cc_approver` },
         });
         global.logger?.[rc?.success ? 'info' : 'error'](
-          `${cfg.title} CC (actionable, ${c.role}) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
+          `${cfg.title} CC (actionable, ${c.role}) email FROM ${origin.from} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
       } else {
         const cm = T.newRequestCc({
           moduleTitle: cfg.title, employee, rows: details, applyTime: applyTimeFmt, recipientName: c.name, approverName: approver.name, status,
         });
         const rc = await sendEmail(c.email, cm.subject, cm.html, {
-          from: s.sender, saveToSentItems: false, meta: { type: `${type}_new_cc` },
+          ...origin, saveToSentItems: false, meta: { type: `${type}_new_cc` },
         });
         global.logger?.[rc?.success ? 'info' : 'error'](
-          `${cfg.title} CC (info) email FROM ${s.sender} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
+          `${cfg.title} CC (info) email FROM ${origin.from} → ${c.email}: ${rc?.success ? 'sent' : (rc?.error || 'failed')}`);
       }
     }
   } catch (err) {
@@ -204,16 +217,13 @@ async function emailApplyAcknowledgement({ type, toEmail, employeeName, approver
     // Attendance Correction submission uses 'Attendance Correction' while the
     // missing_punch DECISION email keeps 'Missing Punch'.
     const title = moduleTitle || cfg.title;
-    const s = resolveSender({ email: toEmail, label: 'Employee' });
-    if (!s.ok) return auditSkip(type, `${type}_ack`, toEmail, toEmail, s.reason);
-    const v = await verifyMailbox(s.sender);
-    if (!v.ok) return auditSkip(type, `${type}_ack`, s.sender, toEmail, v.reason);
+    const origin = await employeeFrom(toEmail);   // §A: employee-origin with INFO+Reply-To fallback
 
     const { subject, html } = T.acknowledgement({ moduleTitle: title, employeeName, approverName });
     // saveToSentItems=false → the applicant gets exactly ONE copy (inbox), not a
     // second copy in Sent. This is the ONLY email the employee should receive.
-    const r = await sendEmail(toEmail, subject, html, { from: s.sender, saveToSentItems: false, meta: { type: `${type}_ack` } });
-    global.logger?.[r?.success ? 'info' : 'error'](`${title} acknowledgement FROM ${s.sender} → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+    const r = await sendEmail(toEmail, subject, html, { ...origin, saveToSentItems: false, meta: { type: `${type}_ack` } });
+    global.logger?.[r?.success ? 'info' : 'error'](`${title} acknowledgement FROM ${origin.from} → ${toEmail}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailApplyAcknowledgement(${type}) failed: ${err.message}`);
   }
@@ -235,10 +245,7 @@ async function emailCorrectionRequestToHR({ recordId, actor, details, applyTime 
     const to = approvers.map(a => a.hr_email).filter(e => e && !isPlaceholderEmail(e));
     if (!to.length) { global.logger?.warn('Attendance Correction email skipped: no HR recipients'); return; }
 
-    const s = resolveSender({ email: actor?.email, label: 'Employee' });       // FROM = employee mailbox (no fallback)
-    if (!s.ok) return auditSkip('missing_punch', 'missing_punch_new_hr', actor?.email, to.join(','), s.reason);
-    const v = await verifyMailbox(s.sender);
-    if (!v.ok) return auditSkip('missing_punch', 'missing_punch_new_hr', s.sender, to.join(','), v.reason);
+    const origin = await employeeFrom(actor?.email);   // §A: employee-origin with INFO+Reply-To fallback
 
     const cardInfo = await employeeCardInfo(actor.id);
     const employee = { name: actor?.name, id: cardInfo.employeeId || '—', department: cardInfo.department, email: actor?.email };
@@ -248,10 +255,11 @@ async function emailCorrectionRequestToHR({ recordId, actor, details, applyTime 
       moduleTitle: 'Attendance Correction', employee, rows: details,
       applyTime: time.fmtDateTime(applyTime), approverName: 'HR Team', approveUrl, rejectUrl, status: 'L1 Pending',
     });
-    // ONE email, all HR/Super Admin on TO, no CC.
-    const r = await sendEmail(to, a.subject, a.html, { from: s.sender, saveToSentItems: false, meta: { type: 'missing_punch_new_hr' } });
+    // ONE email, all HR/Super Admin on TO; §B: the INFO mailbox is CC'd for visibility.
+    const infoCc = mergeCc([infoSender()], { excludeTo: to, from: origin.from });
+    const r = await sendEmail(to, a.subject, a.html, { ...origin, cc: infoCc, saveToSentItems: false, meta: { type: 'missing_punch_new_hr' } });
     global.logger?.[r?.success ? 'info' : 'error'](
-      `Attendance Correction request FROM ${s.sender} → ${to.join(',')}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+      `Attendance Correction request FROM ${origin.from} → ${to.join(',')}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
     // In-app notification to each HR approver (email is the actionable channel).
     for (const ap of approvers) if (ap.hr_hremployeeid) notifyUser(ap.hr_hremployeeid, 'request:new', { requestType: 'missing_punch', id: recordId, employeeName: actor?.name });
   } catch (err) {
@@ -260,12 +268,13 @@ async function emailCorrectionRequestToHR({ recordId, actor, details, applyTime 
 }
 
 /**
- * Decision → email the EMPLOYEE ONLY (Approved/Rejected), with balance + .ics for
- * approved leave. FROM = the approver's OWN mailbox (HR@ / umamahesh@).
- *
- * The reporting manager and HR are NEVER emailed or CC'd on a decision — they were
- * already notified when the request was submitted. The `cc` argument is accepted
- * for backward compatibility but is intentionally IGNORED. `approver` = {name,email}.
+ * Decision → email the EMPLOYEE (Approved/Rejected), with balance + .ics for approved
+ * leave. Sender + CC follow spec §C/§D, derived from the AUTHENTICATED approver's own
+ * mailbox (decisionRouting), never a request-body field:
+ *   • HR / Super Admin / manager approver → FROM HR@crmonce.com,  CC info@crmonce.com (§C)
+ *   • INFO mailbox approver               → FROM info@crmonce.com, CC HR@crmonce.com  (§D)
+ * The incoming `cc` argument is accepted for backward compatibility but intentionally
+ * IGNORED — the CC is dictated by the routing rule above. `approver` = {name,email,role}.
  */
 async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, requestDays, cc = [] }) {   // eslint-disable-line no-unused-vars
   try {
@@ -275,13 +284,10 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
     if (!emp?.hr_email) { global.logger?.warn(`${cfg.title} decision email skipped: employee ${employeeId} has no email`); return; }
 
     const aName = approver?.name || approverName;
-    // Sender = the approver's OWN mailbox. No fallback: if it can't be used, the
-    // decision email is NOT sent (skipped + audited). The employee is still
-    // notified in-app by the caller (notifyLeaveApproval).
-    const s = resolveSender({ email: approver?.email, label: 'Approver' });
-    if (!s.ok) return auditSkip(type, `${type}_decision`, approver?.email, emp.hr_email, s.reason);
-    const mb = await verifyMailbox(s.sender);
-    if (!mb.ok) return auditSkip(type, `${type}_decision`, s.sender, emp.hr_email, mb.reason);
+    // Sender + CC per spec §C/§D, from the approver's authenticated mailbox (decisionRouting):
+    // HR/Super Admin/manager → FROM HR@, CC info@ ; the INFO mailbox → FROM info@, CC HR@.
+    // The approver's name still appears in the body; the employee is also notified in-app.
+    const { from, cc: decisionCc } = decisionRouting(approver);
 
     const balance = type === 'leave' ? await getLeaveBalance(employeeId) : null;
     const { subject, html } = T.decision({
@@ -304,10 +310,13 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
       attachments.push(icsAttachment(ics, 'leave.ics'));
     }
 
-    // Employee ONLY — never CC HR or the reporting manager on a decision.
-    const r = await sendEmail(emp.hr_email, subject, html, { from: s.sender, attachments, meta: { type: `${type}_decision` } });
+    // TO the employee; CC the counterpart mailbox (§C info@ / §D HR@), never the reporting
+    // manager (they were already notified at submission). CC is dropped if it equals the
+    // employee's own address (mergeCc) so the employee is never double-listed.
+    const ccList = mergeCc([decisionCc], { excludeTo: [emp.hr_email], from });
+    const r = await sendEmail(emp.hr_email, subject, html, { from, cc: ccList, attachments, meta: { type: `${type}_decision` } });
     global.logger?.[r?.success ? 'info' : 'error'](
-      `${cfg.title} decision email FROM ${s.sender} → ${emp.hr_email} (employee only): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+      `${cfg.title} decision email FROM ${from} → ${emp.hr_email} (cc: ${ccList.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {
     global.logger?.error(`emailDecisionToEmployee(${type}) failed: ${err.message}`);
   }

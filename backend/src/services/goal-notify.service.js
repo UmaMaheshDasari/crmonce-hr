@@ -16,8 +16,8 @@
  * Socket.io), email/templates, email/sender, activity.service, d365.service.
  */
 const d365 = require('./d365.service');
-const { sendEmail, notifyUser, verifyMailbox, GRAPH_SENDER } = require('./notification.service');
-const { resolveSender, isPlaceholder } = require('./email/sender');
+const { sendEmail, notifyUser } = require('./notification.service');
+const { isPlaceholder, hrSender, infoSender, mergeCc } = require('./email/sender');
 const activity = require('./activity.service');
 const T = require('./email/templates');
 const ecfg = require('./email/config');
@@ -108,31 +108,22 @@ async function notifyGoalAssigned({ goal, assigner, employeeId }) {
       global.logger?.info(`[goal] assignment email already sent for goal ${goalId} — skipping duplicate`);
       audit.emailSent = true;   // already sent earlier
     } else {
-      // FROM = the logged-in assigner's OWN company mailbox when usable; otherwise
-      // fall back to info@crmonce.com (GRAPH_SENDER). App-only Graph can send AS
-      // any real tenant mailbox.
-      let from = GRAPH_SENDER;
-      const s = resolveSender({ email: assigner?.email, label: 'Assigner' });
-      if (s.ok) {
-        const v = await verifyMailbox(s.sender);
-        if (v.ok) from = s.sender;
-        else global.logger?.warn(`[goal] assigner mailbox ${s.sender} unusable (${v.reason}) — sending from ${GRAPH_SENDER}`);
-      } else {
-        global.logger?.info(`[goal] assigner mailbox not usable (${s.reason}) — sending from ${GRAPH_SENDER}`);
-      }
+      // FROM = HR@crmonce.com (spec §E: goal assignment is a system-generated HR
+      // notification; the assigner's name still appears in the body). App-only Graph
+      // sends AS the HR tenant mailbox.
+      const from = hrSender();
 
-      // CC: reporting manager (if any) + optional HR mailbox (env GOAL_CC_HR).
-      const ccSet = new Set();
+      // CC: the INFO mailbox (§E) + reporting manager (if any) + optional HR mailbox
+      // (env GOAL_CC_HR). mergeCc de-dupes, drops placeholders, the TO recipient and
+      // the sender itself.
+      let managerEmail = null;
       if (emp?._hr_manager_value) {
         try {
           const mgr = await d365.getById(EMP, emp._hr_manager_value, { select: 'hr_email' });
-          if (mgr?.hr_email && !isPlaceholder(mgr.hr_email)) ccSet.add(mgr.hr_email.toLowerCase());
+          if (mgr?.hr_email && !isPlaceholder(mgr.hr_email)) managerEmail = mgr.hr_email;
         } catch { /* manager email optional */ }
       }
-      const hrMailbox = process.env.GOAL_CC_HR;   // optional HR mailbox
-      if (hrMailbox && !isPlaceholder(hrMailbox)) ccSet.add(hrMailbox.toLowerCase());
-      ccSet.delete(String(toEmail).toLowerCase());   // never CC the primary recipient
-      audit.cc = [...ccSet];
+      audit.cc = mergeCc([infoSender(), managerEmail, process.env.GOAL_CC_HR], { excludeTo: [toEmail], from });
 
       const { subject, html } = T.goalAssigned({
         employeeName, goalTitle,
@@ -206,7 +197,7 @@ async function notifyGoalReassigned({ goal, assigner, oldEmployeeId, newEmployee
             `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Hello ${T._esc(emp.hr_hremployee1 || 'there')},</p>` +
             `<p style="margin:0 0 4px;color:#374151;">The goal <strong>${T._esc(title)}</strong> previously assigned to you has been re-assigned by ${T._esc(by)}. No further action is needed from you.</p>` +
             T.banner('If you believe this is a mistake, please contact HR.');
-          await sendEmail(emp.hr_email, `Goal Re-assigned — ${title}`, T.layout({ title: 'Goal Re-assigned', preheader: 'A goal was reassigned', content }), { meta: { type: 'goal_reassigned' } });
+          await sendEmail(emp.hr_email, `Goal Re-assigned — ${title}`, T.layout({ title: 'Goal Re-assigned', preheader: 'A goal was reassigned', content }), { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [emp.hr_email], from: hrSender() }), meta: { type: 'goal_reassigned' } });   // §E: HR-owned → HR sender, CC info@
         }
       } catch (e) { global.logger?.warn?.(`[goal] old-assignee notify failed: ${e.message}`); }
     }

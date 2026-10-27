@@ -27,6 +27,8 @@ const ATT = d365.constructor.entities.attendance;
 const EMP = d365.constructor.entities.employee;
 
 const recipientsOf = (r) => [...r.body.message.toRecipients, ...r.body.message.ccRecipients].map(x => x.emailAddress.address);
+const toOf = (r) => r.body.message.toRecipients.map(x => x.emailAddress.address);
+const ccOf = (r) => r.body.message.ccRecipients.map(x => x.emailAddress.address);
 const hasButtons = (html) => /action=(approved|rejected)|>Approve<|>Reject</.test(html);
 
 // In-memory ledger store (mirrors the Dataverse key semantics) for dedup assertions.
@@ -195,7 +197,7 @@ test('lateByMinutes: actual − expected, no grace subtracted', () => {
 });
 
 // ── HR information email: FROM employee mailbox, TO HR, no buttons ──────────
-test('emailLateLoginInfoToHR: FROM the employee mailbox, TO HR, information-only', async () => {
+test('emailLateLoginInfoToHR: FROM the HR mailbox (§C), TO HR, information-only', async () => {
   d365.getByIdOptional = async (entity) => (entity === EMP
     ? { hr_email: 'vishwesh@crmonce.com', hr_hremployee1: 'Boina Vishwesh', hr_department: 'ADM', hr_employeeid: 'EMP1039' } : {});
   d365.getList = async (entity) => (entity === EMP
@@ -208,8 +210,9 @@ test('emailLateLoginInfoToHR: FROM the employee mailbox, TO HR, information-only
     expectedTime: '09:00', actualTime: '10:15', reason: 'Bank work', remarks: '',
   });
   assert.strictEqual(sent.length, 1, 'one HR information email');
-  assert.strictEqual(sent[0].req.sender, 'vishwesh@crmonce.com');           // FROM employee mailbox
-  assert.deepStrictEqual(recipientsOf(sent[0].req).sort(), ['admin@crmonce.com', 'hr@crmonce.com']);   // TO HR
+  assert.strictEqual(sent[0].req.sender, 'HR@crmonce.com');                 // §C: ALL Late Login mail FROM the HR mailbox
+  assert.deepStrictEqual(toOf(sent[0].req).sort(), ['admin@crmonce.com', 'hr@crmonce.com']);   // TO HR
+  assert.deepStrictEqual(ccOf(sent[0].req), ['info@crmonce.com']);          // §A: INFO mailbox CC'd on the submission
   assert.strictEqual(sent[0].ctx.meta.type, 'late_login_info');
   assert.strictEqual(hasButtons(sent[0].ctx.html), false);
   assert.match(sent[0].ctx.subject, /^Late Login Information - Boina Vishwesh/);
@@ -217,13 +220,14 @@ test('emailLateLoginInfoToHR: FROM the employee mailbox, TO HR, information-only
   assert.ok(!/d79c1f3c/.test(sent[0].ctx.html), 'the GUID is never shown');
 });
 
-test('emailLateLoginInfoToHR: employee without a company mailbox → skipped, no throw', async () => {
+test('emailLateLoginInfoToHR: sends from HR regardless of the employee mailbox (§C — HR sender, not employee)', async () => {
   d365.getByIdOptional = async () => ({ hr_email: 'someone@gmail.com', hr_hremployee1: 'X' });
   d365.getList = async () => ({ data: [{ hr_email: 'hr@crmonce.com' }] });
   const sent = [];
   notif.setTransport((req, ctx) => sent.push({ req, ctx }));
   await lateLogin.emailLateLoginInfoToHR({ employeeId: 'E1', employeeName: 'X', date: '2026-08-14', expectedTime: '09:00', actualTime: '10:00', reason: 'r' });
-  assert.strictEqual(sent.length, 0, 'external mailbox → nothing sent, submission not broken');
+  assert.strictEqual(sent.length, 1, 'HR sender is used, so an external employee mailbox no longer blocks the email');
+  assert.strictEqual(sent[0].req.sender, 'HR@crmonce.com');
 });
 
 // ── Daily verification job ──────────────────────────────────────────────────
@@ -262,7 +266,8 @@ test('verify: no check-in → marked absent_leave_required + ONE leave email to 
   assert.strictEqual(r.absent, 1);
   assert.deepStrictEqual(updates.map(u => u.patch.hr_status), ['absent_leave_required']);
   assert.strictEqual(sent.length, 1, 'one leave-required email');
-  assert.deepStrictEqual(recipientsOf(sent[0].req), ['vishwesh@crmonce.com']);   // TO the employee
+  assert.deepStrictEqual(toOf(sent[0].req), ['vishwesh@crmonce.com']);   // TO the employee
+  assert.deepStrictEqual(ccOf(sent[0].req), ['info@crmonce.com']);       // §E: CC info@
   assert.match(sent[0].ctx.subject, /^Leave Request Required/);
   assert.strictEqual(hasButtons(sent[0].ctx.html), false);
 });

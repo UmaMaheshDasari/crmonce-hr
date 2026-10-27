@@ -129,8 +129,8 @@ test('lateLoginNotice template: subject + employee/date/start/grace/check-in/lat
   assert.doesNotMatch(html, /salary/i);      // salary wording removed entirely
 });
 
-// ── §7/§14: missing-punch email goes to the EMPLOYEE ONLY (no CC) and once ──
-test('notifyException emails the employee ONLY (no CC) and is not re-sent', async () => {
+// ── §7/§14/§E: missing-punch email goes to the EMPLOYEE, CC = info@ (no HR/manager by default), once ──
+test('notifyException emails the employee, CC info@ only (§E), and is not re-sent', async () => {
   const emp = { hr_hremployeeid: 'EMP1039', hr_hremployee1: 'Vishwesh', hr_email: 'v@crmonce.com', hr_shiftname: 'General' };
   const alert = { code: 'missing_check_out', label: 'Missing Check Out', date: '2026-08-10', punches: ['10:05'] };
   await exceptions.notifyException(emp, alert, { cc: [], shift: 'General', inTime: '10:05 AM', outTime: '—' });
@@ -138,5 +138,5 @@ test('notifyException emails the employee ONLY (no CC) and is not re-sent', asyn
   const box = notification.getOutbox();
   assert.strictEqual(box.length, 1, 'one email despite two scans');
   assert.strictEqual(box[0].to, 'v@crmonce.com');
-  assert.ok(!box[0].cc || (Array.isArray(box[0].cc) && box[0].cc.length === 0), 'no HR/manager CC by default');
+  assert.deepStrictEqual(box[0].cc, ['info@crmonce.com'], 'INFO mailbox CC only; no HR/manager CC by default');
 });

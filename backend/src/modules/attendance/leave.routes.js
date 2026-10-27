@@ -100,10 +100,32 @@ async function applyCompOffUsageOnApprove(current, { alreadyApproved = false } =
 // transition), and (2) surface payroll impact — if that month's payroll is already
 // locked/processed it returns a "manual recalculation required" note; otherwise the
 // change auto-reflects on the next (draft) payroll generation (payroll reads live).
+/**
+ * Re-evaluate Late Login eligibility for EVERY date a leave covers after a terminal decision
+ * (approve / reject / cancel) — a retrospective or half-day approval can make a previously-counted
+ * late date ineligible, and a rejection/cancellation un-excuses a held date. Idempotent and
+ * NON-BLOCKING (fire-and-forget): it never delays or alters the leave-decision response, business
+ * logic, or payroll. Works for any historical date (not just the scanner lookback). Failures are
+ * logged with non-sensitive context only (internal id + date range + decision label — never a
+ * name, reason, leave type, token, or secret).
+ */
+function reconcileLateLoginForLeave(record, decision) {
+  try {
+    const employeeId = record && record._hr_hremployee_value;
+    const from = String((record && record.hr_fromdate) || '').slice(0, 10);
+    const to = String((record && record.hr_todate) || from || '').slice(0, 10);
+    if (!employeeId || !from) return;
+    require('../../services/late-login-eligibility.service')
+      .reconcileLeaveRange({ employeeId, employeeName: (record['_hr_hremployee_value@OData.Community.Display.V1.FormattedValue']) || '', from, to })
+      .catch((e) => global.logger?.warn?.(`[leave] late-login reconcile failed (${decision || 'decision'} ${from}..${to} emp ${employeeId}): ${e.message}`));
+  } catch (e) { global.logger?.warn?.(`[leave] late-login reconcile dispatch failed (${decision || 'decision'}): ${e.message}`); }
+}
+
 async function auditAndPayrollImpactOnApprove(current, user, approvedDate) {
   const employeeId = current._hr_hremployee_value;
   const leaveFrom = String(current.hr_fromdate || '').slice(0, 10);
   const leaveTo = String(current.hr_todate || '').slice(0, 10);
+  reconcileLateLoginForLeave(current, 'approved');   // idempotent, non-blocking
   try {
     audit({
       category: 'Leave', type: 'leave_approved',
@@ -379,6 +401,9 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
     const impact = await auditAndPayrollImpactOnApprove(current, user, now);
     if (impact?.locked) leave._payrollNote = impact.message;
   }
+  // Rejection / cancellation un-excuses the dates → re-evaluate Late Login from punch facts
+  // (idempotent, non-blocking). Approval is handled inside auditAndPayrollImpactOnApprove above.
+  if (status === 'rejected' || status === 'cancelled') reconcileLateLoginForLeave(current, status);
 
   const employeeId = leave._hr_hremployee_value || current._hr_hremployee_value;
   if (employeeId) {
@@ -747,6 +772,9 @@ router.patch('/:id/l1', async (req, res, next) => {
       const wasApproved = toLabel('hr_leave_status', leaveRecord.hr_status) === 'approved';
       await applyCompOffUsageOnApprove(leaveRecord, { alreadyApproved: wasApproved });
       if (!wasApproved) await auditAndPayrollImpactOnApprove(leaveRecord, req.user, now);
+    } else if (action === 'rejected') {
+      // L1 rejection un-excuses the covered dates → re-evaluate Late Login (idempotent, non-blocking).
+      reconcileLateLoginForLeave(leaveRecord, 'l1_rejected');
     }
 
     // Notify employee (only when L1 produced a FINAL decision)
@@ -822,6 +850,9 @@ router.patch('/:id/l2', async (req, res, next) => {
       const wasApproved = toLabel('hr_leave_status', leaveRecord.hr_status) === 'approved';
       await applyCompOffUsageOnApprove(leaveRecord, { alreadyApproved: wasApproved });
       if (!wasApproved) await auditAndPayrollImpactOnApprove(leaveRecord, req.user, new Date().toISOString().split('T')[0]);
+    } else if (action === 'rejected') {
+      // L2 rejection un-excuses the covered dates → re-evaluate Late Login (idempotent, non-blocking).
+      reconcileLateLoginForLeave(leaveRecord, 'l2_rejected');
     }
 
     // Notify employee of final decision (in-app + email)

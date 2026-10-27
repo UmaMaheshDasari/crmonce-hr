@@ -14,7 +14,7 @@ const payrollSettings = require('./payroll-settings.service');
 const { toValue } = require('./picklist');
 const requestNotify = require('./request-notify.service');       // getApprovers() → HR recipients (reused)
 const { punchesFromRecord } = require('./attendance.util');       // check-in verification
-const { resolveSender } = require('./email/sender');              // dynamic employee mailbox (reused)
+const { hrSender, infoSender, mergeCc } = require('./email/sender');   // §C/§E: ALL Late Login mail FROM HR, CC info@
 const ledger = require('./notification-ledger.service');          // one-email idempotency (reused)
 const time = require('./time.util');                             // company-timezone (IST) "today"
 const T = require('./email/templates');                          // shared HTML email templates
@@ -290,12 +290,9 @@ async function emailLateLoginInfoToHR({ employeeId, employeeName, date, expected
   const to = (hrs || []).filter(Boolean);
   if (!to.length) { global.logger?.warn?.('[late-login] HR info email skipped: no HR recipients'); return; }
 
-  // Sender = the employee's OWN company mailbox (never a generic HR mailbox). If it is
-  // missing/external, log and skip — Leave uses the exact same rule.
-  const s = resolveSender({ email: emp?.hr_email, label: 'Employee' });
-  if (!s.ok) { global.logger?.warn?.(`[late-login] HR info email skipped: ${s.reason}`); return; }
-  const v = notif?.verifyMailbox ? await notif.verifyMailbox(s.sender) : { ok: true };
-  if (!v.ok) { global.logger?.warn?.(`[late-login] HR info email skipped: ${v.reason}`); return; }
+  // Sender = the configured HR mailbox. ALL Late Login notifications route from HR (spec §C),
+  // superseding the legacy employee-origin rule for this submit-info email.
+  const from = hrSender();
 
   const { subject, html } = T.lateLoginInfo({
     // Show the HUMAN Employee ID (EMP1039), never the Dataverse GUID passed in as employeeId.
@@ -306,8 +303,9 @@ async function emailLateLoginInfoToHR({ employeeId, employeeName, date, expected
     expectedTime: time.to12h(expectedTime) || expectedTime, actualTime: time.to12h(actualTime) || actualTime,
     lateBy: lateByMinutes(expectedTime, actualTime), reason, remarks,
   });
-  const r = await notif.sendEmail(to, subject, html, { from: s.sender, saveToSentItems: false, meta: { type: 'late_login_info' } });
-  global.logger?.[r?.success ? 'info' : 'error'](`[late-login] HR info email FROM ${s.sender} → ${to.join(',')}: ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+  const cc = mergeCc([infoSender()], { excludeTo: to, from });   // §A: INFO mailbox CC'd on the submission
+  const r = await notif.sendEmail(to, subject, html, { from, cc, saveToSentItems: false, meta: { type: 'late_login_info' } });
+  global.logger?.[r?.success ? 'info' : 'error'](`[late-login] HR info email FROM ${from} → ${to.join(',')} (cc: ${cc.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
 }
 
 /** Does the employee have ANY punch (a valid Check-In) on `date`? Reads attendance in
@@ -331,7 +329,8 @@ async function emailLeaveRequired(row) {
   const { subject, html } = T.lateLoginLeaveRequired({ employeeName: emp.hr_hremployee1 || row.employeeName || '', date: time.fmtDate(row.date) });
   return ledger.sendOnce({
     employeeId: row.employeeId, date: row.date, type: 'LATE_LOGIN_LEAVE_REQUIRED',
-    to: emp.hr_email, subject, html, entity: 'attendance',
+    to: emp.hr_email, subject, html, entity: 'attendance', from: hrSender(),   // §E: Late Login mail from HR
+    cc: mergeCc([infoSender()], { excludeTo: [emp.hr_email], from: hrSender() }),   // §E: CC info@
   });
 }
 
@@ -533,8 +532,9 @@ async function notifyPolicyOutcome({ employeeId, name, label, requestType, date,
     const prettyDate = time.fmtDate(eventDate);
     const footer = `<p style="color:#6b7280;font-size:12px;">CRMONCE HRMS · ${label} · ${prettyMonth}${n != null ? ` · event #${n}` : ''}</p>`;
     const send = (keyDate, to, cc, type, subject, body) => ledger.sendOnce({
-      employeeId, date: keyDate, type, to, cc, subject,
-      html: `<p>Dear ${esc(name || 'Employee')},</p>${body}${footer}`, entity: 'attendance',
+      employeeId, date: keyDate, type, to, from: hrSender(),   // §E: ALL Late Login mail FROM HR, CC info@
+      cc: mergeCc([cc, infoSender()], { excludeTo: [to], from: hrSender() }),   // keep any HR/admin/manager CC + add info@
+      subject, html: `<p>Dear ${esc(name || 'Employee')},</p>${body}${footer}`, entity: 'attendance',
     }).catch((e) => global.logger?.warn?.(`[late-login] email (${type}) failed: ${e.message}`));
 
     if (!stage) {
@@ -595,7 +595,7 @@ async function managerDecision(id, decision, by) {
       const msg = decision === 'approved'
         ? `Your ${label} on ${time.fmtDate(row.hr_date)} has been approved by ${by?.name || 'your manager'}.`
         : `Your ${label} on ${time.fmtDate(row.hr_date)} has been rejected by ${by?.name || 'your manager'}. It will not count toward your monthly permissions.`;
-      try { await notif.sendEmail(to, `${label} ${decision === 'approved' ? 'Approved' : 'Rejected'} (${time.fmtDate(row.hr_date)})`, `<p>Dear ${esc(row.hr_employeename || 'Employee')},</p><p>${msg}</p>`, { meta: { type: 'permission_policy' } }); } catch (_) {}
+      try { await notif.sendEmail(to, `${label} ${decision === 'approved' ? 'Approved' : 'Rejected'} (${time.fmtDate(row.hr_date)})`, `<p>Dear ${esc(row.hr_employeename || 'Employee')},</p><p>${msg}</p>`, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }), meta: { type: 'permission_policy' } }); } catch (_) {}
     }
   })().catch(() => {});
   return shape({ ...row, hr_status: status, hr_managerstatus: decision, hr_approvedby: by?.name || '', hr_approveddate: today() });
@@ -751,12 +751,27 @@ async function reversePunchAutoRecord(record) {
   return { cancelled: true };
 }
 
+/** Cancel a SCANNER-created AUTO record because leave/holiday/week-off now makes the date
+ *  INELIGIBLE (e.g. a retrospectively-approved leave covers it). Only auto records; cancel-only
+ *  (no ledger write). Idempotent: an already-cancelled record is left as-is. The event row and all
+ *  notification-ledger audit are PRESERVED — only the status/remark change, so it stops counting. */
+async function markAutoRecordIneligible(record, reason) {
+  const id = record.hr_lateloginid;
+  const ds = String(record.hr_date).slice(0, 10);
+  if (String(record.hr_createdby) !== AUTO_CREATED_BY) return { skipped: 'not_auto' };
+  if (String(record.hr_status) === 'cancelled') return { skipped: 'already_cancelled' };
+  try { await d365.update(LATE, id, { hr_status: 'cancelled', hr_remarks: `Ineligible: ${reason || 'excused by leave'}` }); }
+  catch (e) { global.logger?.warn?.(`[late-login] ineligible cancel failed for ${id}: ${e.message}`); return { error: e.message }; }
+  audit({ category: 'Attendance', type: 'latelogin_excused', title: 'Late Login marked ineligible', name: record.hr_employeename, meta: { date: ds, reason } });
+  return { cancelled: true, reason };
+}
+
 module.exports = {
   list, getRaw, shape, create, cancel, monthlyCount, qualifyingCount, monthlyUsage, managerDecision,
   summary, approvedOn, approvedSet, policy, REQ_LABEL,
   lateByMinutes, emailLateLoginInfoToHR, emailLeaveRequired, hasCheckIn, verifyTodaysAttendance,
   resolveShiftStart, resolveShiftEnd, resolveShiftWindow,
   evaluatePermission, permissionMinutes, rangeMessage, MAX_PERMISSION_MINUTES, LIMIT_MESSAGE,
-  existingLateFor, recordPunchLateEvent, reversePunchAutoRecord, AUTO_CREATED_BY,
+  existingLateFor, recordPunchLateEvent, reversePunchAutoRecord, markAutoRecordIneligible, AUTO_CREATED_BY,
   notifyPolicyOutcome,
 };

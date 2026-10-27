@@ -32,6 +32,8 @@ d365.getByIdOptional = async () => ({ hr_department: 'Engineering', hr_employeei
 
 // Helpers to read a captured Graph request.
 const recipientsOf = (r) => [...r.body.message.toRecipients, ...r.body.message.ccRecipients].map(x => x.emailAddress.address);
+const toOf = (r) => r.body.message.toRecipients.map(x => x.emailAddress.address);
+const ccOf = (r) => r.body.message.ccRecipients.map(x => x.emailAddress.address);
 const hasButtons = (html) => /action=(approved|rejected)/.test(html);
 
 afterEach(() => { notif.resetTransport(); notif.clearOutbox(); });
@@ -214,11 +216,12 @@ test('employee card shows the HUMAN Employee ID (EMP1039), NEVER the Dataverse G
   assert.ok(!/ID: E1\b/.test(approver.ctx.html), 'the GUID/record id is not shown as Employee ID');
 });
 
-test('HR approver: ONE buttoned email, TO=HR only, employee never a recipient/sender copy', async () => {
+test('HR approver: ONE buttoned email, TO=HR, CC=info@ (§A), employee never a recipient/sender copy', async () => {
   const sent = await runApply({ id: 'A1', name: 'HR Team', email: 'hr@crmonce.com' });
   const approver = sent.filter(s => s.ctx.meta.type === 'leave_new_approver');
   assert.strictEqual(approver.length, 1);                               // exactly one approval email
-  assert.deepStrictEqual(recipientsOf(approver[0].req), ['hr@crmonce.com']);   // TO = HR only
+  assert.deepStrictEqual(toOf(approver[0].req), ['hr@crmonce.com']);    // TO = the approver
+  assert.deepStrictEqual(ccOf(approver[0].req), ['info@crmonce.com']);  // §A: INFO mailbox CC'd on the submission
   assert.strictEqual(hasButtons(approver[0].ctx.html), true);          // has Approve/Reject
   assert.strictEqual(approver[0].req.sender, EMP.email);               // sent AS the employee
   assert.strictEqual(approver[0].req.body.saveToSentItems, false);     // no copy in employee mailbox
@@ -230,7 +233,8 @@ test('Super Admin approver: ONE buttoned approval email to the Super Admin', asy
   const sent = await runApply({ id: 'A2', name: 'Uma Mahesh', email: 'umamahesh@crmonce.com' });
   const approver = sent.filter(s => s.ctx.meta.type === 'leave_new_approver');
   assert.strictEqual(approver.length, 1);
-  assert.deepStrictEqual(recipientsOf(approver[0].req), ['umamahesh@crmonce.com']);
+  assert.deepStrictEqual(toOf(approver[0].req), ['umamahesh@crmonce.com']);
+  assert.deepStrictEqual(ccOf(approver[0].req), ['info@crmonce.com']);   // §A: INFO mailbox CC'd
   assert.strictEqual(hasButtons(approver[0].ctx.html), true);
 });
 

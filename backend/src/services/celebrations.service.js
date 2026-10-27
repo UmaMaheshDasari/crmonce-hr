@@ -355,17 +355,22 @@ async function sendOne(type, emp, settings) {
   const greetingText = fill(tpl.body, ctx);
   const notifText = fill(tpl.notif, ctx) || subject;
 
-  // Email (best-effort). ONE email: TO = employee (HR congratulations); CC =
-  // HR-configured information recipients (never the employee, never duplicated).
-  // FROM stays the default HR/system mailbox (GRAPH_SENDER) — this is an
-  // HR-generated notification, not an employee-submitted request.
+  // Email (best-effort). ONE email: TO = employee (HR congratulations); CC = the INFO
+  // mailbox (spec §E) + any HR-configured information recipients (never the employee,
+  // never duplicated). FROM = HR@crmonce.com (§E: a system-generated HR notification).
   let emailStatus = 'skipped';
   let cc = [];
   if (emp.email) {
-    cc = parseCcList(settings.ccRecipients, emp.email);
+    const from = sender?.hrSender ? sender.hrSender() : undefined;
+    const infoBox = sender?.infoSender ? sender.infoSender() : null;
+    const configured = parseCcList(settings.ccRecipients, emp.email);
+    cc = sender?.mergeCc
+      ? sender.mergeCc([configured, infoBox], { excludeTo: [emp.email], from })
+      : configured;
     const html = buildEmailHtml(type, ctx, greetingText, cc.length);
     try {
       const r = await notif?.sendEmail?.(emp.email, subject, html, {
+        from,
         cc: cc.length ? cc : undefined,
         meta: { type: `celebration_${type}` },
       });

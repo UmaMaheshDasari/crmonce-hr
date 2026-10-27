@@ -49,7 +49,7 @@ beforeEach(() => {
     const f = String(opts?.filter || '');
     // Role filters carry NUMERIC option-set values, so distinguish by shape: hrEmails() ORs two
     // roles (super_admin OR hr_manager); superAdminEmails() queries a single role.
-    if (entity === EMP && / or hr_role eq /.test(f)) return { data: [{ hr_email: 'hr@crmonce.com' }] };
+    if (entity === EMP && / or hr_role eq /.test(f)) return { data: [{ hr_email: 'hrteam@crmonce.com' }] };   // distinct from the HR@ sender
     if (entity === EMP) return { data: [{ hr_email: 'admin@crmonce.com' }] };
     return { data: [] };
   };
@@ -66,7 +66,7 @@ test('1st/2nd/3rd WITH a submitted request → confirmation email (no warning), 
     assert.strictEqual(sent.length, 1);
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_CONFIRM');
     assert.strictEqual(sent[0].to, 'emp@crmonce.com');
-    assert.ok(!sent[0].cc, 'confirmation is employee-only (no HR cc)');
+    assert.deepStrictEqual(sent[0].cc, ['info@crmonce.com'], 'confirmation CC = INFO mailbox only (§E)');
     assert.strictEqual(sent[0].date, date, 'idempotency key is the EVENT date, not the month');
     assert.match(sent[0].subject, /Recorded/i);
   }
@@ -81,7 +81,7 @@ test('1st/2nd/3rd WITHOUT a request → "late without a request" warning, keyed 
     assert.strictEqual(sent.length, 1);
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_NO_REQUEST');
     assert.strictEqual(sent[0].to, 'emp@crmonce.com');
-    assert.ok(!sent[0].cc, 'the no-request nudge is employee-only at the 1st–3rd tier');
+    assert.deepStrictEqual(sent[0].cc, ['info@crmonce.com'], 'no-request nudge CC = INFO mailbox only (§E)');
     assert.strictEqual(sent[0].date, date);
     assert.match(sent[0].subject, /Without a Request/i);
   }
@@ -102,7 +102,7 @@ for (const requested of [true, false]) {
     assert.strictEqual(sent.length, 1);
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_HR_WARNING');
     assert.strictEqual(sent[0].to, 'emp@crmonce.com');
-    assert.deepStrictEqual(sent[0].cc, ['hr@crmonce.com']);
+    assert.deepStrictEqual(sent[0].cc, ['hrteam@crmonce.com', 'info@crmonce.com']);   // HR recipients + §E info@
     assert.strictEqual(sent[0].date, '2026-11-01', 'monthly key');
     assert.strictEqual(ledgerWrites, 0);
   });
@@ -110,14 +110,14 @@ for (const requested of [true, false]) {
   test(`5th → Super Admin FINAL warning regardless of request status (requested=${requested})`, async () => {
     await notify({ date: '2026-11-22', decision: PP.decide(4), requested });
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_FINAL_WARNING');
-    assert.deepStrictEqual(sent[0].cc, ['admin@crmonce.com'], 'final warning → super_admin recipients');
+    assert.deepStrictEqual(sent[0].cc, ['admin@crmonce.com', 'info@crmonce.com'], 'super_admin recipients + §E info@');
     assert.strictEqual(sent[0].date, '2026-11-01');
   });
 
   test(`6th → HR/manager escalation regardless of request status (requested=${requested})`, async () => {
     await notify({ date: '2026-11-23', decision: PP.decide(5), requested });
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_ESCALATION_6');
-    assert.ok(sent[0].cc.includes('boss@crmonce.com') && sent[0].cc.includes('hr@crmonce.com'), 'manager + HR cc');
+    assert.ok(sent[0].cc.includes('boss@crmonce.com') && sent[0].cc.includes('hrteam@crmonce.com') && sent[0].cc.includes('info@crmonce.com'), 'manager + HR + §E info@ cc');
   });
 }
 

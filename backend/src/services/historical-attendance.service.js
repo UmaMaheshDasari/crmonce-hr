@@ -17,6 +17,7 @@ const { computeSession, punchesFromRecord, statusForStorage } = require('./atten
 const payrollSettings = require('./payroll-settings.service');
 let attnCfg; try { attnCfg = require('./attendance.config'); } catch (_) { attnCfg = null; }
 let notif; try { notif = require('./notification.service'); } catch (_) { notif = null; }
+const { hrSender, infoSender, mergeCc } = require('./email/sender');
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
 const { ENTITY_SET: ATT_AUDIT_SET } = require('./provision-attendance-audit');
 
@@ -30,7 +31,9 @@ const today = () => new Date().toISOString().slice(0, 10);
 const audit = (p) => { try { activity?.record?.(p); } catch (_) {} };
 const notifyUser = (id, ev, p) => { try { notif?.notifyUser?.(id, ev, p); } catch (_) {} };
 const broadcast = (ev, p) => { try { notif?.broadcast?.(ev, p); } catch (_) {} };
-async function sendEmail(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { meta: { type: 'hist_attendance' } }); } catch (e) { global.logger?.warn?.(`[hist-attendance] email skipped: ${e.message}`); } }
+// §B/§E: Historical Attendance emails (submit-to-HR + approve/reject/more-info decisions) all
+// route from the configured HR mailbox.
+async function sendEmail(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }), meta: { type: 'hist_attendance' } }); } catch (e) { global.logger?.warn?.(`[hist-attendance] email skipped: ${e.message}`); } }
 
 const SELECT = 'hr_histattendanceid,hr_employeeid,hr_employeename,hr_date,hr_month,hr_intime,hr_outtime,hr_reason,hr_comments,hr_attachmentid,hr_status,hr_approvedby,hr_approveddate,hr_approvercomment,hr_oldstatus,hr_newstatus,createdon';
 // Core columns the list + approval flow REQUIRE (id, scoping, status, ordering) — always present.
