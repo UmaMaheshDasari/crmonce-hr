@@ -7,6 +7,8 @@ const { requireRole, requirePermission, requireAnyPermission } = require('../../
 const { toValue, toLabel, labelsForList, labelsForEntity } = require('../../services/picklist');
 const { validateCompanyEmail, hrSender, infoSender, mergeCc } = require('../../services/email/sender');
 const { validateEmployeeIdentity } = require('../../services/validators');
+const { dateOnly, isDueReached, isPassportEmpty, PASSPORT_MANDATORY_MESSAGE } = require('../../services/passport-status');
+const { istDateStr } = require('../../services/time.util');
 const profile = require('../../services/profile.service');
 const { sendEmail } = require('../../services/notification.service');
 const T = require('../../services/email/templates');
@@ -16,13 +18,17 @@ const ENTITY = d365.constructor.entities.employee;
 // ESS columns (provisioned by provision-employee-columns.js). Selected as OPTIONAL
 // so the module keeps working before the columns exist.
 const IDENTITY_FIELDS = 'hr_aadhaar,hr_pan,hr_passport,hr_uan,hr_pfnumber,hr_bloodgroup';
+// Self-editable fields that make up the profile's IDENTITY section. The passport
+// due-date mandatory rule fires only when a save actually changes one of these, so
+// Address/Bank/Emergency/Documents saves are never blocked by a missing passport.
+const IDENTITY_SELF_FIELDS = new Set(['hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_uan', 'hr_pfnumber']);
 const PERSONAL_FIELDS = 'hr_altphone,hr_personalemail,hr_dob,hr_certificatedob,hr_gender,hr_maritalstatus,hr_marriagedate,hr_nationality,hr_photourl,hr_personalphotourl,hr_photoremoved';
 const ADDRESS_FIELDS = 'hr_permaddress,hr_city,hr_state,hr_country,hr_pincode';
 const EMERGENCY_FIELDS = 'hr_emergencyphone,hr_emergencyrelation';
 const VERIFY_FIELDS = 'hr_verifystatus,hr_verifiedby,hr_verifieddate,hr_verifynote';
 const BANK_FIELDS = 'hr_bankname,hr_accountholder,hr_accountnumber,hr_ifsc,hr_branch,hr_chequeurl';
 // Employee-master fields (HR-managed): Employee ID + code + employment metadata.
-const MASTER_FIELDS = 'hr_employeeid,hr_employeecode,hr_confirmationdate,hr_relievingdate,hr_employmenttype,hr_worklocation,hr_webcheckinenabled';
+const MASTER_FIELDS = 'hr_employeeid,hr_employeecode,hr_confirmationdate,hr_relievingdate,hr_employmenttype,hr_worklocation,hr_webcheckinenabled,hr_passportduedate';
 // The business Employee ID (EMP1039) with graceful fallbacks. hr_etimecode is the
 // device Empcode (40) — used only as a last resort so nothing renders blank.
 const employeeIdOf = (e) => e.hr_employeeid || e.hr_employeecode || e.hr_etimecode || '';
@@ -68,17 +74,42 @@ function withShiftDefaults(e) {
 
 const { ensureEmployeeColumns } = require('../../services/provision-employee-columns');
 
+// Columns whose admin-set VALUE must never be silently dropped. If one is present in the
+// payload but its Dataverse column can't be provisioned, robustWrite still saves the rest
+// of the record (no data loss, no overwrite of unrelated fields) and then throws
+// ColumnUnavailableError — so the API returns a clear error instead of a false success.
+// EVERY OTHER optional column keeps the prior best-effort "save without it" behavior.
+const MUST_PERSIST_FIELDS = { hr_passportduedate: 'Passport Submission Due Date' };
+
+class ColumnUnavailableError extends Error {
+  constructor(field) {
+    const label = MUST_PERSIST_FIELDS[field] || field;
+    super(`${label} could not be saved because its storage column is unavailable in Dataverse. The rest of the record was saved; ask an administrator to provision the column, then set it again.`);
+    this.name = 'ColumnUnavailableError';
+    this.status = 503;          // the global error handler maps this to res.status(503)
+    this.field = field;
+  }
+}
+
 // Robust write: if Dataverse rejects a not-yet-provisioned column, PROVISION the
 // employee columns once and retry the FULL payload; if a column still can't be
 // created (e.g. app lacks customization rights), strip ONLY that named column and
 // retry — so existing columns always persist and we never silently drop everything.
+// Exception: a MUST_PERSIST_FIELDS value that had to be dropped makes the whole call
+// fail LOUDLY (after the other fields are saved) rather than reporting a false success.
 async function robustWrite(op, entity, id, data) {
   let payload = { ...data };
   let provisioned = false, strippedBind = false;
+  const droppedMustPersist = [];
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      return op === 'create' ? await d365.create(entity, payload) : await d365.update(entity, id, payload);
+      const saved = op === 'create' ? await d365.create(entity, payload) : await d365.update(entity, id, payload);
+      // The remaining fields are persisted now. If a must-persist value had to be dropped
+      // to get here, surface a clear error instead of claiming the save fully succeeded.
+      if (droppedMustPersist.length) throw new ColumnUnavailableError(droppedMustPersist[0]);
+      return saved;
     } catch (err) {
+      if (err instanceof ColumnUnavailableError) throw err;   // our own signal — never reinterpret
       // (a) unknown column → provision once, then strip only the named column.
       if (d365._isMissingProperty(err)) {
         if (!provisioned) {
@@ -87,9 +118,18 @@ async function robustWrite(op, entity, id, data) {
         }
         const prop = d365._missingPropertyName(err);
         if (prop && Object.prototype.hasOwnProperty.call(payload, prop)) {
-          global.logger?.warn?.(`[employee] column '${prop}' unavailable — saved without it`);
+          if (MUST_PERSIST_FIELDS[prop]) {
+            // Admin-set value whose column can't be provisioned: still persist the rest of
+            // the record, but remember the drop so we fail loudly afterwards (no false 200).
+            droppedMustPersist.push(prop);
+            global.logger?.warn?.(`[employee] column '${prop}' unavailable — other fields will still save, but its value was NOT saved (surfacing an error)`);
+          } else {
+            global.logger?.warn?.(`[employee] column '${prop}' unavailable — saved without it`);
+          }
           delete payload[prop];
           if (Object.keys(payload).length) continue;
+          // Nothing else remained to write — if that was a must-persist value, error.
+          if (droppedMustPersist.length) throw new ColumnUnavailableError(droppedMustPersist[0]);
           return op === 'create' ? {} : d365.getById(entity, id);
         }
         throw err;
@@ -215,6 +255,18 @@ function sanitizeEmployee(input) {
   return data;
 }
 
+// Passport Submission Due Date (admin-set) — optional. When provided it must be a civil
+// date; it is normalised + stored as 'YYYY-MM-DD' text, like the other employee dates.
+// Empty/absent means "not set yet" and is always allowed. Mutates raw to the normal form.
+function validatePassportDueDate(raw) {
+  const v = raw.hr_passportduedate;
+  if (v === undefined || v === null || String(v).trim() === '') return { ok: true };
+  const iso = dateOnly(v);
+  if (!iso) return { ok: false, reason: 'Passport Submission Due Date must be a valid date.' };
+  raw.hr_passportduedate = iso;
+  return { ok: true };
+}
+
 // The independent Employee ID is an EMP#### code (e.g. EMP1020) — NEVER the
 // Dataverse GUID. Existing employees already carry these in the eTime code, so we
 // derive the next number from the MAX of both hr_employeecode and hr_etimecode,
@@ -303,6 +355,8 @@ router.post('/', requireAnyPermission('employees.create'), async (req, res, next
     const idv = validateEmployeeIdentity(raw);
     if (!idv.ok) return res.status(400).json({ error: Object.values(idv.errors)[0], fields: idv.errors });
     Object.assign(raw, idv.values);   // upper-cased PAN/IFSC, stripped Aadhaar, etc.
+    const pdv = validatePassportDueDate(raw);
+    if (!pdv.ok) return res.status(400).json({ error: pdv.reason, fields: { hr_passportduedate: pdv.reason } });
     // PAN & Aadhaar are MANDATORY.
     if (!String(raw.hr_pan || '').trim()) return res.status(400).json({ error: 'PAN Number is required.' });
     if (!String(raw.hr_aadhaar || '').trim()) return res.status(400).json({ error: 'Aadhaar Number is required.' });
@@ -386,11 +440,31 @@ router.patch('/:id', async (req, res, next) => {
     const idv = validateEmployeeIdentity(raw);
     if (!idv.ok) return res.status(400).json({ error: Object.values(idv.errors)[0], fields: idv.errors });
     Object.assign(raw, idv.values);
+    // Passport Submission Due Date is admin-only: for a self edit it was already stripped
+    // above (not in SELF_EDITABLE), so this validates only HR-supplied values.
+    const pdv = validatePassportDueDate(raw);
+    if (!pdv.ok) return res.status(400).json({ error: pdv.reason, fields: { hr_passportduedate: pdv.reason } });
 
     // Diff against the current record (for audit + verification decisions).
     let current = {};
     try { current = await d365.getByIdResilient(ENTITY, req.params.id, { select: 'hr_hremployee1', optionalSelect: ESS_OPTIONAL_SELECT }); } catch { /* best-effort */ }
     const changes = profile.diffChanges(current, raw);
+
+    // Passport Number becomes MANDATORY for the employee once their admin-set submission
+    // due date is reached (Asia/Kolkata) — but ONLY when this save actually changes the
+    // Identity section, so Address/Bank/Emergency/Documents saves are never blocked by a
+    // missing passport. Self-service only (HR writes are exempt). This is per-employee and
+    // date-driven; it is NOT the removed global November-1 rule. Backend enforcement here is
+    // authoritative (the UI rule cannot be bypassed via a hand-crafted request).
+    if (!isHRWrite) {
+      const identityChanged = changes.some(c => IDENTITY_SELF_FIELDS.has(c.field));
+      if (identityChanged && isDueReached(current.hr_passportduedate, istDateStr())) {
+        const effectivePassport = raw.hr_passport !== undefined ? raw.hr_passport : current.hr_passport;
+        if (isPassportEmpty(effectivePassport)) {
+          return res.status(400).json({ error: PASSPORT_MANDATORY_MESSAGE, fields: { hr_passport: PASSPORT_MANDATORY_MESSAGE } });
+        }
+      }
+    }
 
     // Shift change (HR-only) → capture the PRIOR shift + joining date now, so we can
     // append an effective-dated Shift History row after the save (past attendance keeps

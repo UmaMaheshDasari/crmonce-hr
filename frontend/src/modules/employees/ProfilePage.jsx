@@ -11,6 +11,7 @@ import {
   CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon, LockClosedIcon, TrashIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { BLOOD_GROUPS, upper, panRule, aadhaarRule, ifscRule, accountRule, uanRule, phoneRule } from '../../utils/validators';
+import { passportStatus, dateOnly, daysUntil, istToday, isDueReached, isPassportEmpty, PASSPORT_STATUS_LABELS, PASSPORT_MANDATORY_MESSAGE } from '../../utils/passport-status';
 import { fmtVal, fmtDate, titleCase } from '../../utils/format';
 import StatusBadge from '../../components/StatusBadge';
 import DocumentsManager from '../../components/DocumentsManager';
@@ -155,6 +156,9 @@ const TABS = [...FORM_TABS, { key: 'documents', label: 'Documents', icon: Docume
 // Missing-item section label → profile tab key (so "Missing" pills jump to the tab).
 const TAB_KEY = { General: 'general', Identity: 'identity', Address: 'address', Bank: 'bank', Emergency: 'emergency', Documents: 'documents' };
 const EDITABLE_FIELDS = FORM_TABS.flatMap(t => t.fields.map(f => f.name));
+// Identity-section fields — the passport due-date mandatory rule fires only when the
+// employee actually changes one of these, so other-section saves are never blocked.
+const IDENTITY_SELF_FIELDS = ['hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_uan', 'hr_pfnumber'];
 const FIELD_TAB = Object.fromEntries(FORM_TABS.flatMap(t => t.fields.map(f => [f.name, t.key])));
 
 const VERIFY_BADGE = {
@@ -163,6 +167,41 @@ const VERIFY_BADGE = {
   changes: { icon: ExclamationTriangleIcon, text: 'Changes Requested', cls: 'bg-orange-50 text-orange-700 ring-orange-600/20' },
   rejected: { icon: XCircleIcon, text: 'Rejected', cls: 'bg-red-50 text-red-700 ring-red-600/20' },
 };
+
+// Passport Pending workflow — a status chip + due date shown atop the Identity tab.
+// Passport stays OPTIONAL; this only communicates where the employee stands. "Completed"
+// once a number is on record, "Pending" before the admin-set due date (or when none set),
+// "Overdue" once that date has passed with no passport.
+function PassportStatusBanner({ emp }) {
+  const today = istToday();
+  const status = passportStatus({ passport: emp?.hr_passport, dueDate: emp?.hr_passportduedate, today });
+  const due = dateOnly(emp?.hr_passportduedate);
+  const days = daysUntil(today, emp?.hr_passportduedate);
+  const cfg = {
+    completed: { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', Icon: CheckBadgeIcon },
+    pending: { cls: 'bg-amber-50 text-amber-700 ring-amber-600/20', Icon: ClockIcon },
+    overdue: { cls: 'bg-red-50 text-red-700 ring-red-600/20', Icon: ExclamationTriangleIcon },
+  }[status];
+  return (
+    <div className="sm:col-span-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ring-1 ${cfg.cls}`}>
+        <cfg.Icon className="w-3.5 h-3.5" /> {PASSPORT_STATUS_LABELS[status]}
+      </span>
+      {due ? (
+        <span className="text-xs text-gray-500">
+          Submission due <span className="font-semibold text-gray-700">{fmtDate(due)}</span>
+          {status === 'pending' && days != null && days >= 0 && <> · {days === 0 ? 'due today' : `in ${days} day${days === 1 ? '' : 's'}`}</>}
+          {status === 'overdue' && days != null && <> · {days === 0 ? 'due today' : `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} overdue`}</>}
+        </span>
+      ) : status !== 'completed' ? (
+        <span className="text-xs text-gray-400">No submission due date set</span>
+      ) : null}
+      {status === 'overdue' && (
+        <p className="basis-full text-xs font-medium text-red-600">{PASSPORT_MANDATORY_MESSAGE}</p>
+      )}
+    </div>
+  );
+}
 
 function ProgressRing({ value }) {
   const r = 26, c = 2 * Math.PI * r, off = c - (value / 100) * c;
@@ -188,7 +227,7 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
 
-  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm();
+  const { register, handleSubmit, reset, watch, getValues, formState: { errors } } = useForm();
   // Marital status drives the conditional Marriage Date field.
   const marital = watch('hr_maritalstatus');
 
@@ -289,12 +328,32 @@ export default function ProfilePage() {
   if (!emp) return <div className="max-w-5xl mx-auto"><div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-500">Profile not found.</div></div>;
 
   const formVals = { hr_maritalstatus: marital };
+  // True once this employee's admin-set passport due date has arrived (Asia/Kolkata).
+  const passportMandatory = isDueReached(emp?.hr_passportduedate, istToday());
+  // Did THIS edit change any Identity-section field? (Compared live vs the loaded record.)
+  const identitySectionChanged = () => {
+    const v = getValues();
+    return IDENTITY_SELF_FIELDS.some(k => String(v[k] ?? '') !== String(emp?.[k] ?? ''));
+  };
   const Field = (f) => {
     const err = errors[f.name];
     const ro = !editing;
-    const required = f.required || (f.requiredWhen && f.requiredWhen(formVals));
+    // Passport shows a required marker once its due date is reached; enforcement is
+    // section-aware (below), so it never blocks a save that doesn't touch Identity.
+    const required = f.required || (f.requiredWhen && f.requiredWhen(formVals)) || (f.name === 'hr_passport' && passportMandatory);
     const base = `w-full ${f.textarea ? 'px-4 py-2.5' : 'h-11 px-4'} border rounded-xl text-sm transition-all outline-none ${err ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} ${ro ? 'bg-gray-50/70 text-gray-600 cursor-default' : 'bg-white text-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400'}`;
-    const reg = register(f.name, { ...(required ? { required: `${f.label} is required` } : {}), ...(f.rules || {}) });
+    const rules = { ...(f.rules || {}) };
+    if (f.name === 'hr_passport') {
+      // Mandatory ONLY when: due date reached AND empty AND the Identity section is being
+      // changed in this save. Uses `validate` (not `required`) so non-Identity saves pass.
+      rules.validate = {
+        ...(rules.validate || {}),
+        passportDueReached: (value) =>
+          (!passportMandatory || !isPassportEmpty(value) || !identitySectionChanged()) ? true : PASSPORT_MANDATORY_MESSAGE,
+      };
+    }
+    // Passport uses `validate` for its conditional rule — never the unconditional `required`.
+    const reg = register(f.name, { ...(required && f.name !== 'hr_passport' ? { required: `${f.label} is required` } : {}), ...rules });
     return (
       <div key={f.name} className={`space-y-1.5 ${f.textarea ? 'sm:col-span-2' : ''}`}>
         <label className="block text-sm font-semibold text-gray-700">{f.label}{required && <span className="text-red-500 ml-0.5">*</span>}</label>
@@ -447,6 +506,7 @@ export default function ProfilePage() {
           <form onSubmit={handleSubmit(onValid, onInvalid)} className={tab === 'documents' ? 'hidden' : ''}>
             {FORM_TABS.map(t => (
               <div key={t.key} className={tab === t.key ? 'grid grid-cols-1 sm:grid-cols-2 gap-5' : 'hidden'}>
+                {t.key === 'identity' && <PassportStatusBanner emp={emp} />}
                 {t.fields.filter(f => !f.visibleWhen || f.visibleWhen(formVals)).map(Field)}
               </div>
             ))}
