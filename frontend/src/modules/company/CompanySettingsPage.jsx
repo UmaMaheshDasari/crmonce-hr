@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { companyApi } from '../../api/endpoints';
+import { REMINDER_INTERVAL, validateReminderInterval } from '../../utils/reminder-settings';
 import { CurrencyDollarIcon, GlobeAltIcon, ClockIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import PayrollSettingsPage from '../payroll/PayrollSettingsPage';
@@ -59,9 +60,24 @@ const SECTIONS = [
   },
   {
     title: 'HR Policy',
-    fields: [{ name: 'hr_requireddocs', label: 'Required Documents for 100% profile (comma-separated)', full: true, textarea: true }],
+    fields: [
+      { name: 'hr_requireddocs', label: 'Required Documents for 100% profile (comma-separated)', full: true, textarea: true },
+      {
+        name: REMINDER_INTERVAL.key, label: REMINDER_INTERVAL.label, type: 'number',
+        min: REMINDER_INTERVAL.min, max: REMINDER_INTERVAL.max, step: 1,
+        valueAsNumber: true, validate: validateReminderInterval, hint: REMINDER_INTERVAL.help,
+      },
+    ],
   },
 ];
+
+// react-hook-form validation rules for a field config (required + numeric bounds).
+const fieldRules = (f) => {
+  const r = f.required ? { required: `${f.label} is required` } : {};
+  if (f.valueAsNumber) r.valueAsNumber = true;
+  if (f.validate) r.validate = f.validate;
+  return r;
+};
 
 function GeneralTab() {
   const { hasPermission } = useAuth();
@@ -97,14 +113,14 @@ function GeneralTab() {
                 <label className="block text-sm font-semibold text-gray-700">{f.label}{f.required && <span className="text-red-500 ml-0.5">*</span>}</label>
                 {f.textarea ? (
                   <textarea rows={3} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all resize-none"
-                    {...register(f.name, f.required ? { required: `${f.label} is required` } : {})} />
+                    {...register(f.name, fieldRules(f))} />
                 ) : f.select ? (
                   <select className="w-full h-11 px-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all" {...register(f.name)}>
                     {f.select.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 ) : (
-                  <input type={f.type || 'text'} className={`w-full h-11 px-4 bg-gray-50 border ${errors[f.name] ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all`}
-                    {...register(f.name, f.required ? { required: `${f.label} is required` } : {})} />
+                  <input type={f.type || 'text'} min={f.min} max={f.max} step={f.step} className={`w-full h-11 px-4 bg-gray-50 border ${errors[f.name] ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all`}
+                    {...register(f.name, fieldRules(f))} />
                 )}
                 {f.hint && !f.textarea && <p className="text-xs text-gray-400">{f.hint}</p>}
                 {errors[f.name] && <p className="text-xs text-red-500 font-medium">{errors[f.name].message}</p>}
