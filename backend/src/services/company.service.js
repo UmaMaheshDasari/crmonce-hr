@@ -35,6 +35,10 @@ const COMPANY_DEFAULTS = {
   hr_logourl: '/crmonce-logo.png',   // served from the frontend public root
   // Documents that must be uploaded AND verified for a profile to reach 100%.
   hr_requireddocs: 'Aadhaar Card, PAN Card, Photo, Cancelled Cheque',
+  // How many days between recurring reminder emails (profile / passport / goals).
+  // COMPANY-CONFIGURABLE in Company Settings — the reminder logic reads this value and
+  // never hardcodes the interval. This is the editable seed, not a code default.
+  hr_reminderintervaldays: '3',
   // ── Locale / calendar (company-configurable — NEVER hard-code India/INR/IST) ──
   // These are DEFAULTS for OUR company; any customer overrides them in the UI.
   hr_country: 'India',

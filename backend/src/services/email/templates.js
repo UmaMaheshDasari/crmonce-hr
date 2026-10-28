@@ -495,11 +495,60 @@ function goalAssigned(d) {
   return { subject, html: layout({ title: subject, preheader: `New goal assigned: ${d.goalTitle}`, content }) };
 }
 
+// ── Automated reminders (profile completion / passport deadline / goal due) ──────
+// Employee-facing nudges. HR-owned (From HR@, To employee, CC info@) — never carry
+// approve/reject buttons. Each lists only the recipient's OWN outstanding items.
+function profileCompletionReminder(d) {
+  const items = (d.missing || []).map((m) => `<li style="margin:3px 0;">${esc(m)}</li>`).join('') || '<li>Profile details</li>';
+  const subject = 'Action needed: complete your employee profile';
+  const content =
+    `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear ${esc(d.employeeName || 'Colleague')},</p>` +
+    `<p style="margin:0 0 4px;color:#374151;">Your employee profile is incomplete. Please submit the following outstanding item(s):</p>` +
+    card(`<ul style="margin:6px 0 0 18px;padding:0;color:#111827;font-size:14px;">${items}</ul>`) +
+    banner('Log in to the HR Portal → My Profile to complete these. This reminder repeats every few days until your profile is complete.') +
+    (d.portalUrl ? `<div style="text-align:center;margin:22px 0 6px;">${button('Complete My Profile', d.portalUrl)}</div>` : '');
+  return { subject, html: layout({ title: subject, preheader: 'Your profile has outstanding items', content }) };
+}
+
+function passportReminder(d) {
+  const subject = d.overdue ? 'Passport details overdue — action required' : 'Reminder: submit your passport details by 1 November 2026';
+  const deadlineLine = d.overdue
+    ? banner(`The passport submission deadline (${esc(d.deadline)}) has passed and your passport details are still missing. Please submit them as soon as possible.`, 'warn')
+    : banner(`The passport submission deadline is <strong>${esc(d.deadline)}</strong>. Please submit your passport number before then.`, 'info');
+  const content =
+    `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear ${esc(d.employeeName || 'Colleague')},</p>` +
+    `<p style="margin:0 0 4px;color:#374151;">Our records show your <strong>Passport Number</strong> is not yet on file.</p>` +
+    deadlineLine +
+    summaryCard('Outstanding requirement', [['Passport Number', '<em>Not submitted</em>']]) +
+    (d.portalUrl ? `<div style="text-align:center;margin:22px 0 6px;">${button('Add Passport Number', d.portalUrl)}</div>` : '');
+  return { subject, html: layout({ title: subject, preheader: 'Passport details outstanding', content }) };
+}
+
+function goalReminder(d) {
+  const phaseText = d.overdue
+    ? `This goal is <strong>past its due date</strong> and is still <strong>${esc(d.statusLabel || d.status || 'open')}</strong>.`
+    : (d.daysLeft === 0 ? 'This goal is <strong>due today</strong>.' : `This goal is due in <strong>${esc(d.daysLeft)}</strong> day(s).`);
+  const subject = `Goal reminder: ${d.goalName} — ${d.overdue ? 'overdue' : (d.daysLeft === 0 ? 'due today' : `due in ${d.daysLeft} day(s)`)}`;
+  const content =
+    `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear ${esc(d.employeeName || 'Colleague')},</p>` +
+    banner(phaseText, d.overdue ? 'warn' : 'info') +
+    summaryCard('Goal', [
+      ['Goal', `<strong>${esc(d.goalName)}</strong>`],
+      ['Due Date', esc(d.dueDate || '—')],
+      ['Status', statusBadge(d.statusLabel || d.status || 'open')],
+      ['Progress', `${esc(d.progress ?? 0)}%`],
+      ['Outstanding action', esc(d.action || 'Update your progress and complete this goal.')],
+    ]) +
+    (d.portalUrl ? `<div style="text-align:center;margin:22px 0 6px;">${button('Open My Goals', d.portalUrl)}</div>` : '');
+  return { subject, html: layout({ title: subject, preheader: `Goal due: ${esc(d.goalName)}`, content }) };
+}
+
 module.exports = {
   // components (exported for tests/reuse)
   statusBadge, button, profileCard, summaryCard, banner, layout, card, statBlock, header, footer,
   // builders
   newRequestApprover, newRequestCc, acknowledgement, decision, reminder, attendanceException,
   missingPunch, lateLoginNotice, lateLoginApplyPrompt, absentNoLeaveNotice, lateLoginInfo, lateLoginLeaveRequired, goalAssigned,
+  profileCompletionReminder, passportReminder, goalReminder,
   _esc: esc, _longText: longText,
 };

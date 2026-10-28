@@ -104,6 +104,19 @@ const d365Store = {
 
   async _drop(id) { try { await d365.delete(SET, id); } catch (_) { /* stale pending self-expires via CLAIM_TTL_MS */ } },
 
+  /** The most recent 'sent' date (YYYY-MM-DD) for this (employeeId, type), or null.
+   *  Used by the recurring reminders to enforce an every-N-days cadence. */
+  async lastSentOn(employeeId, type) {
+    try {
+      const { data } = await d365.getList(SET, {
+        select: 'hr_date',
+        filter: `hr_employeeid eq '${esc(employeeId)}' and hr_type eq '${esc(type)}' and hr_status eq 'sent'`,
+        orderby: 'hr_date desc', top: 1,
+      });
+      return (data && data[0] && data[0].hr_date) ? dstr(data[0].hr_date) : null;
+    } catch { return null; }   // can't read → treat as never sent (fail toward sending)
+  },
+
   async record(rec) {
     try {
       await d365.create(SET, {
@@ -176,4 +189,10 @@ async function _sendOnce({ employeeId, date, type, to, cc, subject, html, from, 
   return ok ? { sent: true } : { sent: false, error: r?.error || 'send failed' };
 }
 
-module.exports = { sendOnce, keyOf, setStore, SET };
+/** The most recent 'sent' date for (employeeId, type), via the active store. null if never. */
+async function lastSentOn(employeeId, type) {
+  if (typeof store.lastSentOn === 'function') return store.lastSentOn(employeeId, type);
+  return null;
+}
+
+module.exports = { sendOnce, keyOf, setStore, SET, lastSentOn };

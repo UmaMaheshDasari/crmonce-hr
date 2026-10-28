@@ -197,6 +197,34 @@ function initJobs() {
     global.logger?.info('Celebrations scheduled (every 30 min; sends at configured Send Time, IST)');
   }
 
+  // Automated reminders — Profile/Document completion, Passport deadline, Goal due dates.
+  // Daily at 09:30 IST. Each workflow has its own on/off flag; every send is idempotent
+  // via the notification ledger (so a missed-then-rerun tick or multiple workers never
+  // duplicate), reminders repeat every REMINDER_INTERVAL_DAYS (default 3) and stop the
+  // moment the requirement is complete. Routing: From HR@, To employee, CC info@.
+  // Master switch REMINDERS_SCHEDULER=false disables all three.
+  if (process.env.REMINDERS_SCHEDULER !== 'false') {
+    const reminders = require('../services/reminder.service');
+    cron.schedule('30 9 * * *', async () => {
+      try {
+        const employees = undefined;   // each runner fetches active employees itself
+        if (process.env.PROFILE_DOC_REMINDERS !== 'false') {
+          const r = await reminders.runProfileReminders({ employees });
+          global.logger?.info(`[reminders] profile ${r.date}: sent ${r.sent}, complete ${r.complete}, held ${r.held}, errors ${r.errors}`);
+        }
+        if (process.env.PASSPORT_REMINDERS !== 'false') {
+          const r = await reminders.runPassportReminders({ employees });
+          global.logger?.info(`[reminders] passport ${r.date} (overdue=${r.overdue}): sent ${r.sent}, complete ${r.complete}, held ${r.held}, errors ${r.errors}`);
+        }
+        if (process.env.GOAL_REMINDERS !== 'false') {
+          const r = await reminders.runGoalReminders({ employees });
+          global.logger?.info(`[reminders] goals ${r.date}: sent ${r.sent}, not-due ${r.skippedNotDue}, closed ${r.skippedClosed}, errors ${r.errors}`);
+        }
+      } catch (e) { global.logger?.error(`[reminders] daily run failed: ${e.message}`); }
+    }, { timezone: 'Asia/Kolkata' });
+    global.logger?.info('Automated reminders scheduled (09:30 IST daily: profile, passport, goals)');
+  }
+
   global.logger?.info('Cron jobs initialized');
 }
 
