@@ -51,6 +51,11 @@ const COMPANY_DEFAULTS = {
   hr_goalrem_due: 'true',         // on the due date
   hr_goalrem_overdue: 'true',     // overdue reminders enabled
   hr_goaloverdueintervaldays: '3', // overdue reminder cadence (days), 1–30
+  // Master ON/OFF toggles (UI, DB-backed) for the whole reminder workflow. The scheduler
+  // ALSO requires the env master flag (GOAL_REMINDERS / PROFILE_DOC_REMINDERS) — effective
+  // = env AND this setting. Default enabled (preserves current behavior).
+  hr_goalremindersenabled: 'true',     // Goals section toggle
+  hr_profileremindersenabled: 'true',  // Required Documents section toggle
   // ── Locale / calendar (company-configurable — NEVER hard-code India/INR/IST) ──
   // These are DEFAULTS for OUR company; any customer overrides them in the UI.
   hr_country: 'India',

@@ -40,12 +40,19 @@ function memStore() {
 }
 
 const DOCSET = d365.constructor.entities.document;
-let DOCS = [];   // documents returned for every employee in a test
-let origGLO, origGetCompany;
+const COMPANY_SET = company.ENTITY_SET;   // 'hr_companysettings'
+let DOCS = [];          // documents returned for every employee in a test
+let ENABLE_BLOB = {};   // the hr_settingsjson blob the master-toggle read sees ({} = toggles absent → enabled)
+let origGLO, origGL, origGetCompany;
 beforeEach(() => {
   origGLO = d365.getListOptional;
+  origGL = d365.getList;
   d365.getListOptional = async (entity) => (entity === DOCSET ? { data: DOCS.map(x => ({ hr_name: x.name, hr_documenttype: x.type, hr_status: x.status })) } : { data: [] });
+  // The master-toggle check (reminder.service readEnableFlag) reads the company-settings row's
+  // blob directly via d365.getList — stub it so no network is hit; ENABLE_BLOB drives the toggles.
+  d365.getList = async (entity) => (entity === COMPANY_SET ? { data: [{ hr_companysettingid: 'C1', hr_settingsjson: JSON.stringify(ENABLE_BLOB) }] } : { data: [] });
   DOCS = [];
+  ENABLE_BLOB = {};
   // Company Settings supplies the reminder interval (default seed = '3') — stub so
   // resolveIntervalDays() needs no network and the cadence is a deterministic 3.
   origGetCompany = company.getCompany;
@@ -53,7 +60,7 @@ beforeEach(() => {
   ledger.setStore(memStore());
   notif.clearOutbox();
 });
-afterEach(() => { d365.getListOptional = origGLO; company.getCompany = origGetCompany; ledger.setStore(null); notif.resetTransport(); notif.clearOutbox(); });
+afterEach(() => { d365.getListOptional = origGLO; d365.getList = origGL; company.getCompany = origGetCompany; ledger.setStore(null); notif.resetTransport(); notif.clearOutbox(); });
 
 // A fully-complete employee: every COMPLETION_FIELD filled + hr_passport filled.
 function completeEmp(over = {}) {
@@ -305,4 +312,57 @@ test('goal runner: a longer configured OVERDUE interval delays the overdue remin
   ] });
   assert.strictEqual(r.overdueInterval, 5);
   assert.strictEqual(r.sent, 1); assert.strictEqual(sent.length, 1);
+});
+
+// ── Master ON/OFF toggles (DB-backed; FAIL-CLOSED on read failure) ────────────
+test('enabled helpers: absent→ON (default); explicit "false"→OFF; read FAILURE→OFF (fail-closed)', async () => {
+  ENABLE_BLOB = {};                                                        // present row, toggles absent → default ON
+  assert.strictEqual(await reminders.isGoalRemindersEnabled(), true);
+  assert.strictEqual(await reminders.isProfileRemindersEnabled(), true);
+  ENABLE_BLOB = { hr_goalremindersenabled: 'false', hr_profileremindersenabled: 'false' };
+  assert.strictEqual(await reminders.isGoalRemindersEnabled(), false);
+  assert.strictEqual(await reminders.isProfileRemindersEnabled(), false);
+  d365.getList = async () => { throw new Error('dataverse down'); };       // genuine read failure
+  assert.strictEqual(await reminders.isGoalRemindersEnabled(), false);     // fail-closed
+  assert.strictEqual(await reminders.isProfileRemindersEnabled(), false);  // fail-closed
+});
+test('profile runner: DB toggle OFF → nothing sent (no restart needed)', async () => {
+  ENABLE_BLOB = { hr_profileremindersenabled: 'false' };
+  const sent = []; notif.setTransport((req) => sent.push(req));
+  const emp = completeEmp(); delete emp.hr_phone;                          // otherwise eligible
+  const r = await reminders.runProfileReminders({ todayDs: TODAY, employees: [emp], requiredDocs: ['Aadhaar Card'] });
+  assert.strictEqual(r.enabled, false); assert.strictEqual(r.sent, 0); assert.strictEqual(sent.length, 0);
+});
+test('profile runner: DB toggle ON → sends as before (existing behavior preserved)', async () => {
+  ENABLE_BLOB = { hr_profileremindersenabled: 'true' };
+  const sent = []; notif.setTransport((req) => sent.push(req));
+  const emp = completeEmp(); delete emp.hr_phone;
+  const r = await reminders.runProfileReminders({ todayDs: TODAY, employees: [emp], requiredDocs: ['Aadhaar Card'] });
+  assert.strictEqual(r.enabled, true); assert.strictEqual(r.sent, 1); assert.strictEqual(sent.length, 1);
+});
+test('goal runner: DB toggle OFF → nothing sent; ON → sends', async () => {
+  ENABLE_BLOB = { hr_goalremindersenabled: 'false' };
+  let sent = []; notif.setTransport((req) => sent.push(req));
+  let r = await reminders.runGoalReminders({ todayDs: TODAY, employees: [completeEmp()], goals: [G()] });
+  assert.strictEqual(r.enabled, false); assert.strictEqual(r.sent, 0); assert.strictEqual(sent.length, 0);
+  ENABLE_BLOB = { hr_goalremindersenabled: 'true' };
+  sent = []; notif.setTransport((req) => sent.push(req));
+  r = await reminders.runGoalReminders({ todayDs: TODAY, employees: [completeEmp()], goals: [G()] });   // due in 3 → d3
+  assert.strictEqual(r.enabled, true); assert.strictEqual(r.sent, 1);
+});
+test('runners: a settings READ FAILURE disables sending for BOTH (fail-closed, no restart)', async () => {
+  d365.getList = async () => { throw new Error('dataverse down'); };       // enable read throws
+  const sent = []; notif.setTransport((req) => sent.push(req));
+  const emp = completeEmp(); delete emp.hr_phone;
+  const rp = await reminders.runProfileReminders({ todayDs: TODAY, employees: [emp], requiredDocs: ['Aadhaar Card'] });
+  const rg = await reminders.runGoalReminders({ todayDs: TODAY, employees: [completeEmp()], goals: [G()] });
+  assert.strictEqual(rp.enabled, false); assert.strictEqual(rg.enabled, false);
+  assert.strictEqual(rp.sent, 0); assert.strictEqual(rg.sent, 0); assert.strictEqual(sent.length, 0);
+});
+test('runners: settings row present but enable setting ABSENT → default ENABLED', async () => {
+  ENABLE_BLOB = {};   // row exists, no enable key → default ON
+  const sent = []; notif.setTransport((req) => sent.push(req));
+  const emp = completeEmp(); delete emp.hr_phone;
+  const r = await reminders.runProfileReminders({ todayDs: TODAY, employees: [emp], requiredDocs: ['Aadhaar Card'] });
+  assert.strictEqual(r.enabled, true); assert.strictEqual(r.sent, 1);
 });

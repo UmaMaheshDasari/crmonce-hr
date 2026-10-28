@@ -136,6 +136,38 @@ async function openGoals() {
   } catch (e) { global.logger?.error?.(`[reminders] goal fetch failed: ${e.message}`); return []; }
 }
 
+// ── DB-backed master ON/OFF toggles (Company Settings; read at run time) ──────
+// Effective enablement = the env master flag (checked in jobs/index.js) AND this setting.
+//
+// FAIL-CLOSED: we read the company-settings row's blob DIRECTLY (not via getCompany, which
+// masks failures by returning enabled-defaults), so a genuine read failure is distinguishable
+// from an absent setting:
+//   • read throws (DB/table unavailable)      → DISABLED for this run (fail-closed)
+//   • row read OK but setting absent/blank     → ENABLED (documented default; preserves behavior)
+//   • explicit 'true'/'false'                  → as configured
+/** Returns true|false when the setting is explicitly present, undefined when absent.
+ *  THROWS on a genuine read failure so the caller can fail closed. */
+async function readEnableFlag(key) {
+  const { ENTITY_SET } = require('./company.service');
+  const { data } = await d365.getList(ENTITY_SET, { select: 'hr_companysettingid,hr_settingsjson', top: 1, orderby: 'createdon asc' });
+  const row = (data && data[0]) || null;
+  if (!row) return undefined;   // no settings row yet → default
+  let v;
+  try { const blob = JSON.parse(row.hr_settingsjson || '{}'); if (blob && typeof blob === 'object') v = blob[key]; } catch (_) { v = undefined; }
+  if (v === undefined || v === null || v === '') return undefined;   // present row, absent setting → default
+  return /^(true|1|yes|on)$/i.test(String(v));
+}
+async function remindersEnabledSetting(key) {
+  try {
+    const v = await readEnableFlag(key);
+    return v === undefined ? true : v;   // absent → default enabled; explicit → as set
+  } catch (_) {
+    return false;   // FAIL-CLOSED: a genuine settings-read failure disables sending this run
+  }
+}
+const isGoalRemindersEnabled = () => remindersEnabledSetting('hr_goalremindersenabled');
+const isProfileRemindersEnabled = () => remindersEnabledSetting('hr_profileremindersenabled');
+
 // ── pure decision helpers (unit-tested) ───────────────────────────────────────
 const isPassportComplete = (emp) => filled(emp?.hr_passport);
 
@@ -214,12 +246,14 @@ async function send({ employeeId, email, type, dateKey, subject, html }) {
 }
 
 // ── A. Profile / document completion ──────────────────────────────────────────
-async function runProfileReminders({ todayDs, employees, requiredDocs, intervalDays } = {}) {
+async function runProfileReminders({ todayDs, employees, requiredDocs, intervalDays, enabled } = {}) {
   const t = ds10(todayDs || today());
+  const on = enabled != null ? enabled : await isProfileRemindersEnabled();
+  if (!on) return { date: t, enabled: false, scanned: 0, complete: 0, sent: 0, held: 0, skippedNoEmail: 0, errors: 0 };
   const emps = employees || await activeEmployees();
   const reqDocs = requiredDocs !== undefined ? requiredDocs : await requiredDocsList();
   const interval = intervalDays != null ? intervalDays : await resolveIntervalDays();
-  const summary = { date: t, intervalDays: interval, scanned: 0, complete: 0, sent: 0, held: 0, skippedNoEmail: 0, errors: 0 };
+  const summary = { date: t, enabled: true, intervalDays: interval, scanned: 0, complete: 0, sent: 0, held: 0, skippedNoEmail: 0, errors: 0 };
   for (const emp of emps) {
     summary.scanned++;
     try {
@@ -264,13 +298,15 @@ async function runPassportReminders({ todayDs, employees, intervalDays } = {}) {
 }
 
 // ── C. Goal due dates ─────────────────────────────────────────────────────────
-async function runGoalReminders({ todayDs, employees, goals, goalSettings } = {}) {
+async function runGoalReminders({ todayDs, employees, goals, goalSettings, enabled } = {}) {
   const t = ds10(todayDs || today());
+  const on = enabled != null ? enabled : await isGoalRemindersEnabled();
+  if (!on) return { date: t, enabled: false, scanned: 0, sent: 0, skippedClosed: 0, skippedNotDue: 0, skippedInactive: 0, skippedNoDate: 0, errors: 0 };
   const emps = employees || await activeEmployees();
   const settings = goalSettings || await resolveGoalSettings();
   const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
   const list = goals || await openGoals();
-  const summary = { date: t, overdueInterval: settings.overdueInterval, scanned: 0, sent: 0, skippedClosed: 0, skippedNotDue: 0, skippedInactive: 0, skippedNoDate: 0, errors: 0 };
+  const summary = { date: t, enabled: true, overdueInterval: settings.overdueInterval, scanned: 0, sent: 0, skippedClosed: 0, skippedNotDue: 0, skippedInactive: 0, skippedNoDate: 0, errors: 0 };
   for (const g of list) {
     summary.scanned++;
     try {
@@ -309,5 +345,6 @@ module.exports = {
   // pure helpers (tested)
   goalMilestone, goalFixedMilestones, monthsBefore, addDays, resolveGoalSettings,
   isPassportComplete, dueByInterval, daysBetween, resolveIntervalDays,
+  isGoalRemindersEnabled, isProfileRemindersEnabled,
   PASSPORT_DEADLINE, GOAL_CLOSED, DEFAULT_GOAL_SETTINGS, TYPE,
 };

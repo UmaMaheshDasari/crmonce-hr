@@ -89,3 +89,21 @@ test('save: a goal-reminder toggle persists (boolean→string) and preserves unr
   assert.strictEqual(blob.hr_requireddocs, 'Aadhaar Card');   // unrelated company field preserved
   assert.deepStrictEqual(blob.rolePermissions, { x: 1 });     // non-company blob key preserved
 });
+
+// ── Master ON/OFF reminder toggles ────────────────────────────────────────────
+test('load: master enable toggles are known settings, default ON', () => {
+  assert.ok(company.FIELDS.includes('hr_goalremindersenabled'));
+  assert.ok(company.FIELDS.includes('hr_profileremindersenabled'));
+  assert.strictEqual(company.COMPANY_DEFAULTS.hr_goalremindersenabled, 'true');
+  assert.strictEqual(company.COMPANY_DEFAULTS.hr_profileremindersenabled, 'true');
+});
+test('save: turning the Goal Reminders master toggle OFF persists and preserves unrelated settings', async () => {
+  let saved;
+  d365.update = async (_entity, _id, body) => { saved = body; return {}; };
+  const { code } = await invoke(patchHandler(), { body: { hr_goalremindersenabled: false }, user: { role: 'super_admin' } });
+  assert.strictEqual(code, 200);
+  const blob = JSON.parse(saved.hr_settingsjson);
+  assert.strictEqual(blob.hr_goalremindersenabled, 'false');  // toggle OFF persisted
+  assert.strictEqual(blob.hr_requireddocs, 'Aadhaar Card');   // unrelated preserved
+  assert.deepStrictEqual(blob.rolePermissions, { x: 1 });
+});

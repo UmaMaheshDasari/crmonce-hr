@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { companyApi } from '../../api/endpoints';
 import { REMINDER_INTERVAL, validateReminderInterval } from '../../utils/reminder-settings';
 import { GOAL_MILESTONES, GOAL_OVERDUE_INTERVAL, normalizeGoalToggles } from '../../utils/goal-reminder-settings';
+import { GOAL_REMINDERS_ENABLED, PROFILE_REMINDERS_ENABLED, normalizeEnableToggles } from '../../utils/reminder-enable-settings';
 import { CurrencyDollarIcon, GlobeAltIcon, ClockIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import PayrollSettingsPage from '../payroll/PayrollSettingsPage';
@@ -62,6 +63,7 @@ const SECTIONS = [
   {
     title: 'HR Policy',
     fields: [
+      { name: PROFILE_REMINDERS_ENABLED.key, label: PROFILE_REMINDERS_ENABLED.label, type: 'toggle', hint: PROFILE_REMINDERS_ENABLED.help },
       { name: 'hr_requireddocs', label: 'Required Documents for 100% profile (comma-separated)', full: true, textarea: true },
       {
         name: REMINDER_INTERVAL.key, label: REMINDER_INTERVAL.label, type: 'number',
@@ -74,6 +76,7 @@ const SECTIONS = [
     title: 'Goal Reminder Settings',
     hint: 'Reminder emails are sent relative to each goal’s DUE DATE. Enable the milestones you want; overdue reminders repeat at the interval below.',
     fields: [
+      { name: GOAL_REMINDERS_ENABLED.key, label: GOAL_REMINDERS_ENABLED.label, type: 'toggle', hint: GOAL_REMINDERS_ENABLED.help },
       ...GOAL_MILESTONES.map(m => ({ name: m.key, label: m.label, type: 'checkbox' })),
       {
         name: GOAL_OVERDUE_INTERVAL.key, label: GOAL_OVERDUE_INTERVAL.label, type: 'number',
@@ -96,12 +99,13 @@ function GeneralTab() {
   const { hasPermission } = useAuth();
   const canEditSettings = hasPermission('settings.edit');   // RBAC Phase D (page also route-gated to super_admin)
   const qc = useQueryClient();
-  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm();
+  const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm();
   const { data, isLoading } = useQuery({ queryKey: ['company'], queryFn: companyApi.get });
   const company = data?.data;
-  // Goal-reminder toggles persist as 'true'/'false' strings; convert to booleans so the
-  // checkboxes bind correctly (a non-empty string like 'false' would otherwise read truthy).
-  const toForm = (c) => (c ? { ...c, ...normalizeGoalToggles(c) } : c);
+  // Boolean toggles (goal milestones + the two master ON/OFF switches) persist as
+  // 'true'/'false' strings; convert to booleans so the checkboxes/switches bind correctly
+  // (a non-empty string like 'false' would otherwise read truthy).
+  const toForm = (c) => (c ? { ...c, ...normalizeGoalToggles(c), ...normalizeEnableToggles(c) } : c);
   useEffect(() => { if (company) reset(toForm(company)); }, [company, reset]);
 
   const mutation = useMutation({
@@ -124,7 +128,21 @@ function GeneralTab() {
             {section.hint && <p className="text-xs text-gray-400 mt-0.5 normal-case tracking-normal">{section.hint}</p>}
           </div>
           <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {section.fields.map(f => f.type === 'checkbox' ? (
+            {section.fields.map(f => f.type === 'toggle' ? (
+              <div key={f.name} className="sm:col-span-2 flex items-center justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                <div>
+                  <div className="text-sm font-semibold text-gray-700">{f.label}</div>
+                  {f.hint && <div className="text-xs text-gray-400 mt-0.5">{f.hint}</div>}
+                </div>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <span className={`text-xs font-bold uppercase tracking-wide ${watch(f.name) ? 'text-emerald-600' : 'text-gray-400'}`}>{watch(f.name) ? 'Enabled' : 'Disabled'}</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" {...register(f.name)} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-gray-300 rounded-full peer peer-checked:bg-emerald-500 peer-focus:ring-2 peer-focus:ring-emerald-500/30 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5"></div>
+                  </label>
+                </div>
+              </div>
+            ) : f.type === 'checkbox' ? (
               <label key={f.name} className="flex items-center gap-3 sm:col-span-2 cursor-pointer select-none">
                 <input type="checkbox" {...register(f.name)} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/20" />
                 <span className="text-sm font-medium text-gray-700">{f.label}</span>
