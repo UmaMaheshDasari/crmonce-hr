@@ -128,6 +128,9 @@ const FORM_TABS = [
     { name: 'hr_aadhaar', label: 'Aadhaar Number', rules: aadhaarRule, required: true, maxLength: 12 },
     { name: 'hr_pan', label: 'PAN Number', rules: panRule, required: true, maxLength: 10, upper: true },
     { name: 'hr_passport', label: 'Passport Number' },
+    // Admin-only: HR sets/changes/clears the per-employee passport submission due date here.
+    // Hidden from regular employees (hrOnly) and stripped by the backend on a self edit.
+    { name: 'hr_passportduedate', label: 'Passport Submission Due Date', type: 'date', hrOnly: true },
     { name: 'hr_uan', label: 'UAN Number', rules: uanRule, maxLength: 12 },
     { name: 'hr_pfnumber', label: 'PF Number' },
   ] },
@@ -159,6 +162,9 @@ const EDITABLE_FIELDS = FORM_TABS.flatMap(t => t.fields.map(f => f.name));
 // Identity-section fields — the passport due-date mandatory rule fires only when the
 // employee actually changes one of these, so other-section saves are never blocked.
 const IDENTITY_SELF_FIELDS = ['hr_aadhaar', 'hr_pan', 'hr_passport', 'hr_uan', 'hr_pfnumber'];
+// Admin-only profile fields — rendered and submitted only for HR/Admin. The backend also
+// strips them from a self edit (not in SELF_EDITABLE), so this is UI defense-in-depth.
+const HR_ONLY_FIELDS = new Set(FORM_TABS.flatMap(t => t.fields).filter(f => f.hrOnly).map(f => f.name));
 const FIELD_TAB = Object.fromEntries(FORM_TABS.flatMap(t => t.fields.map(f => [f.name, t.key])));
 
 const VERIFY_BADGE = {
@@ -237,8 +243,13 @@ export default function ProfilePage() {
   useQuery({ queryKey: ['documents', id], queryFn: () => documentApi.list({ employeeId: id }), enabled: !!id });
 
   // Reset the form from the server data whenever it (re)loads — but not while the
-  // user is mid-edit (so a background refetch can't wipe their changes).
-  useEffect(() => { if (emp && !editing) reset(emp); }, [emp, editing, reset]);
+  // user is mid-edit (so a background refetch can't wipe their changes). Normalize the
+  // passport due date to YYYY-MM-DD for the <input type="date"> (defensive: a stored value
+  // with a time part would otherwise render blank and risk an unintended clear on save),
+  // mirroring EmployeeForm. Empty/undefined are preserved as-is; emp is not mutated.
+  useEffect(() => {
+    if (emp && !editing) reset({ ...emp, hr_passportduedate: emp.hr_passportduedate?.split('T')[0] });
+  }, [emp, editing, reset]);
 
   const completion = emp?._completion || { percent: 0, missing: [] };
   const status = emp?._verifystatus || emp?.hr_verifystatus || 'verified';
@@ -276,7 +287,11 @@ export default function ProfilePage() {
 
   const onValid = (values) => {
     const payload = {};
-    for (const f of EDITABLE_FIELDS) if (values[f] !== undefined) payload[f] = values[f];
+    for (const f of EDITABLE_FIELDS) {
+      if (values[f] === undefined) continue;
+      if (HR_ONLY_FIELDS.has(f) && !hrView) continue;   // admin-only fields are never sent by a non-HR save
+      payload[f] = values[f];
+    }
     // Clear Marriage Date whenever the employee is not Married (keeps data consistent).
     if (values.hr_maritalstatus !== 'Married') payload.hr_marriagedate = '';
     saveMutation.mutate(payload);
@@ -507,7 +522,7 @@ export default function ProfilePage() {
             {FORM_TABS.map(t => (
               <div key={t.key} className={tab === t.key ? 'grid grid-cols-1 sm:grid-cols-2 gap-5' : 'hidden'}>
                 {t.key === 'identity' && <PassportStatusBanner emp={emp} />}
-                {t.fields.filter(f => !f.visibleWhen || f.visibleWhen(formVals)).map(Field)}
+                {t.fields.filter(f => (!f.hrOnly || hrView) && (!f.visibleWhen || f.visibleWhen(formVals))).map(Field)}
               </div>
             ))}
           </form>

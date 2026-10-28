@@ -485,6 +485,13 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     const updateData = sanitizeEmployee(raw);
+    // Allow HR to CLEAR the Passport Submission Due Date. sanitizeEmployee drops empty
+    // values and Dataverse keeps the previous value unless we explicitly send null, so an
+    // emptied due date would otherwise never clear. HR-only + this one field (self edits
+    // already had hr_passportduedate stripped above, so raw won't carry it for them).
+    if (isHRWrite && raw.hr_passportduedate !== undefined && isPassportEmpty(raw.hr_passportduedate)) {
+      updateData.hr_passportduedate = null;
+    }
     if (password && isHRWrite) updateData.hr_password = await authService.hashPassword(password);
     if (isHRWrite && managerId) await bindManager(updateData, managerId);   // only HR can set Reporting Manager
     const emp = await updateStrippingOptionalShift(ENTITY, req.params.id, updateData);

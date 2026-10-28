@@ -78,3 +78,25 @@ test('HR edit with an invalid due date is rejected and nothing is written', asyn
   assert.match(body.error, /valid date/i);
   assert.strictEqual(captured, undefined, 'no write happened on a validation failure');
 });
+
+test('HR can change the due date to a new value', async () => {
+  d365.getByIdResilient = async () => ({ hr_hremployee1: 'X', hr_passport: '', hr_passportduedate: '2026-12-01' });
+  const { code } = await invoke(patchHandler(), {
+    params: { id: EMP_ID },
+    user: { id: 'hr-admin-id', role: 'hr_manager', name: 'HR Admin' },
+    body: { hr_passportduedate: '2027-01-15' },
+  });
+  assert.strictEqual(code, 200);
+  assert.strictEqual(captured.hr_passportduedate, '2027-01-15');
+});
+
+test('HR can clear the due date — an emptied value is sent to Dataverse as null', async () => {
+  d365.getByIdResilient = async () => ({ hr_hremployee1: 'X', hr_passport: '', hr_passportduedate: '2026-12-01' });
+  const { code } = await invoke(patchHandler(), {
+    params: { id: EMP_ID },
+    user: { id: 'hr-admin-id', role: 'hr_manager', name: 'HR Admin' },
+    body: { hr_passportduedate: '' },
+  });
+  assert.strictEqual(code, 200);
+  assert.strictEqual(captured.hr_passportduedate, null);   // explicitly cleared (not merely stripped)
+});
