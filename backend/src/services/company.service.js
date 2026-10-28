@@ -35,10 +35,22 @@ const COMPANY_DEFAULTS = {
   hr_logourl: '/crmonce-logo.png',   // served from the frontend public root
   // Documents that must be uploaded AND verified for a profile to reach 100%.
   hr_requireddocs: 'Aadhaar Card, PAN Card, Photo, Cancelled Cheque',
-  // How many days between recurring reminder emails (profile / passport / goals).
+  // How many days between recurring reminder emails (profile / passport).
   // COMPANY-CONFIGURABLE in Company Settings — the reminder logic reads this value and
   // never hardcodes the interval. This is the editable seed, not a code default.
   hr_reminderintervaldays: '3',
+  // Goal Reminder milestones (each toggleable in Company Settings). Reminders are keyed
+  // off each goal's DUE DATE. 'true'/'false' strings (stored like every other setting).
+  hr_goalrem_m3: 'true',          // 3 calendar months before due
+  hr_goalrem_m2: 'true',          // 2 calendar months before due
+  hr_goalrem_m1: 'true',          // 1 calendar month before due
+  hr_goalrem_d15: 'true',         // 15 days before due
+  hr_goalrem_d7: 'true',          // 7 days before due
+  hr_goalrem_d3: 'true',          // 3 days before due
+  hr_goalrem_d1: 'true',          // 1 day before due
+  hr_goalrem_due: 'true',         // on the due date
+  hr_goalrem_overdue: 'true',     // overdue reminders enabled
+  hr_goaloverdueintervaldays: '3', // overdue reminder cadence (days), 1–30
   // ── Locale / calendar (company-configurable — NEVER hard-code India/INR/IST) ──
   // These are DEFAULTS for OUR company; any customer overrides them in the UI.
   hr_country: 'India',

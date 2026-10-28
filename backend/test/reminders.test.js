@@ -1,6 +1,6 @@
 /**
  * Automated reminders — Profile/Document completion, Passport deadline, Goal due dates.
- * Pure decision helpers (goalPhase / isPassportComplete / dueByInterval) + the three
+ * Pure decision helpers (goalMilestone / monthsBefore / isPassportComplete / dueByInterval) + the three
  * runners, with the notification ledger backed by an in-memory store and the email
  * transport mocked. No network, no Dataverse, no real emails. Routing asserted on the
  * actual Graph payload: From HR@, To employee ONLY, CC info@ only.
@@ -63,37 +63,7 @@ function completeEmp(over = {}) {
 }
 const TODAY = '2026-10-28';
 
-// ── Pure: goalPhase (interval passed explicitly; default cadence = 3) ──────────
-const N = 3;
-test('goalPhase: closed statuses (completed/exceeded/missed) never remind', () => {
-  for (const s of ['completed', 'exceeded', 'missed', 'Completed']) {
-    const p = reminders.goalPhase(s, shiftDate(TODAY, 3), TODAY, N);
-    assert.strictEqual(p.send, false); assert.strictEqual(p.reason, 'closed');
-  }
-});
-test('goalPhase: pre-due fires only at 7/3/1 days before', () => {
-  for (const off of [7, 3, 1]) assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, off), TODAY, N).send, true);
-  for (const off of [6, 5, 4, 2]) assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, off), TODAY, N).send, false);
-});
-test('goalPhase: due today fires', () => {
-  const p = reminders.goalPhase('not_started', TODAY, TODAY, N);
-  assert.strictEqual(p.send, true); assert.strictEqual(p.overdue, false); assert.strictEqual(p.daysLeft, 0);
-});
-test('goalPhase: overdue fires every N days anchored on the due date', () => {
-  assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, -3), TODAY, N).send, true);
-  assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, -6), TODAY, N).send, true);
-  assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, -1), TODAY, N).send, false);
-  assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, -3), TODAY, N).overdue, true);
-});
-test('goalPhase: a different configured interval changes the post-due cadence', () => {
-  // interval = 5 → fires at due+5, not due+3
-  assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, -5), TODAY, 5).send, true);
-  assert.strictEqual(reminders.goalPhase('in_progress', shiftDate(TODAY, -3), TODAY, 5).send, false);
-});
-test('goalPhase: missing/invalid due date never fires', () => {
-  assert.strictEqual(reminders.goalPhase('in_progress', '', TODAY, N).reason, 'no_due');
-  assert.strictEqual(reminders.goalPhase('in_progress', 'not-a-date', TODAY, N).send, false);
-});
+const N = 3;   // default cadence used by the dueByInterval (profile/passport) tests below
 
 // ── Pure: passport + interval ─────────────────────────────────────────────────
 test('isPassportComplete: filled vs empty', () => {
@@ -191,6 +161,41 @@ test('passport: on/after the deadline the email is the OVERDUE variant', async (
 
 // ── C. Goal reminders ─────────────────────────────────────────────────────────
 const G = (over) => ({ hr_hrgoalid: 'G1', hr_hrgoal1: 'Q4 Target', hr_status: 'in_progress', hr_duedate: shiftDate(TODAY, 3), hr_employeeid: 'E1', hr_progress: 40, ...over });
+const ALL = { m3: true, m2: true, m1: true, d15: true, d7: true, d3: true, d1: true, due: true, overdue: true, overdueInterval: 3 };
+
+// ── Pure: monthsBefore (calendar months, month-end + leap safe) ───────────────
+test('monthsBefore: clamps to month-end and handles leap years + year rollover', () => {
+  assert.strictEqual(reminders.monthsBefore('2026-05-31', 3), '2026-02-28');   // Feb clamp (non-leap)
+  assert.strictEqual(reminders.monthsBefore('2028-03-31', 1), '2028-02-29');   // Feb 29 (leap)
+  assert.strictEqual(reminders.monthsBefore('2026-01-15', 1), '2025-12-15');   // year rollover
+  assert.strictEqual(reminders.monthsBefore('2026-03-30', 1), '2026-02-28');   // 30 → 28 clamp
+  assert.strictEqual(reminders.monthsBefore('2026-11-28', 1), '2026-10-28');   // normal
+  assert.strictEqual(reminders.monthsBefore('bad', 1), null);
+});
+
+// ── Pure: goalMilestone (exact-date; settings-driven) ─────────────────────────
+test('goalMilestone: fixed milestones fire on their exact target date', () => {
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, 7), TODAY, ALL).milestone.key, 'd7');
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, 1), TODAY, ALL).milestone.key, 'd1');
+  assert.strictEqual(reminders.goalMilestone('in_progress', TODAY, TODAY, ALL).milestone.key, 'due');
+  assert.strictEqual(reminders.goalMilestone('in_progress', '2026-11-28', TODAY, ALL).milestone.key, 'm1');  // 1 calendar month
+});
+test('goalMilestone: a disabled milestone does not fire', () => {
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, 7), TODAY, { ...ALL, d7: false }).reason, 'not_due');
+});
+test('goalMilestone: closed/no-due excluded; overdue honors interval + toggle', () => {
+  assert.strictEqual(reminders.goalMilestone('completed', shiftDate(TODAY, 1), TODAY, ALL).reason, 'closed');
+  assert.strictEqual(reminders.goalMilestone('missed', shiftDate(TODAY, 1), TODAY, ALL).reason, 'closed');
+  assert.strictEqual(reminders.goalMilestone('in_progress', '', TODAY, ALL).reason, 'no_due');
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, -3), TODAY, ALL).reason, 'overdue');      // 3 % 3 == 0
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, -2), TODAY, ALL).reason, 'not_due');      // 2 % 3 != 0
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, -3), TODAY, { ...ALL, overdue: false }).reason, 'not_due');
+});
+test('goalMilestone: a changed due date recomputes the milestone day', () => {
+  // Same today; due moved from +7 (fires d7) to +5 (no milestone that day).
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, 7), TODAY, ALL).reason, 'fixed');
+  assert.strictEqual(reminders.goalMilestone('in_progress', shiftDate(TODAY, 5), TODAY, ALL).reason, 'not_due');
+});
 
 test('goal: due in 3 days → ONE email, From HR@, To emp, CC info@, with name/due/status', async () => {
   const sent = []; notif.setTransport((req) => sent.push(req));
@@ -232,6 +237,18 @@ test('goal: missing due date is skipped safely (no throw)', async () => {
   const sent = []; notif.setTransport((req) => sent.push(req));
   const r = await reminders.runGoalReminders({ todayDs: TODAY, employees: [completeEmp()], goals: [G({ hr_duedate: '' })] });
   assert.strictEqual(r.skippedNoDate, 1); assert.strictEqual(sent.length, 0);
+});
+test('goal runner: disabling the 3-days milestone in Company Settings suppresses it', async () => {
+  company.getCompany = async () => ({ hr_goalrem_d3: 'false', hr_requireddocs: '' });   // 3-days-before OFF
+  const sent = []; notif.setTransport((req) => sent.push(req));
+  const r = await reminders.runGoalReminders({ todayDs: TODAY, employees: [completeEmp()], goals: [G()] });   // due in 3 → d3
+  assert.strictEqual(r.sent, 0); assert.strictEqual(r.skippedNotDue, 1); assert.strictEqual(sent.length, 0);
+});
+test('goal runner: a 1-calendar-month-before milestone sends with the right wording', async () => {
+  const sent = []; notif.setTransport((req) => sent.push(req));
+  const r = await reminders.runGoalReminders({ todayDs: TODAY, employees: [completeEmp()], goals: [G({ hr_duedate: '2026-11-28' })] });   // +1 month from 2026-10-28
+  assert.strictEqual(r.sent, 1);
+  assert.match(sent[0].body.message.subject, /1 month before due/i);
 });
 
 // ── Ledger: Graph-send failure → not 'sent', retryable, never double-sends ────
@@ -279,13 +296,13 @@ test('goal runner: overdue in-progress goal sends at the interval, not before; c
   assert.deepStrictEqual(ccOf(sent[0]), ['info@crmonce.com']);
 });
 
-test('goal runner: a longer configured interval delays the overdue reminder', async () => {
-  company.getCompany = async () => ({ hr_reminderintervaldays: '5', hr_requireddocs: '' });   // cadence = 5
+test('goal runner: a longer configured OVERDUE interval delays the overdue reminder', async () => {
+  company.getCompany = async () => ({ hr_goaloverdueintervaldays: '5', hr_requireddocs: '' });   // overdue cadence = 5
   const sent = []; notif.setTransport((req) => sent.push(req));
   const r = await reminders.runGoalReminders({ todayDs: TODAY, employees: [completeEmp()], goals: [
     G({ hr_hrgoalid: 'OV3b', hr_status: 'in_progress', hr_duedate: shiftDate(TODAY, -3) }),   // 3 not a multiple of 5 → hold
     G({ hr_hrgoalid: 'OV5',  hr_status: 'in_progress', hr_duedate: shiftDate(TODAY, -5) }),   // 5 = interval → send
   ] });
-  assert.strictEqual(r.intervalDays, 5);
+  assert.strictEqual(r.overdueInterval, 5);
   assert.strictEqual(r.sent, 1); assert.strictEqual(sent.length, 1);
 });

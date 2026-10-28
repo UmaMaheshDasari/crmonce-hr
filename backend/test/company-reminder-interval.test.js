@@ -68,3 +68,24 @@ test('save: changing an unrelated setting leaves the interval at its current val
   assert.strictEqual(blob.hr_reminderintervaldays, '3');     // untouched (carried from current)
   assert.strictEqual(blob.hr_requireddocs, 'PAN Card');      // the actual change applied
 });
+
+// ── Goal reminder settings (milestones + overdue interval) ────────────────────
+test('load: goal-reminder fields are known company settings with ON / default-3 seeds', () => {
+  for (const k of ['hr_goalrem_m3', 'hr_goalrem_m2', 'hr_goalrem_m1', 'hr_goalrem_d15', 'hr_goalrem_d7', 'hr_goalrem_d3', 'hr_goalrem_d1', 'hr_goalrem_due', 'hr_goalrem_overdue']) {
+    assert.ok(company.FIELDS.includes(k), `${k} in FIELDS`);
+    assert.strictEqual(company.COMPANY_DEFAULTS[k], 'true');
+  }
+  assert.ok(company.FIELDS.includes('hr_goaloverdueintervaldays'));
+  assert.strictEqual(company.COMPANY_DEFAULTS.hr_goaloverdueintervaldays, '3');
+});
+
+test('save: a goal-reminder toggle persists (boolean→string) and preserves unrelated settings', async () => {
+  let saved;
+  d365.update = async (_entity, _id, body) => { saved = body; return {}; };
+  const { code } = await invoke(patchHandler(), { body: { hr_goalrem_d7: false }, user: { role: 'super_admin' } });
+  assert.strictEqual(code, 200);
+  const blob = JSON.parse(saved.hr_settingsjson);
+  assert.strictEqual(blob.hr_goalrem_d7, 'false');            // boolean false → 'false' persisted
+  assert.strictEqual(blob.hr_requireddocs, 'Aadhaar Card');   // unrelated company field preserved
+  assert.deepStrictEqual(blob.rolePermissions, { x: 1 });     // non-company blob key preserved
+});

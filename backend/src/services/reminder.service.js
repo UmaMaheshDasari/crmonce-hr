@@ -37,8 +37,13 @@ const GOAL = d365.constructor.entities.goal;         // hr_hrgoals
 // SETTING — company.service `hr_reminderintervaldays`, editable in Company Settings —
 // resolved at run time. It is NEVER hardcoded in the reminder logic.
 const PASSPORT_DEADLINE = String(process.env.PASSPORT_DEADLINE || '2026-11-01').slice(0, 10);
-const GOAL_PRE_OFFSETS = [7, 3, 1];     // fixed pre-due reminder days (spec C)
 const GOAL_CLOSED = new Set(['completed', 'exceeded', 'missed']);   // stop reminding (+ deleted/absent)
+
+// Goal reminder milestones (Company-configurable; keyed off each goal's DUE DATE).
+// Default: every milestone ON, overdue cadence 3 days. Exact-date semantics — a
+// milestone fires on the day `today` equals its target date (so a newly-created goal
+// never gets blasted with milestones whose dates are already in the past).
+const DEFAULT_GOAL_SETTINGS = Object.freeze({ m3: true, m2: true, m1: true, d15: true, d7: true, d3: true, d1: true, due: true, overdue: true, overdueInterval: 3 });
 
 /** The configured reminder interval (days) read from Company Settings. */
 async function resolveIntervalDays() {
@@ -63,6 +68,31 @@ function daysBetween(fromDs, toDs) {
   const a = Date.parse(`${ds10(fromDs)}T00:00:00Z`); const b = Date.parse(`${ds10(toDs)}T00:00:00Z`);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   return Math.round((b - a) / 86400000);
+}
+
+const VALID_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** 'YYYY-MM-DD' shifted by n days (UTC civil math); null if unparseable. */
+function addDays(ds, n) {
+  const d = new Date(`${ds10(ds)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+const lastDayOfMonthUTC = (y, m0) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
+/**
+ * The calendar date `n` months before `dueDs`, clamping the day to the target month's
+ * last day — so month-end and leap years are handled correctly:
+ *   2026-05-31 −3mo → 2026-02-28 · 2028-03-31 −1mo → 2028-02-29 · 2026-01-31 −1mo → 2025-12-31
+ */
+function monthsBefore(dueDs, n) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ds10(dueDs));
+  if (!m) return null;
+  let y = +m[1], mo = +m[2] - 1, day = +m[3];
+  mo -= n;
+  y += Math.floor(mo / 12);
+  mo = ((mo % 12) + 12) % 12;
+  const d = Math.min(day, lastDayOfMonthUTC(y, mo));
+  return `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
 // ── data access (best-effort reads; never throw into the batch) ───────────────
@@ -118,19 +148,62 @@ async function dueByInterval(employeeId, type, todayDs, intervalDays) {
   return gap == null ? true : gap >= intervalDays;
 }
 
+/** The enabled fixed milestones for a due date, each with its target 'YYYY-MM-DD'. */
+function goalFixedMilestones(dueDs, s) {
+  const due = ds10(dueDs);
+  return [
+    { key: 'm3', on: s.m3, date: monthsBefore(due, 3), label: '3 months before due' },
+    { key: 'm2', on: s.m2, date: monthsBefore(due, 2), label: '2 months before due' },
+    { key: 'm1', on: s.m1, date: monthsBefore(due, 1), label: '1 month before due' },
+    { key: 'd15', on: s.d15, date: addDays(due, -15), label: '15 days before due' },
+    { key: 'd7', on: s.d7, date: addDays(due, -7), label: '7 days before due' },
+    { key: 'd3', on: s.d3, date: addDays(due, -3), label: '3 days before due' },
+    { key: 'd1', on: s.d1, date: addDays(due, -1), label: '1 day before due' },
+    { key: 'due', on: s.due, date: due, label: 'due today' },
+  ];
+}
+
 /**
- * Goal reminder decision from the goal's status + due date vs today.
- * @returns {{ send:boolean, overdue:boolean, daysLeft:number|null, reason?:string }}
+ * Goal reminder decision for `today` from the goal's status + due date + settings.
+ * EXACT-DATE: a fixed milestone fires only when today === its target date (computed from
+ * the DUE date; calendar-months are month-end/leap-safe). Overdue fires when today is past
+ * the due date and the days-overdue is a multiple of the configured overdue interval.
+ * PURE — no ledger/network. @returns {{ reason, overdue?, daysLeft?, milestone?:{key,label} }}
+ *   reason: 'closed' | 'no_due' | 'not_due' | 'fixed' | 'overdue'  ('fixed'/'overdue' → send)
  */
-function goalPhase(status, dueDs, todayDs, intervalDays) {
-  if (GOAL_CLOSED.has(String(status || '').toLowerCase())) return { send: false, overdue: false, daysLeft: null, reason: 'closed' };
-  const off = daysBetween(todayDs, dueDs);   // due − today
-  if (off == null) return { send: false, overdue: false, daysLeft: null, reason: 'no_due' };
-  if (off > 0) return { send: GOAL_PRE_OFFSETS.includes(off), overdue: false, daysLeft: off, reason: 'pre_due' };
-  if (off === 0) return { send: true, overdue: false, daysLeft: 0, reason: 'due_today' };
-  // overdue: fire on due+N, due+2N, … (N = configured interval; anchored on the due date, no backfill)
-  const n = Number.isFinite(intervalDays) && intervalDays >= 1 ? intervalDays : 3;
-  return { send: ((-off) % n) === 0, overdue: true, daysLeft: off, reason: 'overdue' };
+function goalMilestone(status, dueDs, todayDs, settings) {
+  const s = settings || DEFAULT_GOAL_SETTINGS;
+  if (GOAL_CLOSED.has(String(status || '').toLowerCase())) return { reason: 'closed' };
+  const due = ds10(dueDs);
+  if (!VALID_DATE.test(due)) return { reason: 'no_due' };
+  const off = daysBetween(todayDs, due);   // due − today
+  if (off == null) return { reason: 'no_due' };
+  if (off < 0) {   // overdue
+    if (!s.overdue) return { reason: 'not_due' };
+    const over = -off;
+    const n = Number.isFinite(s.overdueInterval) && s.overdueInterval >= 1 ? s.overdueInterval : 3;
+    if (over % n !== 0) return { reason: 'not_due' };
+    return { reason: 'overdue', overdue: true, daysLeft: off, milestone: { key: 'od', label: `overdue (${over} day${over === 1 ? '' : 's'})` } };
+  }
+  // today <= due: fire a fixed milestone whose target date is exactly today
+  const t = ds10(todayDs);
+  const hit = goalFixedMilestones(due, s).find(m => m.on && m.date && m.date === t);
+  if (hit) return { reason: 'fixed', overdue: false, daysLeft: off, milestone: { key: hit.key, label: hit.label } };
+  return { reason: 'not_due' };
+}
+
+/** Goal reminder settings resolved from Company Settings (defaults seeded in COMPANY_DEFAULTS). */
+async function resolveGoalSettings() {
+  let c = {};
+  try { c = await require('./company.service').getCompany(); } catch (_) { /* defaults below */ }
+  const on = (k, def) => { const v = c[k]; return (v === undefined || v === null || v === '') ? def : /^(true|1|yes|on)$/i.test(String(v)); };
+  const iRaw = parseInt(c.hr_goaloverdueintervaldays, 10);
+  return {
+    m3: on('hr_goalrem_m3', true), m2: on('hr_goalrem_m2', true), m1: on('hr_goalrem_m1', true),
+    d15: on('hr_goalrem_d15', true), d7: on('hr_goalrem_d7', true), d3: on('hr_goalrem_d3', true), d1: on('hr_goalrem_d1', true),
+    due: on('hr_goalrem_due', true), overdue: on('hr_goalrem_overdue', true),
+    overdueInterval: Number.isFinite(iRaw) && iRaw >= 1 ? iRaw : 3,
+  };
 }
 
 // ── send (routing + idempotency) ──────────────────────────────────────────────
@@ -191,28 +264,29 @@ async function runPassportReminders({ todayDs, employees, intervalDays } = {}) {
 }
 
 // ── C. Goal due dates ─────────────────────────────────────────────────────────
-async function runGoalReminders({ todayDs, employees, goals, intervalDays } = {}) {
+async function runGoalReminders({ todayDs, employees, goals, goalSettings } = {}) {
   const t = ds10(todayDs || today());
   const emps = employees || await activeEmployees();
-  const interval = intervalDays != null ? intervalDays : await resolveIntervalDays();
+  const settings = goalSettings || await resolveGoalSettings();
   const empMap = new Map((emps || []).map(e => [e.hr_hremployeeid, e]));
   const list = goals || await openGoals();
-  const summary = { date: t, intervalDays: interval, scanned: 0, sent: 0, skippedClosed: 0, skippedNotDue: 0, skippedInactive: 0, skippedNoDate: 0, errors: 0 };
+  const summary = { date: t, overdueInterval: settings.overdueInterval, scanned: 0, sent: 0, skippedClosed: 0, skippedNotDue: 0, skippedInactive: 0, skippedNoDate: 0, errors: 0 };
   for (const g of list) {
     summary.scanned++;
     try {
       const emp = empMap.get(g.hr_employeeid);
       if (!emp || !filled(emp.hr_email)) { summary.skippedInactive++; continue; }   // inactive/unknown employee → never remind
-      const phase = goalPhase(g.hr_status, g.hr_duedate, t, interval);
-      if (phase.reason === 'closed') { summary.skippedClosed++; continue; }
-      if (phase.reason === 'no_due') { summary.skippedNoDate++; continue; }
-      if (!phase.send) { summary.skippedNotDue++; continue; }
+      const dec = goalMilestone(g.hr_status, g.hr_duedate, t, settings);
+      if (dec.reason === 'closed') { summary.skippedClosed++; continue; }
+      if (dec.reason === 'no_due') { summary.skippedNoDate++; continue; }
+      if (dec.reason === 'not_due') { summary.skippedNotDue++; continue; }
       const { subject, html } = T.goalReminder({
         employeeName: emp.hr_hremployee1, goalName: g.hr_hrgoal1 || 'Goal', dueDate: ds10(g.hr_duedate),
         status: g.hr_status, statusLabel: g.hr_status, progress: g.hr_progress ?? 0,
-        overdue: phase.overdue, daysLeft: phase.daysLeft, portalUrl: appUrl ? `${appUrl}/goals` : '',
+        overdue: !!dec.overdue, daysLeft: dec.daysLeft, milestoneLabel: dec.milestone && dec.milestone.label, portalUrl: appUrl ? `${appUrl}/goals` : '',
       });
-      // Per-goal-per-day idempotency: the goal id is part of the ledger type (fits hr_Type[60]).
+      // Per-goal-per-DAY idempotency: a milestone's target is a single calendar day, so the
+      // goal id + today's date is a unique key (goal id fits hr_Type[60]); same-day re-runs dedupe.
       const r = await send({ employeeId: g.hr_employeeid, email: emp.hr_email, type: `${TYPE.goal}:${g.hr_hrgoalid}`, dateKey: t, subject, html });
       if (r?.sent) summary.sent++;
     } catch (e) { summary.errors++; global.logger?.warn?.(`[reminders] goal ${g.hr_hrgoalid}: ${e.message}`); }
@@ -233,6 +307,7 @@ async function runAll(opts = {}) {
 module.exports = {
   runProfileReminders, runPassportReminders, runGoalReminders, runAll,
   // pure helpers (tested)
-  goalPhase, isPassportComplete, dueByInterval, daysBetween, resolveIntervalDays,
-  PASSPORT_DEADLINE, GOAL_PRE_OFFSETS, GOAL_CLOSED, TYPE,
+  goalMilestone, goalFixedMilestones, monthsBefore, addDays, resolveGoalSettings,
+  isPassportComplete, dueByInterval, daysBetween, resolveIntervalDays,
+  PASSPORT_DEADLINE, GOAL_CLOSED, DEFAULT_GOAL_SETTINGS, TYPE,
 };

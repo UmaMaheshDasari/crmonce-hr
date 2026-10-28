@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { companyApi } from '../../api/endpoints';
 import { REMINDER_INTERVAL, validateReminderInterval } from '../../utils/reminder-settings';
+import { GOAL_MILESTONES, GOAL_OVERDUE_INTERVAL, normalizeGoalToggles } from '../../utils/goal-reminder-settings';
 import { CurrencyDollarIcon, GlobeAltIcon, ClockIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import PayrollSettingsPage from '../payroll/PayrollSettingsPage';
@@ -69,6 +70,18 @@ const SECTIONS = [
       },
     ],
   },
+  {
+    title: 'Goal Reminder Settings',
+    hint: 'Reminder emails are sent relative to each goal’s DUE DATE. Enable the milestones you want; overdue reminders repeat at the interval below.',
+    fields: [
+      ...GOAL_MILESTONES.map(m => ({ name: m.key, label: m.label, type: 'checkbox' })),
+      {
+        name: GOAL_OVERDUE_INTERVAL.key, label: GOAL_OVERDUE_INTERVAL.label, type: 'number',
+        min: GOAL_OVERDUE_INTERVAL.min, max: GOAL_OVERDUE_INTERVAL.max, step: 1,
+        valueAsNumber: true, validate: validateReminderInterval, hint: GOAL_OVERDUE_INTERVAL.help,
+      },
+    ],
+  },
 ];
 
 // react-hook-form validation rules for a field config (required + numeric bounds).
@@ -86,7 +99,10 @@ function GeneralTab() {
   const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm();
   const { data, isLoading } = useQuery({ queryKey: ['company'], queryFn: companyApi.get });
   const company = data?.data;
-  useEffect(() => { if (company) reset(company); }, [company, reset]);
+  // Goal-reminder toggles persist as 'true'/'false' strings; convert to booleans so the
+  // checkboxes bind correctly (a non-empty string like 'false' would otherwise read truthy).
+  const toForm = (c) => (c ? { ...c, ...normalizeGoalToggles(c) } : c);
+  useEffect(() => { if (company) reset(toForm(company)); }, [company, reset]);
 
   const mutation = useMutation({
     mutationFn: (values) => companyApi.update(values),
@@ -108,7 +124,12 @@ function GeneralTab() {
             {section.hint && <p className="text-xs text-gray-400 mt-0.5 normal-case tracking-normal">{section.hint}</p>}
           </div>
           <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {section.fields.map(f => (
+            {section.fields.map(f => f.type === 'checkbox' ? (
+              <label key={f.name} className="flex items-center gap-3 sm:col-span-2 cursor-pointer select-none">
+                <input type="checkbox" {...register(f.name)} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500/20" />
+                <span className="text-sm font-medium text-gray-700">{f.label}</span>
+              </label>
+            ) : (
               <div key={f.name} className={`space-y-1.5 ${f.full ? 'sm:col-span-2' : ''}`}>
                 <label className="block text-sm font-semibold text-gray-700">{f.label}{f.required && <span className="text-red-500 ml-0.5">*</span>}</label>
                 {f.textarea ? (
@@ -130,7 +151,7 @@ function GeneralTab() {
         </div>
       ))}
       <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex gap-3 justify-end rounded-b-xl">
-        <button type="button" onClick={() => reset(company)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Reset</button>
+        <button type="button" onClick={() => reset(toForm(company))} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">Reset</button>
         {canEditSettings && <button type="submit" disabled={mutation.isPending || !isDirty}
           className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-medium rounded-xl hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/25 transition-all">
           {mutation.isPending ? 'Saving…' : 'Save Changes'}

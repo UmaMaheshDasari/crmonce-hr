@@ -525,10 +525,14 @@ function passportReminder(d) {
 }
 
 function goalReminder(d) {
+  const label = d.milestoneLabel ? String(d.milestoneLabel) : null;   // configured milestone, e.g. "3 months before due"
   const phaseText = d.overdue
     ? `This goal is <strong>past its due date</strong> and is still <strong>${esc(d.statusLabel || d.status || 'open')}</strong>.`
-    : (d.daysLeft === 0 ? 'This goal is <strong>due today</strong>.' : `This goal is due in <strong>${esc(d.daysLeft)}</strong> day(s).`);
-  const subject = `Goal reminder: ${d.goalName} — ${d.overdue ? 'overdue' : (d.daysLeft === 0 ? 'due today' : `due in ${d.daysLeft} day(s)`)}`;
+    : (label
+      ? `Reminder: this goal milestone is <strong>${esc(label)}</strong>.`
+      : (d.daysLeft === 0 ? 'This goal is <strong>due today</strong>.' : `This goal is due in <strong>${esc(d.daysLeft)}</strong> day(s).`));
+  const suffix = label || (d.overdue ? 'overdue' : (d.daysLeft === 0 ? 'due today' : `due in ${d.daysLeft} day(s)`));
+  const subject = `Goal reminder: ${d.goalName} — ${suffix}`;
   const content =
     `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Dear ${esc(d.employeeName || 'Colleague')},</p>` +
     banner(phaseText, d.overdue ? 'warn' : 'info') +
