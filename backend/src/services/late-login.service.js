@@ -287,12 +287,41 @@ function permissionMinutes({ requestType, ref, time }) {
  */
 async function emailLateLoginInfoToHR({ employeeId, employeeName, date, expectedTime, actualTime, reason, remarks }) {
   const [emp, hrs] = await Promise.all([getEmployee(employeeId), hrEmails()]);
-  const to = (hrs || []).filter(Boolean);
-  if (!to.length) { global.logger?.warn?.('[late-login] HR info email skipped: no HR recipients'); return; }
 
-  // Sender = the configured HR mailbox. ALL Late Login notifications route from HR (spec §C),
-  // superseding the legacy employee-origin rule for this submit-info email.
-  const from = hrSender();
+  const info = infoSender();
+  const norm = (e) => String(e || '').trim().toLowerCase();
+  const submitter = norm(emp?.hr_email);
+
+  // Sender = the submitting employee's VERIFIED company mailbox (spec §A). If it can't be
+  // verified/used, employeeFrom returns the safe fallback — FROM info@ with Reply-To set to
+  // the employee when the address is valid — never spoofing the employee's address.
+  const origin = await requestNotify.employeeFrom(emp?.hr_email);   // { from } | { from: info, replyTo? }
+
+  // TO = active HR / Super Admin, EXCLUDING the submitting employee AND info@ (normalized +
+  // de-duplicated) so the submitter is never a recipient and info@ reaches TO only via the
+  // explicit fallback below.
+  const excluded = new Set([submitter, norm(info)].filter(Boolean));
+  const seen = new Set();
+  let to = [];
+  for (const e of (hrs || [])) {
+    const n = norm(e);
+    if (!n || excluded.has(n) || seen.has(n)) continue;
+    seen.add(n); to.push(e);
+  }
+  // Fallback: excluding the submitter left no HR recipient → send to info@ instead of
+  // skipping — UNLESS info@ is ALREADY the sender (the employee mailbox was unusable, so it
+  // fell back to info@). info@ must never email itself, so in that exact case skip and log a
+  // MASKED reason (domain only — never a full address or personal data). Still sent whenever
+  // any valid recipient remains (we only reach here when the HR list is empty).
+  if (!to.length) {
+    if (info && norm(origin.from) !== norm(info)) {
+      to = [info];
+    } else {
+      const domain = String(emp?.hr_email || '').split('@')[1] || 'unknown';
+      global.logger?.warn?.(`[late-login] HR info email skipped: no valid recipient (sender=info@, no HR) — submitter ***@${domain}`);
+      return;
+    }
+  }
 
   const { subject, html } = T.lateLoginInfo({
     // Show the HUMAN Employee ID (EMP1039), never the Dataverse GUID passed in as employeeId.
@@ -303,9 +332,12 @@ async function emailLateLoginInfoToHR({ employeeId, employeeName, date, expected
     expectedTime: time.to12h(expectedTime) || expectedTime, actualTime: time.to12h(actualTime) || actualTime,
     lateBy: lateByMinutes(expectedTime, actualTime), reason, remarks,
   });
-  const cc = mergeCc([infoSender()], { excludeTo: to, from });   // §A: INFO mailbox CC'd on the submission
-  const r = await notif.sendEmail(to, subject, html, { from, cc, saveToSentItems: false, meta: { type: 'late_login_info' } });
-  global.logger?.[r?.success ? 'info' : 'error'](`[late-login] HR info email FROM ${from} → ${to.join(',')} (cc: ${cc.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
+
+  // CC = info@ ONLY when the sender is not INFO itself AND the TO line does not already
+  // include INFO — never CC a mailbox that is the sender, never double-list info@.
+  const cc = (norm(origin.from) !== norm(info) && !to.some(e => norm(e) === norm(info))) ? [info] : [];
+  const r = await notif.sendEmail(to, subject, html, { ...origin, cc, saveToSentItems: false, meta: { type: 'late_login_info' } });
+  global.logger?.[r?.success ? 'info' : 'error'](`[late-login] HR info email FROM ${origin.from} → ${to.join(',')} (cc: ${cc.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
 }
 
 /** Does the employee have ANY punch (a valid Check-In) on `date`? Reads attendance in

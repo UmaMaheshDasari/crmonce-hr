@@ -334,5 +334,5 @@ module.exports = {
   notifyNewRequest, emailApplyAcknowledgement, emailCorrectionRequestToHR, emailDecisionToEmployee,
   getApprovers, isPlaceholderEmail, getLeaveBalance, approvalUrls,
   isAuthorizedApprovalRole, canActOnApproval, AUTHORIZED_APPROVAL_ROLES,
-  employeeIdOf, employeeCardInfo,
+  employeeIdOf, employeeCardInfo, employeeFrom,
 };

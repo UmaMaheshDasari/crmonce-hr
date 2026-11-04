@@ -196,8 +196,8 @@ test('lateByMinutes: actual − expected, no grace subtracted', () => {
   assert.strictEqual(lateLogin.lateByMinutes('', ''), null);
 });
 
-// ── HR information email: FROM employee mailbox, TO HR, no buttons ──────────
-test('emailLateLoginInfoToHR: FROM the HR mailbox (§C), TO HR, information-only', async () => {
+// ── HR information email: FROM the submitting employee's mailbox, TO HR, no buttons ──
+test('emailLateLoginInfoToHR: FROM the submitting employee mailbox, TO HR, CC info@, information-only', async () => {
   d365.getByIdOptional = async (entity) => (entity === EMP
     ? { hr_email: 'vishwesh@crmonce.com', hr_hremployee1: 'Boina Vishwesh', hr_department: 'ADM', hr_employeeid: 'EMP1039' } : {});
   d365.getList = async (entity) => (entity === EMP
@@ -210,9 +210,9 @@ test('emailLateLoginInfoToHR: FROM the HR mailbox (§C), TO HR, information-only
     expectedTime: '09:00', actualTime: '10:15', reason: 'Bank work', remarks: '',
   });
   assert.strictEqual(sent.length, 1, 'one HR information email');
-  assert.strictEqual(sent[0].req.sender, 'HR@crmonce.com');                 // §C: ALL Late Login mail FROM the HR mailbox
-  assert.deepStrictEqual(toOf(sent[0].req).sort(), ['admin@crmonce.com', 'hr@crmonce.com']);   // TO HR
-  assert.deepStrictEqual(ccOf(sent[0].req), ['info@crmonce.com']);          // §A: INFO mailbox CC'd on the submission
+  assert.strictEqual(sent[0].req.sender, 'vishwesh@crmonce.com');           // FROM the submitting employee's verified mailbox
+  assert.deepStrictEqual(toOf(sent[0].req).sort(), ['admin@crmonce.com', 'hr@crmonce.com']);   // TO HR (submitter not in this list)
+  assert.deepStrictEqual(ccOf(sent[0].req), ['info@crmonce.com']);          // CC info@ only
   assert.strictEqual(sent[0].ctx.meta.type, 'late_login_info');
   assert.strictEqual(hasButtons(sent[0].ctx.html), false);
   assert.match(sent[0].ctx.subject, /^Late Login Information - Boina Vishwesh/);
@@ -220,14 +220,16 @@ test('emailLateLoginInfoToHR: FROM the HR mailbox (§C), TO HR, information-only
   assert.ok(!/d79c1f3c/.test(sent[0].ctx.html), 'the GUID is never shown');
 });
 
-test('emailLateLoginInfoToHR: sends from HR regardless of the employee mailbox (§C — HR sender, not employee)', async () => {
+test('emailLateLoginInfoToHR: unusable (external) employee mailbox → FROM info@ + Reply-To, still delivered (never blocked)', async () => {
   d365.getByIdOptional = async () => ({ hr_email: 'someone@gmail.com', hr_hremployee1: 'X' });
   d365.getList = async () => ({ data: [{ hr_email: 'hr@crmonce.com' }] });
   const sent = [];
   notif.setTransport((req, ctx) => sent.push({ req, ctx }));
   await lateLogin.emailLateLoginInfoToHR({ employeeId: 'E1', employeeName: 'X', date: '2026-08-14', expectedTime: '09:00', actualTime: '10:00', reason: 'r' });
-  assert.strictEqual(sent.length, 1, 'HR sender is used, so an external employee mailbox no longer blocks the email');
-  assert.strictEqual(sent[0].req.sender, 'HR@crmonce.com');
+  assert.strictEqual(sent.length, 1, 'safe INFO fallback sender, so an external employee mailbox no longer blocks the email');
+  assert.strictEqual(sent[0].req.sender, 'info@crmonce.com');               // safe fallback (never spoof the external address)
+  assert.strictEqual(sent[0].ctx.replyTo, 'someone@gmail.com');             // Reply-To = employee
+  assert.deepStrictEqual(ccOf(sent[0].req), []);                            // never CC info@ when it is the sender
 });
 
 // ── Daily verification job ──────────────────────────────────────────────────
