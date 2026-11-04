@@ -15,7 +15,7 @@ import toast from 'react-hot-toast';
 const CFG = {
   late_login: {
     title: 'Late Login',
-    lead: 'Record a late login — informational only (no approval). Attendance stays Present; no leave/salary deducted.',
+    lead: 'Record a late login.',
     raise: 'Raise Late Login', request: 'Request Late Login', modalNew: 'Late Login Request', modalEdit: 'Edit Late Login',
     shiftLabel: 'Shift Start Time', timeLabel: 'Late Login Time', diffLabel: 'Late By',
     colShift: 'Shift Start', colTime: 'Late Login',
@@ -126,9 +126,7 @@ function SubmitModal({ requestType, cfg, isHR, employees, policy, editRecord, on
         <div className="p-6 space-y-4">
           <div className="text-xs text-gray-500 space-y-1">
             <p>Max <b>2 hours</b> per request; for longer, please apply for Leave.</p>
-            {requestType === 'late_login' ? (
-              <p>This is an <b>information-only</b> record — no approval, no monthly limit, and no leave/salary deduction.</p>
-            ) : (
+            {requestType === 'early_logout' && (
               <>
                 <p>Monthly policy (per type): first <b>2 auto-approved</b> · <b>3rd</b> needs manager approval · <b>4th+</b> deducts <b>0.5 day CL</b> (HR review if CL is insufficient; salary deduction deferred).</p>
                 {policy?.usage && <p className="font-semibold text-gray-700">This month: {policy.usage.used} used · {policy.usage.autoRemaining} automatic {policy.usage.autoRemaining === 1 ? 'permission' : 'permissions'} remaining.</p>}

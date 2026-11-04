@@ -271,7 +271,7 @@ export default function AdminDashboard() {
         {/* Late Login is INFORMATIONAL-only (no approval) — shown as a note, never as an approve action */}
         {lateLoginInfoCount > 0 && (
           <div className="mb-4 flex items-center justify-between gap-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-            <p className="text-xs text-slate-600"><span className="font-semibold text-slate-700">Late Login:</span> {lateLoginInfoCount} submitted this month — <span className="italic">information only, no approval required</span>.</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold text-slate-700">Late Login:</span> {lateLoginInfoCount} submitted this month.</p>
             <Link to="/late-login" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 whitespace-nowrap">View →</Link>
           </div>
         )}

@@ -82,7 +82,6 @@ const SECTIONS = [
   },
   {
     title: 'Late Login',
-    hint: 'Employees submit a Late Login request (manager → HR); attendance stays Present and no leave/salary is deducted.',
     fields: [
       { name: 'hr_gracetime', label: 'Grace Time (minutes)', type: 'number', hint: 'Minutes after shift start before a login is "late". Default 15.' },
       { name: 'hr_maxlatelogins', label: 'Maximum Late Logins Per Month', type: 'number', hint: 'A warning is shown beyond this; HR can still approve. Default 3.' },
