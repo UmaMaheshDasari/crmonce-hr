@@ -96,7 +96,7 @@ test('recordPunchLateEvent: a PRE-effective date is skipped (no record, no debit
 test('recordPunchLateEvent: on/after the effective date creates a record', async () => {
   const H = harness({ priorQualifying: 0 });
   const r = await rec();
-  assert.strictEqual(r.status, 'auto_approved');
+  assert.strictEqual(r.status, 'submitted', 'auto-detected Late Login is information-only (exempt from the monthly policy)');
   assert.strictEqual(H.records.length, 1);
 });
 
@@ -119,7 +119,7 @@ test('record-create FAILS once → retry creates the record (no duplicate, no CL
   assert.strictEqual(H.records.length, 5, 'no record yet');
   assert.strictEqual(H.net(), 0, 'no CL written');
   const r2 = await rec();                                  // retry
-  assert.strictEqual(r2.status, 'auto_approved');
+  assert.strictEqual(r2.status, 'submitted');
   assert.strictEqual(H.records.length, 6, 'record now exists');
   assert.strictEqual(H.net(), 0, 'still no CL');
 });

@@ -108,14 +108,22 @@ test('permissionMinutes (edit path): overnight-safe forward distance', () => {
 });
 
 // ── create(): Early Logout 2-hour rule + record shape ────────────────────────
-test('Early Logout 1 hour early → allowed; stored as a permission record (type=early_logout, status=submitted)', async () => {
+test('Early Logout 1 hour early (post-effective) → auto_approved under the monthly policy; record shape preserved', async () => {
   const creates = stub({ shiftStart: '09:00', shiftEnd: '18:00' });
-  const r = await earlyLogout('17:00');
-  assert.strictEqual(r.record.status, 'submitted');
+  const r = await earlyLogout('17:00');   // TODAY is post-effective (Early Logout policy is live from 2026-11-01)
+  assert.strictEqual(r.record.status, 'auto_approved');   // Early Logout KEEPS the monthly policy
   const payload = creates[0].payload;
   assert.strictEqual(payload.hr_requesttype, 'early_logout');
   assert.strictEqual(payload.hr_expectedtime, '18:00', 'reference time stored is the shift END');
   assert.strictEqual(payload.hr_actualtime, '17:00');
+  assert.strictEqual(payload.hr_status, 'auto_approved');
+});
+
+test('Early Logout PRE-effective (before 2026-11-01) → legacy information-only submitted', async () => {
+  const creates = stub({ shiftStart: '09:00', shiftEnd: '18:00' });
+  const r = await earlyLogout('17:00', { date: '2026-10-31' });   // pre-effective date
+  assert.strictEqual(r.record.status, 'submitted');
+  assert.strictEqual(creates[0].payload.hr_requesttype, 'early_logout');
 });
 
 test('Early Logout EXACTLY 2 hours early → allowed (boundary inclusive)', async () => {

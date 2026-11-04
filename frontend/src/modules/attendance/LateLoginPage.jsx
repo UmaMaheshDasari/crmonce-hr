@@ -126,8 +126,14 @@ function SubmitModal({ requestType, cfg, isHR, employees, policy, editRecord, on
         <div className="p-6 space-y-4">
           <div className="text-xs text-gray-500 space-y-1">
             <p>Max <b>2 hours</b> per request; for longer, please apply for Leave.</p>
-            <p>Monthly policy (per type): first <b>2 auto-approved</b> · <b>3rd</b> needs manager approval · <b>4th+</b> deducts <b>0.5 day CL</b> (HR review if CL is insufficient; salary deduction deferred).</p>
-            {policy?.usage && <p className="font-semibold text-gray-700">This month: {policy.usage.used} used · {policy.usage.autoRemaining} automatic {policy.usage.autoRemaining === 1 ? 'permission' : 'permissions'} remaining.</p>}
+            {requestType === 'late_login' ? (
+              <p>This is an <b>information-only</b> record — no approval, no monthly limit, and no leave/salary deduction.</p>
+            ) : (
+              <>
+                <p>Monthly policy (per type): first <b>2 auto-approved</b> · <b>3rd</b> needs manager approval · <b>4th+</b> deducts <b>0.5 day CL</b> (HR review if CL is insufficient; salary deduction deferred).</p>
+                {policy?.usage && <p className="font-semibold text-gray-700">This month: {policy.usage.used} used · {policy.usage.autoRemaining} automatic {policy.usage.autoRemaining === 1 ? 'permission' : 'permissions'} remaining.</p>}
+              </>
+            )}
           </div>
           {isHR && !isEdit && (
             <div><label className="block text-xs font-semibold text-gray-600 mb-1">Employee</label>

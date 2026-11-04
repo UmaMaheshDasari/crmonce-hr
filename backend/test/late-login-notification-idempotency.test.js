@@ -1,5 +1,6 @@
 /**
- * Late Login notification idempotency + retry (spec §3), driven through the REAL notification
+ * Permission-policy notification idempotency + retry (EARLY LOGOUT — Late Login is exempt and
+ * never notified), driven through the REAL notification
  * ledger with an in-memory store (no network, no Dataverse):
  *   • A failed send is recorded 'failed' (retryable) — never reported as delivered.
  *   • A later retry re-sends exactly once, then a successful send is never duplicated (re-scan /
@@ -47,7 +48,7 @@ beforeEach(() => {
 });
 afterEach(() => { ledger.setStore(); Object.assign(d365, { getByIdOptional: orig.gio, getList: orig.gl }); Object.assign(notif, { sendEmail: orig.se, notifyUser: orig.nu, broadcast: orig.bc }); });
 
-const confirm1st = (date) => lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Late Login', requestType: 'late_login', date, decision: PP.decide(0), requested: true });
+const confirm1st = (date) => lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Early Logout', requestType: 'early_logout', date, decision: PP.decide(0), requested: true });
 
 test('a failed send is recorded failed (retryable), NOT sent', async () => {
   nextResults = [false];                                  // first attempt fails

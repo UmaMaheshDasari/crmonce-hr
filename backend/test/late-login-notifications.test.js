@@ -1,13 +1,14 @@
 /**
- * Revised Late Login email behaviour (spec §1–§3).
+ * Monthly permission-policy notifications (EARLY LOGOUT only; revised policy — no penalty).
  *   1st–3rd qualifying event:
  *     • employee SUBMITTED a request (requested:true)  → a normal confirmation email (no warning).
  *     • NO request (punch-only, requested:false)       → a "late without a request" warning.
- *   4th → HR warning · 5th → Super Admin final warning · 6th+ → HR/manager escalation — ALWAYS,
- *   regardless of whether a request was submitted.
- * The 1st–3rd emails are keyed by the EVENT DATE (so the three distinct events are not collapsed
- * onto one monthly key); the 4th/5th are keyed per month; 6th+ per event count. A failed send
- * stays retryable (recorded 'failed', never 'sent'). NO leave/salary/CL is ever touched.
+ *   4th → HR warning · 5th → Super Admin final warning · 6th+ → HR/manager escalation — ALWAYS.
+ * The 1st–3rd emails are keyed by the EVENT DATE; 4th/5th per month; 6th+ per event count.
+ *
+ * LATE LOGIN is INFORMATION-ONLY and EXEMPT: notifyPolicyOutcome never fires for it, create()
+ * sends only the HR info email (emailLateLoginInfoToHR), and the punch scanner creates a plain
+ * 'submitted' record with NO policy notification. NO leave/salary/CL is ever touched.
  * d365 / leave engine / notifications stubbed; no network.
  */
 process.env.NODE_ENV = 'test';
@@ -30,13 +31,15 @@ const EMP = d365.constructor.entities.employee;
 const LATE = d365.constructor.entities.lateLogin;
 const flushUntil = async (fn, tries = 100) => { for (let i = 0; i < tries; i++) { if (fn()) return; await new Promise(r => setImmediate(r)); } };
 
-let orig, sent, ledgerWrites;
+let orig, sent, ledgerWrites, mailed;
 beforeEach(() => {
   orig = { gio: d365.getByIdOptional, gl: d365.getList, cr: d365.create, so: ledger.sendOnce, add: leaveEngine.addLedgerEntry, se: notif.sendEmail, nu: notif.notifyUser, bc: notif.broadcast };
   sent = [];
   ledgerWrites = 0;
-  // Capture every email the policy tries to send (idempotency is exercised separately via the real ledger).
+  mailed = [];
+  // Capture every policy email (ledger.sendOnce) and every direct email (notif.sendEmail).
   ledger.sendOnce = async (o) => { sent.push(o); return { sent: true }; };
+  notif.sendEmail = async (to, subject, html, opts) => { mailed.push({ to, subject, opts }); return { success: true }; };
   leaveEngine.addLedgerEntry = async () => { ledgerWrites++; return {}; };   // must stay 0 at every tier
   notif.notifyUser = () => {}; notif.broadcast = () => {};
   // Employee + manager lookups; role-filtered recipient queries.
@@ -47,8 +50,6 @@ beforeEach(() => {
   };
   d365.getList = async (entity, opts) => {
     const f = String(opts?.filter || '');
-    // Role filters carry NUMERIC option-set values, so distinguish by shape: hrEmails() ORs two
-    // roles (super_admin OR hr_manager); superAdminEmails() queries a single role.
     if (entity === EMP && / or hr_role eq /.test(f)) return { data: [{ hr_email: 'hrteam@crmonce.com' }] };   // distinct from the HR@ sender
     if (entity === EMP) return { data: [{ hr_email: 'admin@crmonce.com' }] };
     return { data: [] };
@@ -56,10 +57,11 @@ beforeEach(() => {
 });
 afterEach(() => { Object.assign(d365, { getByIdOptional: orig.gio, getList: orig.gl, create: orig.cr }); ledger.sendOnce = orig.so; leaveEngine.addLedgerEntry = orig.add; Object.assign(notif, { sendEmail: orig.se, notifyUser: orig.nu, broadcast: orig.bc }); });
 
-const notify = (over) => lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Late Login', requestType: 'late_login', date: '2026-11-05', decision: PP.decide(0), requested: false, ...over });
+// The policy notifier is exercised with EARLY LOGOUT (the only tiered type).
+const notify = (over) => lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Early Logout', requestType: 'early_logout', date: '2026-11-05', decision: PP.decide(0), requested: false, ...over });
 
 // ── 1st–3rd: confirmation when requested ─────────────────────────────────────
-test('1st/2nd/3rd WITH a submitted request → confirmation email (no warning), keyed per event date', async () => {
+test('Early Logout 1st/2nd/3rd WITH a request → confirmation email (no warning), keyed per event date', async () => {
   for (const [prior, date] of [[0, '2026-11-03'], [1, '2026-11-10'], [2, '2026-11-18']]) {
     sent = [];
     await notify({ date, decision: PP.decide(prior), requested: true });
@@ -74,7 +76,7 @@ test('1st/2nd/3rd WITH a submitted request → confirmation email (no warning), 
 });
 
 // ── 1st–3rd: no-request warning when NOT requested ───────────────────────────
-test('1st/2nd/3rd WITHOUT a request → "late without a request" warning, keyed per event date', async () => {
+test('Early Logout 1st/2nd/3rd WITHOUT a request → "without a request" warning, keyed per event date', async () => {
   for (const [prior, date] of [[0, '2026-11-04'], [1, '2026-11-11'], [2, '2026-11-20']]) {
     sent = [];
     await notify({ date, decision: PP.decide(prior), requested: false });
@@ -97,7 +99,7 @@ test('two different-date events are NOT collapsed onto one key (count alone is n
 
 // ── 4th / 5th / 6th: preserved escalations, regardless of request status ──────
 for (const requested of [true, false]) {
-  test(`4th → HR warning (cc HR) regardless of request status (requested=${requested}), keyed per month`, async () => {
+  test(`Early Logout 4th → HR warning (cc HR) regardless of request status (requested=${requested}), keyed per month`, async () => {
     await notify({ date: '2026-11-21', decision: PP.decide(3), requested });
     assert.strictEqual(sent.length, 1);
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_HR_WARNING');
@@ -107,14 +109,14 @@ for (const requested of [true, false]) {
     assert.strictEqual(ledgerWrites, 0);
   });
 
-  test(`5th → Super Admin FINAL warning regardless of request status (requested=${requested})`, async () => {
+  test(`Early Logout 5th → Super Admin FINAL warning regardless of request status (requested=${requested})`, async () => {
     await notify({ date: '2026-11-22', decision: PP.decide(4), requested });
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_FINAL_WARNING');
     assert.deepStrictEqual(sent[0].cc, ['admin@crmonce.com', 'info@crmonce.com'], 'super_admin recipients + §E info@');
     assert.strictEqual(sent[0].date, '2026-11-01');
   });
 
-  test(`6th → HR/manager escalation regardless of request status (requested=${requested})`, async () => {
+  test(`Early Logout 6th → HR/manager escalation regardless of request status (requested=${requested})`, async () => {
     await notify({ date: '2026-11-23', decision: PP.decide(5), requested });
     assert.strictEqual(sent[0].type, 'LATE_LOGIN_ESCALATION_6');
     assert.ok(sent[0].cc.includes('boss@crmonce.com') && sent[0].cc.includes('hrteam@crmonce.com') && sent[0].cc.includes('info@crmonce.com'), 'manager + HR + §E info@ cc');
@@ -133,8 +135,17 @@ test('missing employee mailbox → the email is attempted with a null recipient 
   assert.strictEqual(sent[0].to, null);
 });
 
-// ── End-to-end wiring: create() = requested, recordPunchLateEvent() = not requested ──
-test('create() wires requested:true → the 1st event sends a CONFIRMATION', async () => {
+// ── LATE LOGIN EXEMPTION: the monthly notifier never fires for Late Login ─────
+test('EXEMPT: notifyPolicyOutcome does NOTHING for late_login (no policy email at any tier)', async () => {
+  for (const prior of [0, 3, 5]) {
+    sent = [];
+    await lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Late Login', requestType: 'late_login', date: '2026-11-05', decision: PP.decide(prior), requested: true });
+    assert.strictEqual(sent.length, 0, `late_login prior=${prior} → no policy notification`);
+  }
+});
+
+// ── End-to-end wiring ────────────────────────────────────────────────────────
+test('create() Early Logout wires requested:true → the 1st event sends a CONFIRMATION', async () => {
   d365.getByIdOptional = async (entity) => (entity === EMP
     ? { hr_hremployeeid: 'E1', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00', hr_email: 'emp@crmonce.com', hr_hremployee1: 'Emp' } : {});
   d365.getList = async (entity, opts) => {
@@ -144,30 +155,48 @@ test('create() wires requested:true → the 1st event sends a CONFIRMATION', asy
     return { data: [] };
   };
   d365.create = async () => ({ hr_lateloginid: 'REC1' });
-  await lateLogin.create({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', actualTime: '09:30', reason: 'r', requestType: 'late_login' });
+  await lateLogin.create({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', actualTime: '17:00', reason: 'r', requestType: 'early_logout' });
   await flushUntil(() => sent.length >= 1);
   assert.strictEqual(sent[0].type, 'LATE_LOGIN_CONFIRM');
   assert.strictEqual(ledgerWrites, 0);
 });
 
-test('recordPunchLateEvent() wires requested:false → the 1st punch event sends a NO-REQUEST warning', async () => {
+test('create() Late Login → status submitted, HR info email only, NO policy notification', async () => {
+  d365.getByIdOptional = async (entity) => (entity === EMP
+    ? { hr_hremployeeid: 'E1', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00', hr_email: 'emp@crmonce.com', hr_hremployee1: 'Emp' } : {});
+  d365.getList = async (entity, opts) => {
+    const f = String(opts?.filter || '');
+    if (entity === LATE && /hr_date eq/.test(f)) return { data: [] };
+    if (entity === LATE && /hr_month eq/.test(f)) return { data: [] };
+    if (entity === EMP) return { data: [{ hr_email: 'hr@crmonce.com' }] };   // hrEmails for the info email
+    return { data: [] };
+  };
+  d365.create = async () => ({ hr_lateloginid: 'REC1' });
+  const r = await lateLogin.create({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', actualTime: '09:30', reason: 'r', requestType: 'late_login' });
+  assert.strictEqual(r.record.status, 'submitted');
+  await flushUntil(() => mailed.length >= 1);
+  assert.strictEqual(sent.length, 0, 'NO monthly-policy notification for Late Login');
+  assert.ok(mailed.some(m => m.opts?.meta?.type === 'late_login_info'), 'the HR information email was sent');
+  assert.strictEqual(ledgerWrites, 0);
+});
+
+test('recordPunchLateEvent() Late Login → information-only submitted record, NO notification', async () => {
   d365.getList = async (entity, opts) => {
     const f = String(opts?.filter || '');
     if (entity === LATE && /hr_date eq/.test(f)) return { data: [] };       // existingLateFor → none
-    if (entity === LATE && /hr_month eq/.test(f)) return { data: [] };      // 0 prior
     if (entity === EMP) return { data: [{ hr_email: 'hr@crmonce.com' }] };
     return { data: [] };
   };
   d365.create = async () => ({ hr_lateloginid: 'AUTO1' });
   const r = await lateLogin.recordPunchLateEvent({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', firstPunch: '09:30', shiftStart: '09:00' });
-  assert.strictEqual(r.status, PP.STATUS.AUTO_APPROVED);
-  await flushUntil(() => sent.length >= 1);
-  assert.strictEqual(sent[0].type, 'LATE_LOGIN_NO_REQUEST');
+  assert.strictEqual(r.status, 'submitted', 'auto-detected Late Login is information-only');
+  await new Promise(res => setImmediate(res));
+  assert.strictEqual(sent.length, 0, 'no monthly-policy notification for an auto-detected Late Login');
   assert.strictEqual(ledgerWrites, 0);
 });
 
-// ── §2: ambiguous / failed permission lookup must NOT produce a warning ───────
-test('recordPunchLateEvent: a FAILED permission lookup aborts (no record, no warning) for retry', async () => {
+// ── §2: ambiguous / failed permission lookup must NOT produce a record ────────
+test('recordPunchLateEvent: a FAILED permission lookup aborts (no record) for retry', async () => {
   let created = 0;
   d365.getList = async (entity, opts) => {
     const f = String(opts?.filter || '');
@@ -178,16 +207,16 @@ test('recordPunchLateEvent: a FAILED permission lookup aborts (no record, no war
   await assert.rejects(() => lateLogin.recordPunchLateEvent({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', firstPunch: '09:30', shiftStart: '09:00' }), /503/);
   await new Promise(r => setImmediate(r));
   assert.strictEqual(created, 0, 'no record created on an ambiguous lookup');
-  assert.strictEqual(sent.length, 0, 'no warning sent on an ambiguous lookup');
+  assert.strictEqual(sent.length, 0, 'no notification on an ambiguous lookup');
 });
 
-// ── §2: a late-arriving request after an auto record exists → duplicate-guarded (409), no contradiction ──
-test('request submitted AFTER a punch auto record exists → rejected 409 (no duplicate/contradictory email)', async () => {
+// ── §2: a late-arriving request after an auto record exists → duplicate-guarded (409) ──
+test('request submitted AFTER a punch auto record exists → rejected 409 (no duplicate record/email)', async () => {
   d365.getByIdOptional = async (entity) => (entity === EMP
     ? { hr_hremployeeid: 'E1', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00', hr_email: 'emp@crmonce.com', hr_hremployee1: 'Emp' } : {});
   d365.getList = async (entity, opts) => {
     const f = String(opts?.filter || '');
-    if (entity === LATE && /hr_date eq/.test(f)) return { data: [{ hr_lateloginid: 'AUTO1', hr_status: 'auto_approved' }] };   // auto record already present
+    if (entity === LATE && /hr_date eq/.test(f)) return { data: [{ hr_lateloginid: 'AUTO1', hr_status: 'submitted' }] };   // auto record already present
     if (entity === LATE && /hr_month eq/.test(f)) return { data: [] };
     return { data: [] };
   };
@@ -195,5 +224,5 @@ test('request submitted AFTER a punch auto record exists → rejected 409 (no du
   await assert.rejects(() => lateLogin.create({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', actualTime: '09:30', reason: 'r', requestType: 'late_login' }), (e) => e.status === 409);
   await new Promise(r => setImmediate(r));
   assert.strictEqual(created, 0, 'the second record is never created');
-  assert.strictEqual(sent.length, 0, 'no confirmation email for the rejected duplicate');
+  assert.strictEqual(sent.length, 0, 'no email for the rejected duplicate');
 });

@@ -56,14 +56,16 @@ test('INFO-owned (no explicit from) resolves the Graph sender to info@crmonce.co
 });
 
 // ── §C: Late Login policy stage email routes from HR ──────────────────────────
-test('Late Login policy stage (4th → HR warning) routes FROM the HR sender', async () => {
+test('Early Logout policy stage (4th → HR warning) routes FROM the HR sender', async () => {
+  // The monthly policy stage emails apply to EARLY LOGOUT (Late Login is exempt); they remain
+  // HR-owned (FROM HR@), unchanged by the Late Login exemption.
   let captured;
   const o = { so: ledger.sendOnce, gio: d365.getByIdOptional, gl: d365.getList };
   ledger.sendOnce = async (opts) => { captured = opts; return { sent: true }; };
   d365.getByIdOptional = async () => ({ hr_email: 'emp@crmonce.com', hr_hremployee1: 'E', _hr_manager_value: null });
   d365.getList = async () => ({ data: [{ hr_email: 'hr@crmonce.com' }] });
   try {
-    await lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'E', label: 'Late Login', requestType: 'late_login', date: '2026-11-05', decision: PP.decide(3), requested: false });
+    await lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'E', label: 'Early Logout', requestType: 'early_logout', date: '2026-11-05', decision: PP.decide(3), requested: false });
     assert.strictEqual(captured.type, 'LATE_LOGIN_HR_WARNING');
     assert.strictEqual(captured.from, 'HR@crmonce.com');
   } finally { ledger.sendOnce = o.so; d365.getByIdOptional = o.gio; d365.getList = o.gl; }

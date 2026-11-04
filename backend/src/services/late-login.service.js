@@ -439,7 +439,11 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
       if (ev.error === 'limit') { const e = new Error(LIMIT_MESSAGE); e.status = 400; throw e; }
     }
   }
-  const policyActive = PP.effectiveFor(ds);
+  // Late Login is INFORMATION-ONLY and exempt from the monthly permission policy — only
+  // Early Logout is tiered/counted. Late Login records therefore stay 'submitted' (no monthly
+  // counting, auto-approval, manager approval, escalation, or CL/salary). Early Logout is
+  // unchanged (policy still applies from the effective date).
+  const policyActive = PP.effectiveFor(ds) && requestType === 'early_logout';
 
   // ── Dedupe-critical section, serialised per (type, employee, date) WITHIN this process ──
   // The duplicate guard, tier decision, CL debit, and record create run under a process-local
@@ -553,6 +557,9 @@ async function superAdminEmails() {
  */
 async function notifyPolicyOutcome({ employeeId, name, label, requestType, date, decision, requested = false }) {
   try {
+    // Defence in depth: the monthly-policy notifications apply ONLY to Early Logout. Late Login
+    // is information-only and must never trigger confirmation/no-request/escalation policy mail.
+    if (requestType === 'late_login') return;
     const stage = decision?.stage || null;
     const n = decision?.n;
     const month = String(date).slice(0, 7);
@@ -744,17 +751,16 @@ async function recordPunchLateEvent({ employeeId, employeeName, date, firstPunch
     const already = await existingLateFor(employeeId, ds, requestType, { strict: true });
     if (already) return { recordId: already.hr_lateloginid, status: already.hr_status, skipped: 'exists' };
 
-    const priorQualifying = await qualifyingCount(employeeId, month, requestType);
-    const decision = PP.decide(priorQualifying);
-    // Revised policy: always auto-approved, NO CL/salary penalty — only the notification escalates.
-    const status = PP.STATUS.AUTO_APPROVED;
-    const managerStatus = '';
+    // Late Login is INFORMATION-ONLY (exempt from the monthly permission policy): the
+    // auto-detected record is stored as 'submitted' with NO monthly counting, NO policy
+    // decision, and NO escalation notification. No CL/leave/salary is ever written.
+    const status = 'submitted';
     let payload = {
       hr_name: `${name || employeeId} · Late Login (auto) · ${ds}`.slice(0, 250),
       hr_employeeid: String(employeeId), hr_employeename: name, hr_date: ds, hr_month: month,
       hr_expectedtime: String(shiftStart || ''), hr_actualtime: String(firstPunch || ''),
       hr_reason: 'Auto-detected late punch-in (no permission request)', hr_remarks: `Punch-in ${firstPunch || ''}`,
-      hr_status: status, hr_managerstatus: managerStatus,
+      hr_status: status, hr_managerstatus: '',
       hr_createdby: AUTO_CREATED_BY, hr_requesttype: requestType, hr_ip: '',
     };
     let created;
@@ -762,12 +768,8 @@ async function recordPunchLateEvent({ employeeId, employeeName, date, firstPunch
       try { created = await d365.create(LATE, payload); break; }
       catch (err) { if (d365._isMissingProperty?.(err)) { const prop = d365._missingPropertyName?.(err); if (prop && payload[prop] !== undefined) { delete payload[prop]; continue; } } throw err; }
     }
-    audit({ category: 'Attendance', type: 'latelogin_auto_detected', title: 'Late Login auto-detected', name, meta: { date: ds, status, policyEvent: decision.n, outcome: decision.outcome } });
-    // Punch-only event → the employee did NOT submit a request (requested:false): 1st–3rd send a
-    // "late without a request" warning; 4th+ send the existing HR/Super Admin/escalation emails.
-    notifyPolicyOutcome({ employeeId, name, label: 'Late Login', requestType, date: ds, status, decision, requested: false })
-      .catch(e => global.logger?.warn?.(`[late-login] auto notify error: ${e.message}`));
-    return { recordId: created.hr_lateloginid, status, decision };
+    audit({ category: 'Attendance', type: 'latelogin_auto_detected', title: 'Late Login auto-detected', name, meta: { date: ds, status } });
+    return { recordId: created.hr_lateloginid, status };
   });
 }
 
