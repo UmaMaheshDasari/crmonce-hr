@@ -174,11 +174,19 @@ async function notifyNewRequest({ type, recordId, actor, details, applyTime, app
     //      • CC WITH an authorized HR/Admin approval role → actionable email WITH
     //        Approve/Reject buttons (they can genuinely approve — the API allows it).
     //      • CC WITHOUT approval access → information-only, NO buttons, NO token/URL.
-    //    The applicant and the selected approver are never re-CC'd.
-    const ccList = (cc || []).filter(c =>
-      c?.email && !isPlaceholderEmail(c.email) &&
-      c.email.toLowerCase() !== actor?.email?.toLowerCase() &&
-      c.email.toLowerCase() !== approver.email.toLowerCase());
+    //    De-duplicate by email (TRIMMED + case-insensitive) against a single "already
+    //    addressed" set seeded with the applicant and the selected approver, so the SAME
+    //    person is NEVER emailed twice for one submission — e.g. someone chosen as BOTH the
+    //    approver (TO) and a CC, or listed twice in CC, gets exactly ONE email.
+    const normEmail = (e) => String(e || '').trim().toLowerCase();
+    const addressed = new Set([normEmail(approver.email), normEmail(actor?.email)].filter(Boolean));
+    const ccList = [];
+    for (const c of (cc || [])) {
+      const e = normEmail(c?.email);
+      if (!e || isPlaceholderEmail(c.email) || addressed.has(e)) continue;
+      addressed.add(e);   // claim it so a later duplicate CC of the same person is skipped
+      ccList.push(c);
+    }
     for (const c of ccList) {
       if (isAuthorizedApprovalRole(c.role)) {
         // Same signed Approve/Reject links as the approver — the backend still validates

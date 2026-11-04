@@ -278,6 +278,30 @@ test('CC that is the applicant or approver is dropped (never self/loop CC)', asy
   assert.strictEqual(sent.filter(s => s.ctx.meta.type === 'leave_new_cc').length, 0);
 });
 
+// ── Dedup: the SAME person must get exactly ONE email even across roles/formatting ──
+// Regression: approver chosen in TO + the same person also in CC (with stray case/space)
+// previously slipped past the case-only exclusion and sent TWO copies.
+test('approver who is ALSO in CC (even with different case/whitespace) → ONE email only', async () => {
+  const sent = await runApply(
+    { id: 'A2', name: 'Uma Mahesh', email: 'umamahesh@crmonce.com' },                              // TO approver = uma
+    [{ id: 'SA', name: 'Uma Mahesh', email: '  UMAMAHESH@crmonce.com ', role: 'super_admin' }],    // same person in CC, messy
+  );
+  const toUma = sent.filter(s => recipientsOf(s.req).some(a => a.trim().toLowerCase() === 'umamahesh@crmonce.com'));
+  assert.strictEqual(toUma.length, 1);                                              // exactly one email reaches uma
+  assert.strictEqual(sent.filter(s => s.ctx.meta.type === 'leave_new_approver').length, 1);
+  assert.strictEqual(sent.filter(s => s.ctx.meta.type.startsWith('leave_new_cc')).length, 0);   // no second (CC) copy
+});
+
+test('same person listed twice in CC → emailed once', async () => {
+  const sent = await runApply(
+    { id: 'A1', name: 'HR Team', email: 'hr@crmonce.com' },
+    [{ id: 'C1', name: 'Peer', email: 'peer@crmonce.com', role: 'employee' },
+     { id: 'C1b', name: 'Peer Again', email: 'PEER@crmonce.com ', role: 'employee' }],   // duplicate of the same mailbox
+  );
+  const toPeer = sent.filter(s => recipientsOf(s.req).some(a => a.trim().toLowerCase() === 'peer@crmonce.com'));
+  assert.strictEqual(toPeer.length, 1);
+});
+
 // ── Role-aware CC: authorized HR/Admin CC gets ACTIONABLE buttons; others FYI-only ──
 // Scenario: Approver = HR Manager; CC = Super Admin + Team Lead (normal employee).
 test('CC Super Admin → actionable email WITH Approve/Reject; CC Team Lead → FYI only', async () => {
