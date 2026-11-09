@@ -8,7 +8,7 @@ import {
   CurrencyDollarIcon, SunIcon, ArrowRightOnRectangleIcon,
   ArrowLeftOnRectangleIcon, DocumentCheckIcon, BellAlertIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import { dashboardApi, attendanceApi, employeeApi, documentApi, leaveApi, lateLoginApi } from '../../api/endpoints';
+import { dashboardApi, attendanceApi, employeeApi, leaveApi, lateLoginApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button';
 import MissingPunchModal from '../attendance/MissingPunchModal';
@@ -117,12 +117,14 @@ export default function EmployeeDashboard() {
   const t = d?.today, m = d?.month, lv = d?.leave;
   const alerts = d?.alerts || [];
 
-  // ESS profile snapshot (completion %, verification, missing docs).
+  // ESS profile snapshot — the backend `_completion` is the SINGLE source of truth for the
+  // percentage, what's missing, and the per-required-document state (verified/pending/missing).
+  // It already honours the configured required-document list and counts a document only when it
+  // is HR-VERIFIED, so the dashboard never re-derives documents or hardcodes the required list.
   const { data: profileRes } = useQuery({ queryKey: ['employee', user?.id], queryFn: () => employeeApi.get(user.id), enabled: !!user?.id });
   const prof = profileRes?.data;
-  const completion = prof?._completion || { percent: 0, missing: [] };
-  const vstatus = prof?._verifystatus || prof?.hr_verifystatus || 'verified';
-  const { data: myDocsRes } = useQuery({ queryKey: ['documents', user?.id], queryFn: () => documentApi.list({ employeeId: user.id }), enabled: !!user?.id });
+  const completion = prof?._completion || { percent: 0, missing: [], missingDocs: [], pendingDocs: [], documentsComplete: false, complete: false };
+  const vstatus = prof?._verifystatus || prof?.hr_verifystatus || '';
   // Allocation-based leave balance (auto-calculated from approved leave) — req 8.
   const { data: leaveBalRes } = useQuery({ queryKey: ['leave-balance', 'self', new Date().getFullYear()], queryFn: () => leaveApi.balance({}) });
   const lb = leaveBalRes?.data;
@@ -130,11 +132,20 @@ export default function EmployeeDashboard() {
   const llMonth = format(new Date(), 'yyyy-MM');
   const { data: llRes } = useQuery({ queryKey: ['late-login-summary', 'self', llMonth], queryFn: () => lateLoginApi.summary({ month: llMonth }).then(r => r.data), enabled: !!user?.id });
   const ll = llRes || null;
-  const REQUIRED_DOCS = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
-  const uploadedNames = new Set((myDocsRes?.data?.data || []).map(x => x.hr_name));
-  const missingDocs = REQUIRED_DOCS.filter(n => !uploadedNames.has(n));
-  const V_TONE = { verified: 'bg-emerald-50 text-emerald-700', pending: 'bg-amber-50 text-amber-700', changes: 'bg-orange-50 text-orange-700', rejected: 'bg-red-50 text-red-700' };
-  const V_TEXT = { verified: 'Verified', pending: 'Pending HR Verification', changes: 'Changes Requested', rejected: 'Rejected' };
+  // Required documents straight from the authoritative completion result (configured list +
+  // verification-aware). Missing = not uploaded; Pending = uploaded, awaiting HR verification.
+  const missingDocs = completion.missingDocs || [];
+  const pendingDocs = completion.pendingDocs || [];
+  // The profile is "Verified" ONLY when it is genuinely 100% complete, every required document
+  // is HR-verified, and HR has signed off the profile — never while anything is missing/pending.
+  const fullyVerified = !!completion.complete && !!completion.documentsComplete && vstatus === 'verified';
+  const badgeState = fullyVerified ? 'verified'
+    : vstatus === 'rejected' ? 'rejected'
+    : vstatus === 'changes' ? 'changes'
+    : (pendingDocs.length > 0 || vstatus === 'pending') ? 'pending'
+    : 'incomplete';
+  const V_TONE = { verified: 'bg-emerald-50 text-emerald-700', pending: 'bg-amber-50 text-amber-700', changes: 'bg-orange-50 text-orange-700', rejected: 'bg-red-50 text-red-700', incomplete: 'bg-gray-50 text-gray-600' };
+  const V_TEXT = { verified: 'Verified', pending: 'Pending HR Verification', changes: 'Changes Requested', rejected: 'Rejected', incomplete: 'Profile Incomplete' };
   const [correctionModal, setCorrectionModal] = useState({ open: false, date: '', type: '' });
 
   const invalidate = () => {
@@ -225,30 +236,33 @@ export default function EmployeeDashboard() {
         </div>
       </div>
 
-      {/* ── Profile completion / verification / documents ─────────────────── */}
-      {(completion.percent < 100 || vstatus !== 'verified' || missingDocs.length > 0) && (
-        <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-4 sm:p-5 flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-3 flex-1 min-w-[200px]">
-            <div className="relative w-12 h-12 flex-shrink-0">
-              <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
-                <circle cx="18" cy="18" r="15.5" fill="none" stroke="#e5e7eb" strokeWidth="4" />
-                <circle cx="18" cy="18" r="15.5" fill="none" stroke="#6366f1" strokeWidth="4" strokeLinecap="round"
-                  strokeDasharray={2 * Math.PI * 15.5} strokeDashoffset={(1 - completion.percent / 100) * 2 * Math.PI * 15.5} />
-              </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-800">{completion.percent}%</span>
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900">Profile Completion</p>
-              <p className="text-xs text-gray-400 truncate">{completion.missing?.length ? `Missing: ${completion.missing.join(', ')}` : 'Your profile is complete'}</p>
-            </div>
+      {/* ── Profile completion / verification / documents (one consistent source) ─────── */}
+      <div className="bg-white rounded-2xl border border-gray-200/70 shadow-sm p-4 sm:p-5 flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-3 flex-1 min-w-[200px]">
+          <div className="relative w-12 h-12 flex-shrink-0">
+            <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
+              <circle cx="18" cy="18" r="15.5" fill="none" stroke="#e5e7eb" strokeWidth="4" />
+              <circle cx="18" cy="18" r="15.5" fill="none" stroke="#6366f1" strokeWidth="4" strokeLinecap="round"
+                strokeDasharray={2 * Math.PI * 15.5} strokeDashoffset={(1 - completion.percent / 100) * 2 * Math.PI * 15.5} />
+            </svg>
+            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-800">{completion.percent}%</span>
           </div>
-          <span className={`text-xs font-semibold px-3 py-1.5 rounded-lg ${V_TONE[vstatus] || V_TONE.verified}`}>{V_TEXT[vstatus] || 'Verified'}</span>
-          {missingDocs.length > 0 && (
-            <span className="text-xs font-medium text-gray-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-lg">Missing docs: {missingDocs.join(', ')}</span>
-          )}
-          <Link to="/profile" className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-colors">Complete Profile</Link>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900">Profile Completion</p>
+            <p className="text-xs text-gray-400 truncate">{completion.missing?.length ? `Missing: ${completion.missing.join(', ')}` : 'Your profile is complete'}</p>
+          </div>
         </div>
-      )}
+        <span className={`text-xs font-semibold px-3 py-1.5 rounded-lg ${V_TONE[badgeState] || V_TONE.incomplete}`}>{V_TEXT[badgeState] || 'Profile Incomplete'}</span>
+        {missingDocs.length > 0 && (
+          <span className="text-xs font-medium text-gray-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-lg">Missing docs: {missingDocs.join(', ')}</span>
+        )}
+        {pendingDocs.length > 0 && (
+          <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-100 px-3 py-1.5 rounded-lg">Pending HR verification: {pendingDocs.join(', ')}</span>
+        )}
+        {!completion.complete && (
+          <Link to="/profile" className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-colors">Complete Profile</Link>
+        )}
+      </div>
 
       {/* ── SECTION 2 · Today's Overview (compact KPI grid) ───────────────── */}
       <div>

@@ -105,27 +105,43 @@ const REQUIRED_DOCS = ['Aadhaar Card', 'PAN Card', 'Cancelled Cheque', 'Photo'];
  */
 function computeCompletion(emp = {}, opts = {}) {
   const requiredDocs = (opts.requiredDocs && opts.requiredDocs.length) ? opts.requiredDocs : REQUIRED_DOCS;
-  // A required doc counts only when an uploaded doc of that type/name is VERIFIED.
+  // Index documents by BOTH the categorised TYPE and the name (lowercased) — a required doc is
+  // matched by its document type OR name, NEVER by the free-text file name alone. 'verified'
+  // wins over 'pending', so a required doc counts toward completion ONLY when VERIFIED.
   const verified = new Set();
+  const uploaded = new Set();
   for (const d of opts.documents || []) {
-    if (String(d.status || '').toLowerCase() !== 'verified') continue;
-    if (d.type) verified.add(String(d.type).toLowerCase());
-    if (d.name) verified.add(String(d.name).toLowerCase());
+    const keys = [d.type, d.name].filter(Boolean).map((x) => String(x).toLowerCase());
+    for (const k of keys) uploaded.add(k);
+    if (String(d.status || '').toLowerCase() === 'verified') for (const k of keys) verified.add(k);
   }
-  const missingDocs = requiredDocs.filter((r) => !verified.has(String(r).toLowerCase()));
+  // Per required doc: verified | pending (uploaded, awaiting HR) | missing (not uploaded at all).
+  const docStateOf = (r) => { const k = String(r).toLowerCase(); return verified.has(k) ? 'verified' : uploaded.has(k) ? 'pending' : 'missing'; };
+  const docs = requiredDocs.map((r) => ({ name: r, state: docStateOf(r) }));
+  const verifiedDocs = docs.filter((d) => d.state === 'verified').map((d) => d.name);
+  const pendingDocs = docs.filter((d) => d.state === 'pending').map((d) => d.name);
+  const missingDocs = docs.filter((d) => d.state === 'missing').map((d) => d.name);
+  const notVerifiedDocs = docs.filter((d) => d.state !== 'verified').map((d) => d.name);   // pending OR missing
 
   const fieldTotal = COMPLETION_FIELDS.length;
   const total = fieldTotal + requiredDocs.length;
   const doneFields = COMPLETION_FIELDS.filter((f) => filled(emp[f])).length;
-  const doneDocs = requiredDocs.length - missingDocs.length;
+  const doneDocs = requiredDocs.length - notVerifiedDocs.length;
   const percent = total ? Math.round(((doneFields + doneDocs) / total) * 100) : 0;
 
   const missing = [];
   const grouped = [];   // [{ tab, items:[...] }] so the UI can point to the right tab
   const push = (tab, item) => { let g = grouped.find((x) => x.tab === tab); if (!g) { g = { tab, items: [] }; grouped.push(g); } g.items.push(item); missing.push(item); };
   MISSING_GROUPS.filter((g) => g.fields.some((f) => !filled(emp[f]))).forEach((g) => push(g.tab, g.label));
-  for (const md of missingDocs) push('Documents', md);   // list each missing required doc
-  return { percent, filled: doneFields + doneDocs, total, missing, missingGrouped: grouped };
+  for (const nd of notVerifiedDocs) push('Documents', nd);   // list each required doc not yet verified
+  return {
+    percent, filled: doneFields + doneDocs, total, missing, missingGrouped: grouped,
+    // Document detail so the UI can distinguish Missing / Pending HR Verification / Verified
+    // from ONE authoritative source — without hardcoding or re-deriving the required list.
+    requiredDocs, docs, verifiedDocs, pendingDocs, missingDocs,
+    documentsComplete: missingDocs.length === 0 && pendingDocs.length === 0,   // all required docs VERIFIED
+    complete: percent === 100,
+  };
 }
 
 /** Which whitelisted fields actually changed vs the current record. */
