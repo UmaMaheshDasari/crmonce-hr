@@ -143,24 +143,8 @@ function initJobs() {
         global.logger?.error(`[late-login-policy] daily scan failed: ${e.message}`);
         runHistory.record({ jobType: 'scanner', startedAt: scanStart, status: 'failed', errorCount: 1 });
       }
-
-      // Ledger-driven reconciliation runs SEQUENTIALLY AFTER the forward scan (same cron callback
-      // → no overlap, no competing scheduler, same instance-guard + Asia/Kolkata). Gated by the
-      // same master flag; can be independently turned off with LATE_LOGIN_RECONCILE=false.
-      if (process.env.LATE_LOGIN_RECONCILE !== 'false') {
-        const recStart = new Date().toISOString();
-        try {
-          const reconciler = require('../services/late-login-reconciler.service');
-          const rr = await reconciler.runDaily();
-          global.logger?.info(`[late-login-reconcile] ${rr?.from}..${rr?.to}: events ${rr?.events}, legacy-penalties ${rr?.legacyPenalties}, flagged ${rr?.flagged}, errors ${rr?.errors} (read-only)`);
-          runHistory.record({ jobType: 'reconciler', startedAt: recStart, status: rr?.partial ? 'partial' : (rr?.errors > 0 ? 'partial' : 'success'), window: { from: rr?.from, to: rr?.to }, counters: { events: rr?.events, legacyPenalties: rr?.legacyPenalties, flagged: rr?.flagged, invalidReason: rr?.invalidReason }, truncated: rr?.truncated, partial: rr?.partial, errorCount: rr?.errors });
-        } catch (e) {
-          global.logger?.error(`[late-login-reconcile] daily reconcile failed: ${e.message}`);
-          runHistory.record({ jobType: 'reconciler', startedAt: recStart, status: 'failed', errorCount: 1 });
-        }
-      }
     }, { timezone: 'Asia/Kolkata' });
-    global.logger?.info('Late Login monthly-policy scan + ledger reconcile scheduled (22:00 IST daily, effective 2026-11-01)');
+    global.logger?.info('Late Login detection scan scheduled (22:00 IST daily, effective 2026-11-01)');
   }
 
   // Casual Leave carry-forward — year-end rollover. On 1 Jan at 03:00 IST, carry each

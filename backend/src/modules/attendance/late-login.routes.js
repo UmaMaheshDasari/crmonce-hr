@@ -14,7 +14,6 @@ const d365 = require('../../services/d365.service');
 const lateLogin = require('../../services/late-login.service');
 const { ensureLateLoginTable } = require('../../services/provision-late-login');
 const { requireAnyPermission } = require('../../middleware/auth.middleware');
-const integrity = require('../../services/late-login-integrity.service');
 
 const EMP = d365.constructor.entities.employee;
 const HR = ['super_admin', 'hr_manager'];
@@ -113,27 +112,6 @@ router.get('/export', async (req, res, next) => {
     res.setHeader('Content-Disposition', 'attachment; filename=late-logins.xlsx');
     await wb.xlsx.write(res); res.end();
   } catch (err) { next(err); }
-});
-
-// GET /integrity-report — READ-ONLY HR/Admin integrity report (negative CL balances, ledger-net
-// discrepancies, unresolved reconciliation flags, run-history availability). Gated on
-// `reports.view` (the same permission guarding the admin dashboard summary + activity log).
-// Generation performs NO writes (dry-run reconcile + read-only balance scan). Query:
-// ?from=&to=&eventType=&category=&page=&pageSize=&includeBalances=.
-router.get('/integrity-report', requireAnyPermission('reports.view'), async (req, res, next) => {
-  try {
-    const report = await integrity.buildReport({
-      from: req.query.from, to: req.query.to,
-      eventType: req.query.eventType, category: req.query.category,
-      page: req.query.page, pageSize: req.query.pageSize,
-      includeBalances: req.query.includeBalances !== 'false',
-    });
-    res.json(report);
-  } catch (err) {
-    if (err.status === 400) return res.status(400).json({ error: err.message });
-    global.logger?.warn?.(`[late-login] integrity report failed: ${err.message}`);   // detail logged, not returned
-    return res.status(500).json({ error: 'Failed to generate the integrity report.' });
-  }
 });
 
 // GET /run-history — READ-ONLY recent scanner/reconciler run records (interim single-host JSONL
