@@ -23,7 +23,7 @@ test('decision email: Total Paid Leave + type in brackets + Comp Off when availa
   assert.ok(html.includes('Days Taken in This Request'));
   assert.ok(html.includes('1 day (Sick Leave)'));   // type shown in brackets after the day count
   assert.ok(html.includes('Comp Off'));             // separate comp-off row
-  assert.ok(html.includes('1 day available'));
+  assert.ok(html.includes('1 / 2 days remaining')); // remaining / earned (same shape as Total)
   assert.ok(!html.includes('Casual Leave'));        // casual/sick rows removed
   assert.ok(!html.includes('Sick Leave</th>'));     // no sick row label
 });
@@ -50,7 +50,7 @@ test('decision email: comp-off request shows (Comp Off) and 0 available after la
   });
   assert.ok(html.includes('1 day (Comp Off)'));   // comp-off label, not the raw "Earned Leave"
   assert.ok(html.includes('Comp Off'));
-  assert.ok(html.includes('0 days available'));   // decrement visible even at 0
+  assert.ok(html.includes('0 / 1 days remaining')); // decrement visible even at 0
   assert.ok(html.includes('Total Paid Leave'));
 });
 

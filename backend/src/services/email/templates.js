@@ -280,7 +280,9 @@ function decision(d) {
       // decrement is visible (e.g. 2 → 1, or 1 → 0). The balance is computed AFTER
       // approval upstream, so it already reflects this request's usage.
       if (b.compOff && (d.useCompOff || Number(b.compOff.balance) > 0)) {
-        rows.push(['Comp Off', `${esc(b.compOff.balance)} day${Number(b.compOff.balance) === 1 ? '' : 's'} available`]);
+        // Same "X / Y days remaining" shape as Total Paid Leave (remaining / earned).
+        const eComp = Number(b.compOff.earned) || 0;
+        rows.push(['Comp Off', `${esc(b.compOff.balance)} / ${esc(eComp)} days remaining`]);
       }
       if (reqTxt) rows.push(['Days Taken in This Request', esc(reqTxt)]);
       balanceSection += summaryCard('Leave Balance', rows);
