@@ -254,17 +254,31 @@ function decision(d) {
     ['Current Status', statusBadge(label)],
   ];
 
-  // Prominent, high-contrast Leave Balance figures (light-blue "information"
-  // theme). The numbers themselves are UNCHANGED — d.balance is computed upstream
-  // (annual entitlement − approved days taken this year); d.requestDays is the
-  // already-stored day count for THIS request (resolveDays). We only present them.
+  // Leave Balance. Two shapes are supported (backward compatible):
+  //   • Detailed (leave engine): casual / sick / compOff / total breakdown + this request.
+  //   • Legacy flat {entitlement, taken, balance}: the original single "X / Y" block.
+  // d.balance is computed UPSTREAM AFTER approval, so its `remaining` values already
+  // include this request. d.requestDays is the already-stored day count for THIS request.
   let balanceSection = '';
   if (d.balance) {
-    const remaining = `${esc(d.balance.balance)} / ${esc(d.balance.entitlement)} days remaining`;
-    balanceSection += statBlock('Leave Balance', remaining, 'info');
     const rd = Number(d.requestDays);
-    if (Number.isFinite(rd) && rd > 0) {
-      balanceSection += statBlock('Days Taken in This Request', `${rd} day${rd === 1 ? '' : 's'}`, 'info');
+    const reqTxt = (Number.isFinite(rd) && rd > 0) ? `${rd} day${rd === 1 ? '' : 's'}` : null;
+    const b = d.balance;
+    const isDetailed = !!(b.casual || b.sick || b.compOff || b.total);
+
+    if (isDetailed) {
+      const rows = [];
+      const total = b.total || b.paid;
+      if (total) rows.push(['Total Paid Leave', `<strong>${esc(total.remaining)} / ${esc(total.entitled)} days remaining</strong>`]);
+      // Comp Off balance is shown ONLY when THIS request is applied against comp-off
+      // (d.useCompOff), never on ordinary Casual/Sick/etc. approvals.
+      if (d.useCompOff && b.compOff) rows.push(['Comp Off Balance', `${esc(b.compOff.balance)} day${Number(b.compOff.balance) === 1 ? '' : 's'} available`]);
+      if (reqTxt) rows.push(['Days Taken in This Request', reqTxt]);
+      balanceSection += summaryCard('Leave Balance', rows);
+    } else {
+      const remaining = `${esc(b.balance)} / ${esc(b.entitlement)} days remaining`;
+      balanceSection += statBlock('Leave Balance', remaining, 'info');
+      if (reqTxt) balanceSection += statBlock('Days Taken in This Request', reqTxt, 'info');
     }
   }
 

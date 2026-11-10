@@ -20,6 +20,7 @@ const { resolveSender, hrSender, infoSender, mergeCc, decisionRouting } = requir
 const T = require('./email/templates');
 const ecfg = require('./email/config');
 const { buildLeaveICS, icsAttachment } = require('./email/ics');
+const leaveEngine = require('./leave-engine.service');
 
 const EMP = d365.constructor.entities.employee;
 const LEAVE = d365.constructor.entities.leave;
@@ -127,6 +128,38 @@ async function getLeaveBalance(employeeId) {
     const entitlement = ecfg.leave.annualEntitlement;
     return { entitlement, taken, balance: Math.max(0, entitlement - taken) };
   } catch (_) { return null; }
+}
+
+/**
+ * Detailed leave balance for the decision email, sourced from the AUTHORITATIVE
+ * leave engine — so the mail matches the dashboard exactly:
+ *   • Casual 12 + Sick 6 = 18 paid, comp-off from the ledger, opening balance,
+ *     carry-forward adjustments, and half-days (0.5 via resolveDays).
+ *
+ * Returns the legacy flat fields (entitlement/taken/balance) for backward
+ * compatibility AND the detailed breakdown (casual/sick/compOff/total) for the
+ * template. Falls back to the legacy flat balance if the engine is unavailable.
+ * Never throws.
+ */
+async function getLeaveBalanceDetailed(employeeId) {
+  try {
+    const year = new Date().getFullYear();
+    const b = await leaveEngine.getBalance(employeeId, year);
+    const paid = b?.paid || {};
+    return {
+      // legacy fields (keep the flat template working)
+      entitlement: paid.entitled ?? 0,
+      taken: paid.used ?? 0,
+      balance: paid.remaining ?? 0,
+      // detailed breakdown (rendered by the decision template)
+      casual: b?.casual || null,
+      sick: b?.sick || null,
+      compOff: b?.compOff || null,
+      total: paid,
+    };
+  } catch (_) {
+    return getLeaveBalance(employeeId);   // safe fallback to the flat balance
+  }
 }
 
 /**
@@ -284,7 +317,7 @@ async function emailCorrectionRequestToHR({ recordId, actor, details, applyTime 
  * The incoming `cc` argument is accepted for backward compatibility but intentionally
  * IGNORED — the CC is dictated by the routing rule above. `approver` = {name,email,role}.
  */
-async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, requestDays, cc = [] }) {   // eslint-disable-line no-unused-vars
+async function emailDecisionToEmployee({ type, employeeId, decision, approver, approverName, remarks, status, fromDate, toDate, leaveType, requestDays, useCompOff, cc = [] }) {   // eslint-disable-line no-unused-vars
   try {
     const cfg = TYPE_CFG[type] || { title: type };
     let emp;
@@ -297,7 +330,7 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
     // The approver's name still appears in the body; the employee is also notified in-app.
     const { from, cc: decisionCc } = decisionRouting(approver);
 
-    const balance = type === 'leave' ? await getLeaveBalance(employeeId) : null;
+    const balance = type === 'leave' ? await getLeaveBalanceDetailed(employeeId) : null;
     const { subject, html } = T.decision({
       moduleTitle: cfg.title,
       employeeName: emp.hr_hremployee1,
@@ -307,6 +340,7 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
       decision,
       balance,
       requestDays,   // days for THIS request (already-computed value; display only)
+      useCompOff,    // show the Comp Off balance ONLY when this request uses comp-off
     });
 
     const attachments = [];
@@ -332,7 +366,7 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
 
 module.exports = {
   notifyNewRequest, emailApplyAcknowledgement, emailCorrectionRequestToHR, emailDecisionToEmployee,
-  getApprovers, isPlaceholderEmail, getLeaveBalance, approvalUrls,
+  getApprovers, isPlaceholderEmail, getLeaveBalance, getLeaveBalanceDetailed, approvalUrls,
   isAuthorizedApprovalRole, canActOnApproval, AUTHORIZED_APPROVAL_ROLES,
   employeeIdOf, employeeCardInfo, employeeFrom,
 };

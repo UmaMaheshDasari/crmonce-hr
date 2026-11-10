@@ -416,6 +416,7 @@ async function applyHrOverride(user, id, status, remarks, { enforcePending = fal
       fromDate: current.hr_fromdate, toDate: current.hr_todate,
       leaveType: toLabel('hr_leave_type', current.hr_leavetype),
       requestDays: resolveDays(current.hr_days, current.hr_fromdate, current.hr_todate, current.hr_halfday),
+      useCompOff: current.hr_usecompoff === 'true',
     });
   }
 
@@ -792,6 +793,7 @@ router.patch('/:id/l1', async (req, res, next) => {
         fromDate: leaveRecord.hr_fromdate, toDate: leaveRecord.hr_todate,
         leaveType: toLabel('hr_leave_type', leaveRecord.hr_leavetype),
         requestDays: resolveDays(leaveRecord.hr_days, leaveRecord.hr_fromdate, leaveRecord.hr_todate, leaveRecord.hr_halfday),
+        useCompOff: leaveRecord.hr_usecompoff === 'true',
       });
     }
 
