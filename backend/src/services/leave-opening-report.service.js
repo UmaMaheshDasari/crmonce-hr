@@ -7,8 +7,8 @@
  *   - Leave type → category    → leave-engine.categoryOfType
  *   - Day count / clamp        → leave-summary.util resolveDays + daysInclusive
  *   - Opening migration        → leave-opening.service
- *   - Unauthorised absence LOP  → persisted payroll hr_absentdays (the payroll
- *                                 engine is the only source of truth for LOP)
+ *   - Unauthorised absence     → ATTENDANCE records via the shared absentDatesFor
+ *                                 (no punch + no approved leave); never payroll LOP.
  *
  * Usage counted = APPROVED + PENDING (rejected/cancelled excluded). Multi-day
  * leaves crossing the year boundary are clamped to the in-year span. PENDING is
@@ -16,11 +16,14 @@
  * the real balance = allocation − (opening + approved)).
  *
  * Performance: one query per source (leaves, opening, ledger, employees,
- * payroll) — all joined & computed in memory. No per-employee round-trips.
+ * attendance) — all joined & computed in memory. No per-employee round-trips.
  */
 const d365 = require('./d365.service');
 const { toValue, toLabel } = require('./picklist');
 const { resolveDays, daysInclusive } = require('./leave-summary.util');
+const { absentDatesFor, expandLeaveDays } = require('./attendance-summary.util');
+const companyPolicy = require('./company.policy');
+const time = require('./time.util');
 const leaveEngine = require('./leave-engine.service');
 const openingSvc = require('./leave-opening.service');
 const payrollSettings = require('./payroll-settings.service');
@@ -29,7 +32,7 @@ const E = d365.constructor.entities;
 const LEAVE = E.leave;
 const LEDGER = E.leaveLedger;
 const EMP = E.employee;
-const PAYROLL = E.payroll;
+const ATT = E.attendance;
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -90,7 +93,7 @@ function computeUsageRow({ employee = {}, opening = {}, approvedLeaves = [], pen
 
   // Taken = opening-migrated used + approved + pending (per own type; additive → no
   // overflow double-count). LOP here = explicit LOP-type leave only; unauthorised
-  // absence is a separate column sourced from payroll.
+  // absence is a separate column sourced from attendance (no punch + no approved leave).
   const casualTaken = r2(openCasual + acc.casual + pend.casual);
   const sickTaken = r2(openSick + acc.sick + pend.sick);
   const earnedTaken = r2(openEarned + acc.other + pend.other);
@@ -186,23 +189,66 @@ async function fetchLedger(year) {
   } catch { return new Map(); }  // ledger table not provisioned → no adjustments
 }
 
-/** Persisted payroll absence (LOP) days summed over the year, per employee. Never throws. */
-async function fetchAbsence(year) {
+/**
+ * Attendance facts for the year: each employee's FIRST punch date and every date that
+ * has an attendance record. One paginated query. Never throws.
+ * @returns {Promise<{first:Map<string,string>, recs:Map<string,Set<string>>}>}
+ */
+async function fetchAttendance(year, to) {
+  const from = `${year}-01-01`;
   try {
-    const res = await d365.getListOptional(PAYROLL, {
-      select: 'hr_month,hr_year,_hr_hremployee_value',
-      optionalSelect: 'hr_absentdays,hr_lop',
-      filter: `hr_year eq ${year}`, top: 5000,
-    });
-    const byEmp = new Map();
-    for (const p of res.data || []) {
-      const id = p._hr_hremployee_value;
-      if (!id) continue;
-      const abs = num(p.hr_absentdays);
-      byEmp.set(id, r2((byEmp.get(id) || 0) + abs));
+    const res = await d365.getAll(ATT, {
+      select: 'hr_date,_hr_hremployee_value',
+      filter: `hr_date ge ${from} and hr_date le ${to}`,
+      orderby: 'hr_date asc',
+    }, 200000);
+    const first = new Map(), recs = new Map();
+    for (const r of res.data || []) {
+      const id = r._hr_hremployee_value;
+      const ds = String(r.hr_date || '').slice(0, 10);
+      if (!id || !ds) continue;
+      if (!first.has(id) || ds < first.get(id)) first.set(id, ds);
+      let set = recs.get(id); if (!set) recs.set(id, set = new Set());
+      set.add(ds);
     }
-    return byEmp;
-  } catch { return new Map(); }  // no payroll generated yet → absence unknown (0)
+    return { first, recs };
+  } catch { return { first: new Map(), recs: new Map() }; }
+}
+
+/**
+ * ABSENT days from ATTENDANCE (not payroll): scheduled working days (holidays / weekly-offs
+ * excluded) with NO attendance record and NO approved leave, counted from the attendance-rules
+ * effective date and each employee's first punch, up to `to`. Today is skipped (Pending).
+ * Uses the shared single definition (`absentDatesFor`) so this matches the attendance page.
+ * @returns {Map<string,number>} employeeId → absent day count
+ */
+function computeAbsence({ employees, leavesByEmp, attendance, year, to }) {
+  const yearStart = `${year}-01-01`;
+  let cutoff = yearStart;
+  try { const c = companyPolicy.attendance.newRulesFrom(); if (c && c > cutoff) cutoff = c; } catch { /* default */ }
+  const today = time.istDateStr();
+
+  // Approved-leave working dates, expanded once for all employees (holiday/week-off aware).
+  const approved = [];
+  for (const [id, g] of leavesByEmp) {
+    for (const l of g.approved) approved.push({
+      employeeId: id, fromDate: l.hr_fromdate, toDate: l.hr_todate, status: 'approved', halfDay: isTrue(l.hr_halfday),
+    });
+  }
+  const leaveDatesByEmp = expandLeaveDays(approved, cutoff, to);
+
+  const out = new Map();
+  for (const e of employees) {
+    const id = e.hr_hremployeeid;
+    if (!id) continue;
+    const firstDate = attendance.first.get(id) || null;
+    if (!firstDate) { out.set(id, 0); continue; }               // no attendance history → 0 (never a guess)
+    const recSet = attendance.recs.get(id) || new Set();
+    const leaveSet = leaveDatesByEmp.get(id) || new Map();
+    const days = absentDatesFor(cutoff, to, firstDate, (ds) => recSet.has(ds), (ds) => leaveSet.has(ds), { today, todayPending: true });
+    out.set(id, r2(days.length));
+  }
+  return out;
 }
 
 /**
@@ -212,14 +258,18 @@ async function fetchAbsence(year) {
  */
 async function buildSummary({ year } = {}) {
   const y = Number(year) || new Date().getFullYear();
-  const [employees, leavesByEmp, ledgerByEmp, absenceByEmp, policy, openingRows] = await Promise.all([
+  const today = time.istDateStr();
+  const yearEnd = `${y}-12-31`;
+  const capTo = yearEnd < today ? yearEnd : today;   // never count future days
+  const [employees, leavesByEmp, ledgerByEmp, attendance, policy, openingRows] = await Promise.all([
     fetchEmployees(),
     fetchLeaves(y),
     fetchLedger(y),
-    fetchAbsence(y),
+    fetchAttendance(y, capTo),
     getPolicy(),
     openingSvc.list({ year: y }).catch(() => []),
   ]);
+  const absenceByEmp = computeAbsence({ employees, leavesByEmp, attendance, year: y, to: capTo });
   const openingByEmp = new Map(openingRows.map((o) => [o.employeeId, o]));
 
   const rows = employees.map((employee) => {
