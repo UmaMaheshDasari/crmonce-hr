@@ -340,6 +340,7 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
       decision,
       balance,
       requestDays,   // days for THIS request (already-computed value; display only)
+      leaveType,     // shown in brackets after the day count, e.g. "1 day (Sick Leave)"
       useCompOff,    // show the Comp Off balance ONLY when this request uses comp-off
     });
 

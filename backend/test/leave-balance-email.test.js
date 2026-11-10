@@ -11,30 +11,29 @@ const DETAILED = {
 };
 
 // Ordinary leave: only TOTAL paid leaves + this request; NO casual/sick, NO comp-off.
-test('decision email: shows only Total Paid Leave + this request (no casual/sick/comp-off)', () => {
+test('decision email: shows only Total Paid Leave + this request type in brackets', () => {
   const { subject, html } = T.decision({
     moduleTitle: 'Leave', employeeName: 'V', approverName: 'Uma', date: '2026-07-06',
-    remarks: 'ok', decision: 'approved', balance: DETAILED, requestDays: 2,
+    remarks: 'ok', decision: 'approved', balance: DETAILED, requestDays: 1, leaveType: 'Sick Leave',
   });
   assert.strictEqual(subject, 'Leave Approved');
   assert.ok(html.includes('Total Paid Leave'));
   assert.ok(html.includes('13 / 18 days remaining'));
   assert.ok(html.includes('Days Taken in This Request'));
-  assert.ok(html.includes('2 days'));
-  assert.ok(!html.includes('Casual Leave'));      // removed
-  assert.ok(!html.includes('Sick Leave'));        // removed
-  assert.ok(!html.includes('Comp Off Balance'));  // not a comp-off request
+  assert.ok(html.includes('1 day (Sick Leave)'));   // type shown in brackets after the day count
+  assert.ok(!html.includes('Comp Off Balance'));    // not a comp-off request
 });
 
 // Comp-off request: show the Comp Off balance ONLY when useCompOff is set.
 test('decision email: comp-off balance shown only when the request uses comp-off', () => {
   const { html } = T.decision({
     moduleTitle: 'Leave', employeeName: 'V', approverName: 'Uma', date: '2026-07-06',
-    remarks: 'ok', decision: 'approved', balance: DETAILED, requestDays: 1, useCompOff: true,
+    remarks: 'ok', decision: 'approved', balance: DETAILED, requestDays: 1, useCompOff: true, leaveType: 'Earned Leave',
   });
   assert.ok(html.includes('Comp Off Balance'));
   assert.ok(html.includes('1 day available'));
   assert.ok(html.includes('Total Paid Leave'));
+  assert.ok(html.includes('1 day (Comp Off)'));   // comp-off label, not the raw "Earned Leave"
 });
 
 // Legacy flat balance shape must keep rendering exactly as before (backward compatible).

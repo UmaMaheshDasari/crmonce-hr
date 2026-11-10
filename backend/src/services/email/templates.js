@@ -262,7 +262,12 @@ function decision(d) {
   let balanceSection = '';
   if (d.balance) {
     const rd = Number(d.requestDays);
-    const reqTxt = (Number.isFinite(rd) && rd > 0) ? `${rd} day${rd === 1 ? '' : 's'}` : null;
+    // Which leave type was consumed, shown in brackets after the day count
+    // (e.g. "1 day (Sick Leave)"). Comp-off requests display "Comp Off".
+    const typeLabel = d.useCompOff ? 'Comp Off' : (d.leaveType || '');
+    const reqTxt = (Number.isFinite(rd) && rd > 0)
+      ? `${rd} day${rd === 1 ? '' : 's'}${typeLabel ? ` (${typeLabel})` : ''}`
+      : null;
     const b = d.balance;
     const isDetailed = !!(b.casual || b.sick || b.compOff || b.total);
 
@@ -273,7 +278,7 @@ function decision(d) {
       // Comp Off balance is shown ONLY when THIS request is applied against comp-off
       // (d.useCompOff), never on ordinary Casual/Sick/etc. approvals.
       if (d.useCompOff && b.compOff) rows.push(['Comp Off Balance', `${esc(b.compOff.balance)} day${Number(b.compOff.balance) === 1 ? '' : 's'} available`]);
-      if (reqTxt) rows.push(['Days Taken in This Request', reqTxt]);
+      if (reqTxt) rows.push(['Days Taken in This Request', esc(reqTxt)]);
       balanceSection += summaryCard('Leave Balance', rows);
     } else {
       const remaining = `${esc(b.balance)} / ${esc(b.entitlement)} days remaining`;
