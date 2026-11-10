@@ -284,6 +284,15 @@ function decision(d) {
         const eComp = Number(b.compOff.earned) || 0;
         rows.push(['Comp Off', `${esc(b.compOff.balance)} / ${esc(eComp)} days remaining`]);
       }
+      // LOP (Loss of Pay) — shown on an LOP request. Total Paid Leave above stays its
+      // ORIGINAL figure (LOP never consumes paid leave). Reports the LOP days applied
+      // this year; falls back to this request's days.
+      const isLop = String(d.leaveType || '').toUpperCase() === 'LOP';
+      if (isLop) {
+        const lopYear = Number(b.lop?.fromLeave);
+        const n = Number.isFinite(lopYear) ? lopYear : (Number.isFinite(rd) ? rd : 0);
+        rows.push(['LOP', `${esc(n)} day${n === 1 ? '' : 's'}`]);
+      }
       if (reqTxt) rows.push(['Days Taken in This Request', esc(reqTxt)]);
       balanceSection += summaryCard('Leave Balance', rows);
     } else {

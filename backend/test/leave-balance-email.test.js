@@ -54,6 +54,21 @@ test('decision email: comp-off request shows (Comp Off) and 0 available after la
   assert.ok(html.includes('Total Paid Leave'));
 });
 
+// LOP request: Total Paid Leave stays ORIGINAL (unchanged by LOP) and a separate
+// LOP row shows the LOP days; the type appears in brackets after the day count.
+test('decision email: LOP keeps original Total Paid Leave + shows LOP days', () => {
+  const { html } = T.decision({
+    moduleTitle: 'Leave', employeeName: 'V', approverName: 'Uma', date: '2026-07-06',
+    remarks: 'ok', decision: 'approved', requestDays: 2, leaveType: 'LOP',
+    balance: { ...DETAILED, lop: { fromLeave: 2 } },
+  });
+  assert.ok(html.includes('Total Paid Leave'));
+  assert.ok(html.includes('13 / 18 days remaining')); // paid untouched by LOP
+  assert.ok(html.includes('>LOP<'));                  // separate LOP row label
+  assert.ok(html.includes('2 days'));                 // LOP days
+  assert.ok(html.includes('2 days (LOP)'));           // type in brackets after day count
+});
+
 // Legacy flat balance shape must keep rendering exactly as before (backward compatible).
 test('decision email: legacy flat balance still renders "X / Y days remaining"', () => {
   const { html } = T.decision({

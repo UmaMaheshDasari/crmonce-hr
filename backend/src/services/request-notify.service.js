@@ -155,6 +155,7 @@ async function getLeaveBalanceDetailed(employeeId) {
       casual: b?.casual || null,
       sick: b?.sick || null,
       compOff: b?.compOff || null,
+      lop: b?.lop || null,
       total: paid,
     };
   } catch (_) {
