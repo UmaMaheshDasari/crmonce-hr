@@ -18,7 +18,7 @@ const esc = (v) => String(v ?? '—')
 // Long free text (e.g. Leave Reason): HTML-escaped (XSS-safe), with paragraphs,
 // line breaks and multiple spaces PRESERVED via white-space:pre-wrap. Never truncated.
 const longText = (v) =>
-  `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.6;color:#111827;font-size:14px;">${esc(v)}</div>`;
+  `<div style="white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-width:100%;line-height:1.6;color:#111827;font-size:14px;">${esc(v)}</div>`;
 
 const STATUS_COLORS = {
   approved:  { bg: '#ecfdf5', fg: '#065f46', dot: '#10b981' },
@@ -110,8 +110,8 @@ function profileCard({ name, id, department, email } = {}) {
 function summaryCard(title, rows) {
   const body = rows.map(([k, v]) =>
     `<tr>
-      <th scope="row" style="text-align:left;padding:7px 16px 7px 0;color:#64748b;font-size:13px;font-weight:600;white-space:nowrap;vertical-align:top;">${esc(k)}</th>
-      <td style="padding:7px 0;color:#111827;font-size:14px;">${v}</td>
+      <th class="hr-k" scope="row" style="text-align:left;padding:7px 16px 7px 0;color:#64748b;font-size:13px;font-weight:600;white-space:nowrap;vertical-align:top;">${esc(k)}</th>
+      <td class="hr-v" style="padding:7px 0;color:#111827;font-size:14px;word-break:break-word;overflow-wrap:anywhere;">${v}</td>
     </tr>`).join('');
   return card(
     (title ? `<div style="font-size:13px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">${esc(title)}</div>` : '') +
@@ -176,13 +176,17 @@ function layout({ title, preheader = '', content }) {
   @media only screen and (max-width:620px) {
     .hr-shell { width:100% !important; border-radius:0 !important; }
     .hr-btn { display:block !important; margin:8px 0 !important; text-align:center; }
+    .hr-content { padding:18px 16px !important; }
+    .hr-k, .hr-v { display:block !important; width:100% !important; }
+    .hr-k { white-space:normal !important; padding:10px 0 2px !important; }
+    .hr-v { padding:0 0 8px !important; }
   }
 </style>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f4f6" style="background-color:#f3f4f6;margin:0;padding:24px 0;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
   <tr><td align="center" style="padding:0;">
     <table role="presentation" class="hr-shell" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
       ${header()}
-      <tr><td bgcolor="#ffffff" style="background-color:#ffffff;padding:26px 32px;color:#1f2937;">${content}</td></tr>
+      <tr><td class="hr-content" bgcolor="#ffffff" style="background-color:#ffffff;padding:26px 32px;color:#1f2937;">${content}</td></tr>
       ${footer()}
     </table>
   </td></tr>
