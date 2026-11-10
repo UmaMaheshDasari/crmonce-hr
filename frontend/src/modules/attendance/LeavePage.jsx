@@ -112,7 +112,7 @@ function ApprovalTimeline({ leave }) {
     <div className="mt-3 pt-3 border-t border-gray-100">
       <div className="flex items-start gap-0">
         {/* Step 1: L1 Manager */}
-        <div className="flex flex-col items-center min-w-0" style={{ width: '120px' }}>
+        <div className="flex w-[40%] flex-col items-center min-w-0 sm:w-[120px]">
           <div className={`w-3.5 h-3.5 rounded-full ring-4 ${stepColor(l1)} ${stepRing(l1)}`} />
           <p className="text-[11px] font-semibold text-gray-700 mt-1.5 leading-tight text-center">L1 - Manager</p>
           <p className={`text-[10px] font-medium mt-0.5 ${stepTextColor(l1)}`}>{stepLabel(l1)}</p>
@@ -133,7 +133,7 @@ function ApprovalTimeline({ leave }) {
         </div>
 
         {/* Step 2: L2 Senior Manager */}
-        <div className="flex flex-col items-center min-w-0" style={{ width: '140px' }}>
+        <div className="flex w-[44%] flex-col items-center min-w-0 sm:w-[140px]">
           <div className={`w-3.5 h-3.5 rounded-full ring-4 ${stepColor(l2)} ${stepRing(l2)}`} />
           <p className="text-[11px] font-semibold text-gray-700 mt-1.5 leading-tight text-center">L2 - Senior Manager</p>
           <p className={`text-[10px] font-medium mt-0.5 ${stepTextColor(l2)}`}>{stepLabel(l2)}</p>
@@ -393,12 +393,12 @@ function LeaveActions({ leave, user, canOverride }) {
 
   return (
     <>
-      <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-        <div className="flex gap-2 flex-wrap justify-end pt-1">
+      <div className="flex flex-col items-start gap-1.5 sm:items-end sm:flex-shrink-0">
+        <div className="flex flex-wrap gap-2 justify-start pt-1 sm:justify-end">
           {buttons}
         </div>
         {blockApprove && (
-          <p className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 max-w-xs text-right">
+          <p className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 max-w-xs text-left sm:text-right">
             <ExclamationTriangleIcon className="w-3.5 h-3.5 flex-shrink-0" />
             Medical Certificate is required before approving this Sick Leave request.
           </p>
@@ -860,7 +860,7 @@ export default function LeavePage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Leave Management</h1>
           <p className="text-sm text-gray-500 mt-1">{leaves.length} requests</p>
@@ -916,9 +916,9 @@ export default function LeavePage() {
             const isBackdated = leave.hr_fromdate && leave.createdon && String(leave.hr_fromdate).slice(0, 10) < String(leave.createdon).slice(0, 10);
             return (
               <div key={leave.hr_hrleaveid} className={`bg-white rounded-xl border border-gray-100 border-l-4 ${statusBorder} shadow-sm hover:shadow-md transition-all duration-200`}>
-                <div className="p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
+                <div className="p-4 sm:p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                    <div className="min-w-0 w-full sm:flex-1">
                       {/* Top row: Name + Status */}
                       <div className="flex items-center gap-3 flex-wrap">
                         {isHR() && (
@@ -939,7 +939,7 @@ export default function LeavePage() {
                       </div>
 
                       {/* Date range with calendar icon */}
-                      <div className="flex items-center gap-4 mt-3">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
                         <div className="inline-flex items-center gap-2 text-sm text-gray-600">
                           <CalendarDaysIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
                           <span className="font-medium">
@@ -979,7 +979,7 @@ export default function LeavePage() {
                     </div>
 
                     {/* Approve / Reject actions (managers / HR) */}
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:items-end">
                       <LeaveActions leave={leave} user={user} canOverride={canOverrideLeave} />
                       {/* Employee self-service on their OWN leave: pending → Edit/Delete;
                           rejected → Edit&Resubmit/Delete; approved → Request Cancellation. */}

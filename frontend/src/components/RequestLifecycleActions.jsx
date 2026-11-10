@@ -56,7 +56,7 @@ export default function RequestLifecycleActions({ type, id, status, caps = {}, o
   const btn = 'inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded-lg';
 
   return (
-    <div className="flex items-center gap-1.5 justify-end flex-wrap">
+    <div className="flex flex-wrap items-center gap-1.5 justify-start sm:justify-end">
       {canEdit && (
         <button onClick={onEdit} className={`${btn} text-indigo-700 bg-indigo-50 hover:bg-indigo-100`}><PencilSquareIcon className="w-3.5 h-3.5" /> Edit</button>
       )}
