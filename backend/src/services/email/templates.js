@@ -275,9 +275,13 @@ function decision(d) {
       const rows = [];
       const total = b.total || b.paid;
       if (total) rows.push(['Total Paid Leave', `<strong>${esc(total.remaining)} / ${esc(total.entitled)} days remaining</strong>`]);
-      // Comp Off balance is shown ONLY when THIS request is applied against comp-off
-      // (d.useCompOff), never on ordinary Casual/Sick/etc. approvals.
-      if (d.useCompOff && b.compOff) rows.push(['Comp Off Balance', `${esc(b.compOff.balance)} day${Number(b.compOff.balance) === 1 ? '' : 's'} available`]);
+      // Comp Off (separate from Total Paid Leave) — shown whenever comp-off is
+      // available (balance > 0), and also on a comp-off request so the post-approval
+      // decrement is visible (e.g. 2 → 1, or 1 → 0). The balance is computed AFTER
+      // approval upstream, so it already reflects this request's usage.
+      if (b.compOff && (d.useCompOff || Number(b.compOff.balance) > 0)) {
+        rows.push(['Comp Off', `${esc(b.compOff.balance)} day${Number(b.compOff.balance) === 1 ? '' : 's'} available`]);
+      }
       if (reqTxt) rows.push(['Days Taken in This Request', esc(reqTxt)]);
       balanceSection += summaryCard('Leave Balance', rows);
     } else {
