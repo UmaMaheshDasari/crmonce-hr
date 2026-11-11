@@ -209,7 +209,27 @@ async function getActiveStructure(d365, employeeId, asOfDate) {
   } catch { return null; }
 }
 
+/**
+ * STRICT variant of getActiveStructure for the approve/release GATE: same effective-date
+ * selection, but it does NOT swallow a lookup error — it RETHROWS. A caller that must be
+ * sure a structure is not disabled needs to tell "no such structure" (→ null) apart from
+ * "couldn't check right now" (→ throw), so it can fail CLOSED on a verification failure
+ * instead of silently allowing a release/approval it never actually verified. Returns a
+ * shaped object or null; throws on any Dataverse/transport error.
+ */
+async function getActiveStructureStrict(d365, employeeId, asOfDate) {
+  const ENTITY = d365.constructor.entities.salaryStructure;
+  const q = `'${String(employeeId).replace(/'/g, "''")}'`;
+  const asOf = String(asOfDate || '').slice(0, 10);
+  const r = await d365.getListOptional(ENTITY, {
+    select: SELECT,
+    filter: `hr_employeeid eq ${q}${asOf ? ` and hr_effectivefrom le '${asOf}'` : ''}`,
+    orderby: 'hr_effectivefrom desc,createdon desc', top: 1,
+  });
+  return r.data && r.data[0] ? shape(r.data[0]) : null;
+}
+
 module.exports = {
   EARNING_FIELDS, DEDUCTION_FIELDS, TO_LOGICAL, SELECT,
-  computeGross, computeTotals, validate, toDataverse, shape, getEffectiveStructure, getActiveStructure,
+  computeGross, computeTotals, validate, toDataverse, shape, getEffectiveStructure, getActiveStructure, getActiveStructureStrict,
 };

@@ -264,7 +264,17 @@ export default function PayrollPage() {
   // never released by this (they must be approved first); already-released rows are untouched.
   const releaseMonthMutation = useMutation({
     mutationFn: ({ month, year }) => payrollApi.releaseMonth({ month, year }),
-    onSuccess: (res) => { toast.success(res.data?.message || 'Approved payrolls released'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
+    onSuccess: (res) => {
+      const d = res.data || {};
+      const msg = d.message || 'Approved payrolls released';
+      // Surface partial outcomes honestly: a failure is an error, a disabled-structure skip
+      // is a warning, and plain success only when everything that could release did.
+      if (d.failed > 0) toast.error(msg, { duration: 7000 });
+      else if (d.skippedDisabled > 0) toast(msg, { icon: '⚠️', duration: 7000 });
+      else if (!d.released) toast(msg, { icon: 'ℹ️' });
+      else toast.success(msg);
+      qc.invalidateQueries({ queryKey: ['payroll'] });
+    },
     onError: (err) => toast.error(err.response?.data?.error || 'Release all failed'),
   });
   const lockMutation = useMutation({

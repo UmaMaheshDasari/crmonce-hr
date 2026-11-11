@@ -60,21 +60,23 @@ async function updateOpt(id, data) {
 // ── Salary-structure gate for approve / release ───────────────────
 // A payroll ROW stores only snapshot amounts — it carries NO reference to the salary
 // structure/revision it was generated from. So before approving or releasing a row we
-// RE-RESOLVE the structure effective for that row's own period and refuse the action when
-// that structure is now DISABLED: a disabled structure must never produce a released
-// payslip, and we must NOT silently fall back to an older revision's amount. A MISSING
-// structure does NOT block — the row keeps the snapshot it was generated with, and a
-// transient lookup gap (getActiveStructure returns null on error) must never block a
-// legitimately-generated row. Returns { blocked, reason }.
+// RE-RESOLVE the structure effective for that row's own period. Two outcomes block:
+//   • DISABLED  → reason 'salary_structure_disabled' — a disabled structure must never
+//     produce a released payslip, and we must NOT fall back to an older revision's amount.
+//   • UNVERIFIED (the lookup itself errored) → reason 'structure_unverified' — we FAIL
+//     CLOSED: a row we could not verify must not be approved/released on a guess.
+// A MISSING structure (resolved cleanly to null) does NOT block — the row keeps the
+// snapshot it was generated with. Returns { blocked, reason, unverified? }.
 const STRUCTURE_DISABLED_MSG = "This employee's salary structure for the payroll period is disabled. Enable it (or add a new revision) and re-generate before approving or releasing.";
+const STRUCTURE_UNVERIFIED_MSG = "Couldn't verify this employee's salary structure right now (temporary lookup failure). No payroll was released — please try again.";
 async function structureGate(employeeId, month, year) {
   if (!employeeId) return { blocked: false };
   const m = odInt(month), y = odInt(year);
   if (m === null || y === null) return { blocked: false };
   const asOf = `${y}-${pad2(m)}-${pad2(new Date(y, m, 0).getDate())}`;   // last day of the period
   let structure = null;
-  try { structure = await salaryStructure.getActiveStructure(d365, employeeId, asOf); }
-  catch { return { blocked: false }; }   // lookup failure → fail-open (never block on a transient error)
+  try { structure = await salaryStructure.getActiveStructureStrict(d365, employeeId, asOf); }
+  catch { return { blocked: true, reason: 'structure_unverified', unverified: true }; }   // fail CLOSED
   return structure && structure.status === 'disabled'
     ? { blocked: true, reason: 'salary_structure_disabled' }
     : { blocked: false };
@@ -442,13 +444,15 @@ async function finalizeMonth({ month, year, employeeIds } = {}) {
   const validIds = [...new Set((Array.isArray(employeeIds) ? employeeIds : []).map(odGuid).filter(Boolean))];
   if (validIds.length) filters.push('(' + validIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ') + ')');
   const { data } = await d365.getListOptional(PAYROLL, { select: BASE_SELECT, optionalSelect: OPT_SELECT, filter: filters.join(' and '), top: 2000 });
-  let approved = 0, emailed = 0, emailFailed = 0, notified = 0, failed = 0, skippedDisabled = 0;
+  let approved = 0, emailed = 0, emailFailed = 0, notified = 0, failed = 0, skippedDisabled = 0, skippedUnverified = 0;
   for (const payroll of data || []) {
     try {
       const empId = payroll._hr_hremployee_value;
-      // Never auto-finalise a draft whose effective salary structure is now disabled
-      // (same rule the approve/release endpoints enforce) — leave it a draft for HR.
+      // Never auto-finalise a draft whose effective salary structure is now disabled, nor one
+      // we could not verify — leave it a draft for HR (same gate the endpoints enforce). A
+      // verification failure must NOT be finalised on a guess.
       const gate = await structureGate(empId, month, year);
+      if (gate.unverified) { skippedUnverified++; continue; }
       if (gate.blocked) { skippedDisabled++; continue; }
       const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
         select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
@@ -463,19 +467,38 @@ async function finalizeMonth({ month, year, employeeIds } = {}) {
       if (empId) { try { notifyUser(empId, 'payroll:processed', { month: `${month}/${year}` }); notified++; } catch {} }
     } catch (e) { failed++; global.logger?.warn?.(`[automation] finalise row ${payroll.hr_hrpayrollid}: ${e.message}`); }
   }
-  return { approved, emailed, emailFailed, notified, failed, skippedDisabled };
+  return { approved, emailed, emailFailed, notified, failed, skippedDisabled, skippedUnverified };
 }
 
 // PATCH /:id/approve  — approve payroll → status 'processed' + email the payslip
 payrollRouter.patch('/:id/approve', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
-    const payroll = await d365.getByIdOptional(PAYROLL, req.params.id, { select: BASE_SELECT, optionalSelect: OPT_SELECT });
+    let payroll;
+    try {
+      payroll = await d365.getByIdOptional(PAYROLL, req.params.id, { select: BASE_SELECT, optionalSelect: OPT_SELECT });
+    } catch (e) {
+      if (e?.response?.status === 404) return res.status(404).json({ error: 'Payroll record not found.' });
+      throw e;
+    }
     if (!payroll || !payroll.hr_hrpayrollid) return res.status(404).json({ error: 'Payroll record not found.' });
+
+    // State gate: approval is valid ONLY from Draft. An already-approved (processed) or
+    // released (paid) row must not be re-approved (which would re-email a payslip / reset
+    // the approval audit) → 409.
+    const draft = toValue('hr_payroll_status', 'draft');
+    const processed = toValue('hr_payroll_status', 'processed');
+    const status = String(payroll.hr_status);
+    if (status === String(processed)) return res.status(409).json({ error: 'This payroll is already approved.' });
+    if (status === String(RELEASED_STATUS)) return res.status(409).json({ error: 'This payroll is already released and cannot be re-approved.' });
+    if (status !== String(draft)) return res.status(409).json({ error: 'Only a draft payroll can be approved.' });
+
     const empId = payroll._hr_hremployee_value;
 
     // Never approve (and email) a row whose effective salary structure is now disabled —
     // that would push out a payslip built on a structure HR has excluded from payroll.
+    // A verification failure fails CLOSED (503) so we never approve what we couldn't check.
     const gate = await structureGate(empId, payroll.hr_month, payroll.hr_year);
+    if (gate.unverified) return res.status(503).json({ error: STRUCTURE_UNVERIFIED_MSG, code: gate.reason });
     if (gate.blocked) return res.status(409).json({ error: STRUCTURE_DISABLED_MSG, code: gate.reason });
 
     const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
@@ -487,7 +510,7 @@ payrollRouter.patch('/:id/approve', requireAnyPermission('payroll.process'), asy
     const mail = await emailPayslip({ payroll, employee });
 
     await updateOpt(req.params.id, {
-      hr_status: toValue('hr_payroll_status', 'processed'),
+      hr_status: processed,
       hr_approvedby: req.user?.name || req.user?.email || 'HR',
       hr_approveddate: new Date().toISOString(),
       hr_emailsent: mail.success ? 'sent' : 'failed',
@@ -570,10 +593,13 @@ payrollRouter.post('/release-month', requireAnyPermission('payroll.process'), as
       if (String(r.hr_status) === String(draft)) { skippedDrafts++; continue; }       // never release a draft
       if (String(r.hr_status) === String(paid)) { alreadyPaid++; continue; }          // retry-safe: already released, no re-notify
       if (String(r.hr_status) !== String(processed)) continue;                         // other states → leave as-is
-      // Same safety rule as the single-row release: never release against a disabled structure.
+      // Same safety rule as the single-row release: never release against a disabled
+      // structure, and never release a row we could not verify. A verification failure is
+      // counted as FAILED (not released), recorded, and the batch continues with the rest.
       let gate;
       try { gate = await structureGate(r._hr_hremployee_value, month, year); }
-      catch { gate = { blocked: false }; }
+      catch { gate = { blocked: true, reason: 'structure_unverified', unverified: true }; }
+      if (gate.unverified) { failed++; failures.push({ id: r.hr_hrpayrollid, reason: gate.reason }); continue; }
       if (gate.blocked) { skippedDisabled++; failures.push({ id: r.hr_hrpayrollid, reason: gate.reason }); continue; }
       try {
         await updateOpt(r.hr_hrpayrollid, { hr_status: RELEASED_STATUS, hr_releasedby: releasedBy, hr_releaseddate: new Date().toISOString() });
@@ -621,8 +647,10 @@ payrollRouter.patch('/:id/release', requireAnyPermission('payroll.process'), asy
     if (status === String(RELEASED_STATUS)) return res.status(409).json({ error: 'This payroll is already released.' });
     if (status !== String(processed)) return res.status(409).json({ error: 'Only an approved payroll can be released. Approve it first.' });
 
-    // Salary-structure gate: never release against a disabled structure (no stale fall-back).
+    // Salary-structure gate: never release against a disabled structure (no stale fall-back),
+    // and fail CLOSED (503) if we could not verify the structure at all.
     const gate = await structureGate(p._hr_hremployee_value, p.hr_month, p.hr_year);
+    if (gate.unverified) return res.status(503).json({ error: STRUCTURE_UNVERIFIED_MSG, code: gate.reason });
     if (gate.blocked) return res.status(409).json({ error: STRUCTURE_DISABLED_MSG, code: gate.reason });
 
     await updateOpt(req.params.id, {

@@ -34,7 +34,7 @@ const leaveEngine = require('../src/services/leave-engine.service');
 const activity = require('../src/services/activity.service');
 const company = require('../src/services/company.service');
 const payrollRouter = require('../src/modules/payroll/payroll.routes');
-const { parseEmployeeIds, runGeneration } = payrollRouter;
+const { parseEmployeeIds, runGeneration, finalizeMonth } = payrollRouter;
 
 const E = d365.constructor.entities;
 const PAYROLL = E.payroll;
@@ -77,7 +77,7 @@ beforeEach(() => {
   saved = {
     gl: d365.getListOptional, gb: d365.getByIdOptional, g: d365.getList, ga: d365.getAll, c: d365.create, u: d365.update,
     ps: payrollSettings.getResolved, slabs: ptMaster.loadActiveSlabs, pt: ptMaster.getProfessionalTax,
-    st: salaryStructure.getActiveStructure, adv: advanceService.applyMonthlyRecovery,
+    st: salaryStructure.getActiveStructure, sts: salaryStructure.getActiveStructureStrict, adv: advanceService.applyMonthlyRecovery,
     split: leaveEngine.splitMonthLeave, bal: leaveEngine.getBalance, pend: leaveEngine.pendingMonthDays,
     rec: activity.record, co: company.getCompany,
   };
@@ -87,11 +87,11 @@ beforeEach(() => {
     if (entity === E.employee) return { data: [EMPLOYEE_ROW], count: 1 };
     if (entity === PAYROLL) {
       const f = String(params.filter || '');
-      const rows = f
-        ? payrollRows.filter((r) => f.includes(`_hr_hremployee_value eq '${r._hr_hremployee_value}'`))
-        : payrollRows.slice();
-      const releasedOnly = f.includes(`hr_status eq ${RELEASED}`);
-      return { data: releasedOnly ? rows.filter((r) => String(r.hr_status) === String(RELEASED)) : rows, count: rows.length };
+      let rows = payrollRows.slice();
+      if (/_hr_hremployee_value eq '/.test(f)) rows = rows.filter((r) => f.includes(`_hr_hremployee_value eq '${r._hr_hremployee_value}'`));
+      if (f.includes(`hr_status eq ${RELEASED}`)) rows = rows.filter((r) => String(r.hr_status) === String(RELEASED));
+      if (f.includes(`hr_status eq ${DRAFT}`)) rows = rows.filter((r) => String(r.hr_status) === String(DRAFT));   // finalizeMonth draft filter
+      return { data: rows, count: rows.length };
     }
     return { data: [] };
   };
@@ -121,6 +121,7 @@ beforeEach(() => {
   ptMaster.loadActiveSlabs = async () => [{ id: 'pt-1' }];
   ptMaster.getProfessionalTax = async () => 200;
   salaryStructure.getActiveStructure = async () => STRUCTURE;
+  salaryStructure.getActiveStructureStrict = async () => STRUCTURE;   // approve/release gate uses the strict resolver
   advanceService.applyMonthlyRecovery = async () => 0;
   leaveEngine.splitMonthLeave = async () => ({ paidLeaveDays: 0, lopLeaveDays: 0 });
   leaveEngine.getBalance = async () => ({ casual: { remaining: 0 }, sick: { remaining: 0 }, earned: { used: 0 }, compOff: { balance: 0 } });
@@ -134,6 +135,7 @@ afterEach(() => {
   payrollSettings.getResolved = saved.ps;
   ptMaster.loadActiveSlabs = saved.slabs; ptMaster.getProfessionalTax = saved.pt;
   salaryStructure.getActiveStructure = saved.st;
+  salaryStructure.getActiveStructureStrict = saved.sts;
   advanceService.applyMonthlyRecovery = saved.adv;
   Object.assign(leaveEngine, { splitMonthLeave: saved.split, getBalance: saved.bal, pendingMonthDays: saved.pend });
   activity.record = saved.rec;
@@ -389,7 +391,7 @@ test('Single release: an APPROVED row with an ACTIVE structure still releases �
 // ── Disabled salary structure gate (Fix 2) — single approve, single release, and bulk ──
 test('Disabled structure: cannot approve a draft nor release an approved row → 409; bulk skips them too', async () => {
   currentUser = HR;
-  salaryStructure.getActiveStructure = async () => ({ ...STRUCTURE, status: 'disabled' });
+  salaryStructure.getActiveStructureStrict = async () => ({ ...STRUCTURE, status: 'disabled' });
   payrollById = {
     'dz-draft': { ...draftRow('dz-draft'), hr_status: DRAFT },
     'dz-appr': { ...draftRow('dz-appr'), hr_status: PROCESSED },
@@ -409,4 +411,98 @@ test('Disabled structure: cannot approve a draft nor release an approved row →
   assert.strictEqual(body.released, 0);
   assert.strictEqual(body.skippedDisabled, 1);
   assert.strictEqual(updates.length, 0, 'bulk wrote nothing for the disabled-structure row');
+});
+
+// ── Single approve: state gate (only a DRAFT may be approved) ──
+test('Approve: a DRAFT row is approved → 200, status set to processed', async () => {
+  currentUser = HR;
+  payrollById = { 'ap-draft': { ...draftRow('ap-draft'), hr_status: DRAFT } };
+  // Employee WITHOUT a mailbox → emailPayslip returns early (no PDF build, no network send).
+  d365.getByIdOptional = async (entity, id) => {
+    calls.push({ entity, id });
+    if (entity === PAYROLL) return payrollById[id];
+    if (entity === E.employee) return { hr_hremployeeid: id, hr_hremployee1: 'Test Emp' };   // no hr_email
+    return {};
+  };
+  const res = await fetch(`${base}/payroll/ap-draft/approve`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(updates.length, 1);
+  assert.strictEqual(updates[0].data.hr_status, PROCESSED, 'draft → processed on approve');
+});
+
+test('Approve: an already-APPROVED (processed) row → 409, nothing written', async () => {
+  currentUser = HR;
+  payrollById = { 'ap-proc': { ...draftRow('ap-proc'), hr_status: PROCESSED } };
+  const res = await fetch(`${base}/payroll/ap-proc/approve`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 409);
+  assert.match((await res.json()).error, /already approved/i);
+  assert.strictEqual(updates.length, 0);
+});
+
+test('Approve: an already-PAID row → 409, nothing written', async () => {
+  currentUser = HR;
+  payrollById = { 'ap-paid': { ...draftRow('ap-paid'), hr_status: RELEASED } };
+  const res = await fetch(`${base}/payroll/ap-paid/approve`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 409);
+  assert.match((await res.json()).error, /already released/i);
+  assert.strictEqual(updates.length, 0);
+});
+
+test('Approve: a missing row → 404', async () => {
+  currentUser = HR;
+  payrollById = {};   // id resolves to undefined
+  const res = await fetch(`${base}/payroll/ap-ghost/approve`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 404);
+  assert.strictEqual(updates.length, 0);
+});
+
+// ── Fail-CLOSED: a salary-structure verification FAILURE must never approve/release on a guess ──
+test('Approve: structure verification failure → 503, nothing written', async () => {
+  currentUser = HR;
+  salaryStructure.getActiveStructureStrict = async () => { throw new Error('Dataverse 500 on lookup'); };
+  payrollById = { 'uv-d': { ...draftRow('uv-d'), hr_status: DRAFT } };
+  const res = await fetch(`${base}/payroll/uv-d/approve`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 503);
+  const body = await res.json();
+  assert.strictEqual(body.code, 'structure_unverified');
+  assert.strictEqual(updates.length, 0);
+});
+
+test('Single release: structure verification failure → 503, nothing written', async () => {
+  currentUser = HR;
+  salaryStructure.getActiveStructureStrict = async () => { throw new Error('Dataverse 500 on lookup'); };
+  payrollById = { 'uv-a': { ...draftRow('uv-a'), hr_status: PROCESSED } };
+  const res = await fetch(`${base}/payroll/uv-a/release`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 503);
+  assert.strictEqual((await res.json()).code, 'structure_unverified');
+  assert.strictEqual(updates.length, 0);
+});
+
+test('Release All: an unverifiable row is counted as FAILED and skipped; the batch continues', async () => {
+  currentUser = HR;
+  // Verification throws ONLY for the middle employee; others verify fine.
+  salaryStructure.getActiveStructureStrict = async (_d, empId) => {
+    if (empId === EMP2) throw new Error('Dataverse 500 on lookup');
+    return STRUCTURE;
+  };
+  payrollRows = [
+    { ...draftRow('u-ok1'), hr_status: PROCESSED, _hr_hremployee_value: EMP },
+    { ...draftRow('u-bad'), hr_status: PROCESSED, _hr_hremployee_value: EMP2 },
+    { ...draftRow('u-ok2'), hr_status: PROCESSED, _hr_hremployee_value: EMP },
+  ];
+  const body = await (await postReleaseMonth()).json();
+  assert.strictEqual(body.released, 2, 'the two verifiable rows still release');
+  assert.strictEqual(body.failed, 1, 'the unverifiable row is counted as failed');
+  assert.strictEqual(body.skippedDisabled, 0);
+  assert.ok(body.failures.some((f) => f.id === 'u-bad' && f.reason === 'structure_unverified'));
+  assert.deepStrictEqual(updates.map((u) => u.id).sort(), ['u-ok1', 'u-ok2'], 'the unverifiable row was never written');
+});
+
+test('finalizeMonth: a draft whose structure cannot be verified is NOT finalised (left a draft)', async () => {
+  salaryStructure.getActiveStructureStrict = async () => { throw new Error('Dataverse 500 on lookup'); };
+  payrollRows = [{ ...draftRow('fin-uv'), hr_status: DRAFT }];
+  const r = await finalizeMonth({ month: 11, year: 2026 });
+  assert.strictEqual(r.approved, 0, 'nothing approved');
+  assert.strictEqual(r.skippedUnverified, 1);
+  assert.strictEqual(updates.length, 0, 'the draft was left untouched');
 });
