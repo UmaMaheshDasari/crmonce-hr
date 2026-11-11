@@ -30,6 +30,9 @@ const { buildReport } = require('../../services/payroll-reports.service');
 const E = d365.constructor.entities;
 const PAYROLL = E.payroll;
 const pad2 = (n) => String(n).padStart(2, '0');
+// Upper bound on rows a single bulk month-release will page through (one row per employee
+// per month — far above any real headcount, but a hard guard against a runaway cursor).
+const RELEASE_MONTH_CAP = 100000;
 
 // A payslip is visible to the EMPLOYEE only after HR releases it (status 'paid').
 // Draft / approved (processed) rows stay HR-only until release.
@@ -52,6 +55,29 @@ async function createOpt(data) {
 async function updateOpt(id, data) {
   try { return await d365.update(PAYROLL, id, data); }
   catch (err) { if (!d365._isMissingProperty(err)) throw err; return d365.update(PAYROLL, id, stripOpt(data)); }
+}
+
+// ── Salary-structure gate for approve / release ───────────────────
+// A payroll ROW stores only snapshot amounts — it carries NO reference to the salary
+// structure/revision it was generated from. So before approving or releasing a row we
+// RE-RESOLVE the structure effective for that row's own period and refuse the action when
+// that structure is now DISABLED: a disabled structure must never produce a released
+// payslip, and we must NOT silently fall back to an older revision's amount. A MISSING
+// structure does NOT block — the row keeps the snapshot it was generated with, and a
+// transient lookup gap (getActiveStructure returns null on error) must never block a
+// legitimately-generated row. Returns { blocked, reason }.
+const STRUCTURE_DISABLED_MSG = "This employee's salary structure for the payroll period is disabled. Enable it (or add a new revision) and re-generate before approving or releasing.";
+async function structureGate(employeeId, month, year) {
+  if (!employeeId) return { blocked: false };
+  const m = odInt(month), y = odInt(year);
+  if (m === null || y === null) return { blocked: false };
+  const asOf = `${y}-${pad2(m)}-${pad2(new Date(y, m, 0).getDate())}`;   // last day of the period
+  let structure = null;
+  try { structure = await salaryStructure.getActiveStructure(d365, employeeId, asOf); }
+  catch { return { blocked: false }; }   // lookup failure → fail-open (never block on a transient error)
+  return structure && structure.status === 'disabled'
+    ? { blocked: true, reason: 'salary_structure_disabled' }
+    : { blocked: false };
 }
 
 /**
@@ -416,10 +442,14 @@ async function finalizeMonth({ month, year, employeeIds } = {}) {
   const validIds = [...new Set((Array.isArray(employeeIds) ? employeeIds : []).map(odGuid).filter(Boolean))];
   if (validIds.length) filters.push('(' + validIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ') + ')');
   const { data } = await d365.getListOptional(PAYROLL, { select: BASE_SELECT, optionalSelect: OPT_SELECT, filter: filters.join(' and '), top: 2000 });
-  let approved = 0, emailed = 0, emailFailed = 0, notified = 0, failed = 0;
+  let approved = 0, emailed = 0, emailFailed = 0, notified = 0, failed = 0, skippedDisabled = 0;
   for (const payroll of data || []) {
     try {
       const empId = payroll._hr_hremployee_value;
+      // Never auto-finalise a draft whose effective salary structure is now disabled
+      // (same rule the approve/release endpoints enforce) — leave it a draft for HR.
+      const gate = await structureGate(empId, month, year);
+      if (gate.blocked) { skippedDisabled++; continue; }
       const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
         select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
         optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode,hr_employeeid',
@@ -433,14 +463,21 @@ async function finalizeMonth({ month, year, employeeIds } = {}) {
       if (empId) { try { notifyUser(empId, 'payroll:processed', { month: `${month}/${year}` }); notified++; } catch {} }
     } catch (e) { failed++; global.logger?.warn?.(`[automation] finalise row ${payroll.hr_hrpayrollid}: ${e.message}`); }
   }
-  return { approved, emailed, emailFailed, notified, failed };
+  return { approved, emailed, emailFailed, notified, failed, skippedDisabled };
 }
 
 // PATCH /:id/approve  — approve payroll → status 'processed' + email the payslip
 payrollRouter.patch('/:id/approve', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
     const payroll = await d365.getByIdOptional(PAYROLL, req.params.id, { select: BASE_SELECT, optionalSelect: OPT_SELECT });
+    if (!payroll || !payroll.hr_hrpayrollid) return res.status(404).json({ error: 'Payroll record not found.' });
     const empId = payroll._hr_hremployee_value;
+
+    // Never approve (and email) a row whose effective salary structure is now disabled —
+    // that would push out a payslip built on a structure HR has excluded from payroll.
+    const gate = await structureGate(empId, payroll.hr_month, payroll.hr_year);
+    if (gate.blocked) return res.status(409).json({ error: STRUCTURE_DISABLED_MSG, code: gate.reason });
+
     const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
       optionalSelect: 'hr_pan,hr_aadhaar,hr_accountnumber,hr_ifsc,hr_bankname,hr_etimecode,hr_joiningdate,hr_uan,hr_pfnumber,hr_employeecode,hr_employeeid',
@@ -516,38 +553,86 @@ payrollRouter.post('/release-month', requireAnyPermission('payroll.process'), as
     if (month === null || year === null || month < 1 || month > 12) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
     const processed = toValue('hr_payroll_status', 'processed');
     const draft = toValue('hr_payroll_status', 'draft');
-    // Fetch all rows for the month so we can both release the approved ones AND report how many
-    // drafts were skipped (drafts are intentionally NOT released).
-    const { data } = await d365.getListOptional(PAYROLL, {
+    const paid = RELEASED_STATUS;
+    // Fetch EVERY row for the month — a Dataverse page caps at 5,000 rows, so follow the
+    // @odata.nextLink cursor (getAll) instead of taking only the first page. All columns
+    // here are base columns, so getAll (no optional-select retry) is safe.
+    const { data } = await d365.getAll(PAYROLL, {
       select: 'hr_hrpayrollid,hr_status,hr_month,hr_year,_hr_hremployee_value',
       filter: `hr_month eq ${month} and hr_year eq ${year}`,
-    });
-    let released = 0, skippedDrafts = 0;
+    }, RELEASE_MONTH_CAP);
+
+    let released = 0, skippedDrafts = 0, alreadyPaid = 0, skippedDisabled = 0, failed = 0;
+    const failures = [];   // { id, reason } — payroll id (a GUID) only, no names/amounts/emails
     const releasedBy = req.user?.name || req.user?.email || 'HR';
     for (const r of data || []) {
-      if (String(r.hr_status) === String(draft)) { skippedDrafts++; continue; }   // never release a draft
-      if (String(r.hr_status) !== String(processed)) continue;                     // already paid / other → leave as-is
-      await updateOpt(r.hr_hrpayrollid, { hr_status: RELEASED_STATUS, hr_releasedby: releasedBy, hr_releaseddate: new Date().toISOString() });
-      // Releasing makes the payslip visible to the employee — notify them (best-effort).
-      if (r._hr_hremployee_value) { try { notifyUser(r._hr_hremployee_value, 'payroll:processed', { month: `${month}/${year}` }); } catch {} }
-      released++;
+      // Process each row INDEPENDENTLY — one bad row never aborts the batch.
+      if (String(r.hr_status) === String(draft)) { skippedDrafts++; continue; }       // never release a draft
+      if (String(r.hr_status) === String(paid)) { alreadyPaid++; continue; }          // retry-safe: already released, no re-notify
+      if (String(r.hr_status) !== String(processed)) continue;                         // other states → leave as-is
+      // Same safety rule as the single-row release: never release against a disabled structure.
+      let gate;
+      try { gate = await structureGate(r._hr_hremployee_value, month, year); }
+      catch { gate = { blocked: false }; }
+      if (gate.blocked) { skippedDisabled++; failures.push({ id: r.hr_hrpayrollid, reason: gate.reason }); continue; }
+      try {
+        await updateOpt(r.hr_hrpayrollid, { hr_status: RELEASED_STATUS, hr_releasedby: releasedBy, hr_releaseddate: new Date().toISOString() });
+        released++;
+        // Notify ONLY on a successful status flip (and only here, never on a retry's
+        // already-paid rows) — so re-running the release never re-notifies an employee.
+        if (r._hr_hremployee_value) { try { notifyUser(r._hr_hremployee_value, 'payroll:processed', { month: `${month}/${year}` }); } catch {} }
+      } catch (e) {
+        failed++;
+        failures.push({ id: r.hr_hrpayrollid, reason: 'update_failed' });
+        global.logger?.warn?.(`[payroll/release-month] row ${r.hr_hrpayrollid} failed: ${e.message}`);
+      }
     }
-    try { activity.record({ category: 'Payroll', type: 'payroll_released', title: 'Payroll Month Released', name: req.user?.name, meta: `${releasedBy} released ${released} approved payroll row(s) for ${month}/${year} (${skippedDrafts} draft(s) skipped)` }); } catch {}
-    res.json({ message: `Released ${released} approved payroll record(s) for ${month}/${year}.${skippedDrafts ? ` ${skippedDrafts} draft(s) were skipped (approve them first).` : ''}`, released, skippedDrafts });
+    try { activity.record({ category: 'Payroll', type: 'payroll_released', title: 'Payroll Month Released', name: req.user?.name, meta: `${releasedBy} released ${released}/${released + failed + skippedDisabled} approved payroll row(s) for ${month}/${year} — ${skippedDrafts} draft(s), ${alreadyPaid} already-paid skipped; ${skippedDisabled} disabled-structure, ${failed} failed` }); } catch {}
+    const parts = [];
+    if (skippedDrafts) parts.push(`${skippedDrafts} draft(s) skipped (approve them first)`);
+    if (alreadyPaid) parts.push(`${alreadyPaid} already released`);
+    if (skippedDisabled) parts.push(`${skippedDisabled} skipped (salary structure disabled)`);
+    if (failed) parts.push(`${failed} failed (see details)`);
+    res.json({
+      message: `Released ${released} approved payroll record(s) for ${month}/${year}.${parts.length ? ' ' + parts.join('; ') + '.' : ''}`,
+      released, skippedDrafts, alreadyPaid, skippedDisabled, failed,
+      failures: failures.slice(0, 100),   // bounded; ids only, never sensitive data
+    });
   } catch (err) { res.status(err.status || 400).json({ error: err.message || 'Failed to release month' }); }
 });
 
-// PATCH /:id/release  — release payroll → status 'paid'
+// PATCH /:id/release  — release an APPROVED payroll → status 'paid'. Only a row currently
+// in 'processed' (Approved) may be released: a draft or an already-paid row → 409. The row's
+// effective salary structure must not be disabled (same rule as the bulk release).
 payrollRouter.patch('/:id/release', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
-    const p = await d365.getByIdOptional(PAYROLL, req.params.id, { select: 'hr_hrpayrollid,hr_month,hr_year,_hr_hremployee_value', optionalSelect: 'hr_status' });
+    let p;
+    try {
+      p = await d365.getByIdOptional(PAYROLL, req.params.id, { select: 'hr_hrpayrollid,hr_month,hr_year,_hr_hremployee_value', optionalSelect: 'hr_status' });
+    } catch (e) {
+      if (e?.response?.status === 404) return res.status(404).json({ error: 'Payroll record not found.' });
+      throw e;
+    }
+    if (!p || !p.hr_hrpayrollid) return res.status(404).json({ error: 'Payroll record not found.' });
+
+    // State gate: release is valid ONLY from Approved (processed).
+    const processed = toValue('hr_payroll_status', 'processed');
+    const status = String(p.hr_status);
+    if (status === String(RELEASED_STATUS)) return res.status(409).json({ error: 'This payroll is already released.' });
+    if (status !== String(processed)) return res.status(409).json({ error: 'Only an approved payroll can be released. Approve it first.' });
+
+    // Salary-structure gate: never release against a disabled structure (no stale fall-back).
+    const gate = await structureGate(p._hr_hremployee_value, p.hr_month, p.hr_year);
+    if (gate.blocked) return res.status(409).json({ error: STRUCTURE_DISABLED_MSG, code: gate.reason });
+
     await updateOpt(req.params.id, {
       hr_status: RELEASED_STATUS,
       hr_releasedby: req.user?.name || req.user?.email || 'HR',
       hr_releaseddate: new Date().toISOString(),
     });
     // Releasing is what makes the payslip visible to the employee — tell them.
-    if (p?._hr_hremployee_value) { try { notifyUser(p._hr_hremployee_value, 'payroll:processed', { month: `${p.hr_month}/${p.hr_year}` }); } catch {} }
+    if (p._hr_hremployee_value) { try { notifyUser(p._hr_hremployee_value, 'payroll:processed', { month: `${p.hr_month}/${p.hr_year}` }); } catch {} }
+    try { activity.record({ category: 'Payroll', type: 'payroll_released', title: 'Payroll Released', name: req.user?.name, meta: `${req.user?.name || 'HR'} released payroll ${p.hr_month}/${p.hr_year}` }); } catch {}
     res.json({ message: 'Payroll released' });
   } catch (err) {
     console.error('[payroll/release] FAILED:', err.message);

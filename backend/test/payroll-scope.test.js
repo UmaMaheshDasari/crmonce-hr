@@ -41,6 +41,7 @@ const PAYROLL = E.payroll;
 const EMP = '11111111-1111-1111-1111-111111111111';
 const EMP2 = '22222222-2222-2222-2222-222222222222';
 const DRAFT = toValue('hr_payroll_status', 'draft');
+const PROCESSED = toValue('hr_payroll_status', 'processed');
 const RELEASED = toValue('hr_payroll_status', 'paid');
 const ACTIVE = toValue('hr_employee_status', 'active');
 const EMPLOYEE_ROW = { hr_hremployeeid: EMP, hr_hremployee1: 'Test Emp', hr_ptstate: 'Karnataka' };
@@ -74,7 +75,7 @@ after(() => { server?.close(); });
 beforeEach(() => {
   calls = []; created = []; updates = []; payrollRows = []; payrollById = {};
   saved = {
-    gl: d365.getListOptional, gb: d365.getByIdOptional, g: d365.getList, c: d365.create, u: d365.update,
+    gl: d365.getListOptional, gb: d365.getByIdOptional, g: d365.getList, ga: d365.getAll, c: d365.create, u: d365.update,
     ps: payrollSettings.getResolved, slabs: ptMaster.loadActiveSlabs, pt: ptMaster.getProfessionalTax,
     st: salaryStructure.getActiveStructure, adv: advanceService.applyMonthlyRecovery,
     split: leaveEngine.splitMonthLeave, bal: leaveEngine.getBalance, pend: leaveEngine.pendingMonthDays,
@@ -101,6 +102,12 @@ beforeEach(() => {
     return {};
   };
   d365.getList = async () => ({ data: [] });   // attendance: none this month (warning only)
+  // Bulk month-release pages through getAll — emulate it over payrollRows (month filter only).
+  d365.getAll = async (entity, params) => {
+    calls.push({ entity, params, all: true });
+    if (entity === PAYROLL) return { data: payrollRows.slice(), count: payrollRows.length };
+    return { data: [], count: 0 };
+  };
   d365.create = async (entity, data) => { created.push(data); return { hr_hrpayrollid: `new-${created.length}` }; };
   d365.update = async (entity, id, data) => {
     updates.push({ id, data });
@@ -123,7 +130,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  Object.assign(d365, { getListOptional: saved.gl, getByIdOptional: saved.gb, getList: saved.g, create: saved.c, update: saved.u });
+  Object.assign(d365, { getListOptional: saved.gl, getByIdOptional: saved.gb, getList: saved.g, getAll: saved.ga, create: saved.c, update: saved.u });
   payrollSettings.getResolved = saved.ps;
   ptMaster.loadActiveSlabs = saved.slabs; ptMaster.getProfessionalTax = saved.pt;
   salaryStructure.getActiveStructure = saved.st;
@@ -201,10 +208,12 @@ test('GET /:id/payslip-data (employee, OWN row, RELEASED) → 200 with the paysl
   assert.ok(body.meta && body.meta.monthYear, 'payslip model returned');
 });
 
-test('release lifecycle: PATCH /:id/release flips the status → the employee can now see the payslip', async () => {
+test('release lifecycle: PATCH /:id/release flips an APPROVED row → the employee can now see the payslip', async () => {
   currentUser = HR;
-  payrollRows = [draftRow('row-draft')];
-  const res = await fetch(`${base}/payroll/row-draft/release`, { method: 'PATCH' });
+  const row = { ...draftRow('row-approved'), hr_status: PROCESSED };   // Approved, ready to release
+  payrollRows = [row];
+  payrollById = { 'row-approved': row };                               // release reads the row by id
+  const res = await fetch(`${base}/payroll/row-approved/release`, { method: 'PATCH' });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(updates.length, 1);
   assert.strictEqual(updates[0].data.hr_status, RELEASED, 'release stores the paid status');
@@ -285,4 +294,119 @@ test('runGeneration: a LOCKED month is never regenerated', async () => {
   const r = await runGeneration({ month: 11, year: 2026, employeeIds: [EMP] });
   assert.strictEqual(r.locked, 1);
   assert.strictEqual(r.created + r.updated, 0);
+});
+
+// ── Release All: partial-failure resilience, accurate counts, safe retry ──
+const postReleaseMonth = (body = { month: 11, year: 2026 }) =>
+  fetch(`${base}/payroll/release-month`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+test('Release All: one row\'s update fails → batch continues; the failed row is never flipped to paid (so never notified)', async () => {
+  currentUser = HR;
+  payrollRows = [
+    { ...draftRow('p-ok1'), hr_status: PROCESSED },
+    { ...draftRow('p-bad'), hr_status: PROCESSED },
+    { ...draftRow('p-ok2'), hr_status: PROCESSED },
+  ];
+  // ONLY the middle row's update throws (a non-missing-property error → not retried/stripped).
+  d365.update = async (entity, id, data) => {
+    if (id === 'p-bad') throw new Error('Dataverse 500 on update');
+    updates.push({ id, data });
+    const row = payrollRows.find((r) => r.hr_hrpayrollid === id); if (row) Object.assign(row, data);
+    return {};
+  };
+  const body = await (await postReleaseMonth()).json();
+  assert.strictEqual(body.released, 2, 'both good rows released despite the middle failure');
+  assert.strictEqual(body.failed, 1);
+  assert.strictEqual(body.skippedDrafts, 0);
+  assert.strictEqual(body.alreadyPaid, 0);
+  // The bad row was NEVER flipped to paid — the notify call is gated behind a successful
+  // update, so a failed release can never have notified its employee.
+  assert.deepStrictEqual(updates.map((u) => u.id).sort(), ['p-ok1', 'p-ok2']);
+  assert.ok(body.failures.some((f) => f.id === 'p-bad' && f.reason === 'update_failed'), 'failure detail names the row + reason');
+  assert.ok(!body.failures.some((f) => f.id === 'p-ok1' || f.id === 'p-ok2'), 'successful rows are not in failures');
+});
+
+test('Release All: drafts skipped, already-paid counted + left unchanged, only approved released (retry-safe)', async () => {
+  currentUser = HR;
+  payrollRows = [
+    { ...draftRow('paid1'), hr_status: RELEASED },
+    { ...draftRow('appr1'), hr_status: PROCESSED },
+    { ...draftRow('draft1'), hr_status: DRAFT },
+  ];
+  const body = await (await postReleaseMonth()).json();
+  assert.strictEqual(body.released, 1);
+  assert.strictEqual(body.alreadyPaid, 1);
+  assert.strictEqual(body.skippedDrafts, 1);
+  assert.strictEqual(body.failed, 0);
+  assert.deepStrictEqual(updates.map((u) => u.id), ['appr1'], 'the paid and draft rows are never written (re-run = no re-notify)');
+});
+
+test('Release All: processes EVERY approved row the paginated helper returns (>5,000, beyond one page)', async () => {
+  currentUser = HR;
+  const N = 5001;
+  payrollRows = Array.from({ length: N }, (_, i) => ({ ...draftRow(`r${i}`), hr_hrpayrollid: `r${i}`, hr_status: PROCESSED }));
+  const body = await (await postReleaseMonth()).json();
+  assert.strictEqual(body.released, N, 'all 5,001 approved rows released — nothing lost past the 5,000 page cap');
+  assert.strictEqual(updates.length, N);
+  assert.ok(calls.some((c) => c.all && c.entity === PAYROLL), 'release used the paginated getAll helper, not a single capped page');
+});
+
+// ── Single release: state gate (Fix 3) ──
+test('Single release: a DRAFT row cannot be released → 409, nothing written', async () => {
+  currentUser = HR;
+  payrollById = { d1: { ...draftRow('d1'), hr_status: DRAFT } };
+  const res = await fetch(`${base}/payroll/d1/release`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 409);
+  assert.match((await res.json()).error, /approved payroll can be released/i);
+  assert.strictEqual(updates.length, 0);
+});
+
+test('Single release: an already-PAID row → 409, left unchanged', async () => {
+  currentUser = HR;
+  payrollById = { pd: { ...draftRow('pd'), hr_status: RELEASED } };
+  const res = await fetch(`${base}/payroll/pd/release`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 409);
+  assert.match((await res.json()).error, /already released/i);
+  assert.strictEqual(updates.length, 0);
+});
+
+test('Single release: a missing row → 404', async () => {
+  currentUser = HR;
+  payrollById = {};   // id resolves to undefined
+  const res = await fetch(`${base}/payroll/ghost/release`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 404);
+});
+
+test('Single release: an APPROVED row with an ACTIVE structure still releases → 200 (not over-blocked)', async () => {
+  currentUser = HR;
+  payrollById = { ok: { ...draftRow('ok'), hr_status: PROCESSED } };   // STRUCTURE stub has no status → active
+  const res = await fetch(`${base}/payroll/ok/release`, { method: 'PATCH' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(updates.length, 1);
+  assert.strictEqual(updates[0].data.hr_status, RELEASED);
+});
+
+// ── Disabled salary structure gate (Fix 2) — single approve, single release, and bulk ──
+test('Disabled structure: cannot approve a draft nor release an approved row → 409; bulk skips them too', async () => {
+  currentUser = HR;
+  salaryStructure.getActiveStructure = async () => ({ ...STRUCTURE, status: 'disabled' });
+  payrollById = {
+    'dz-draft': { ...draftRow('dz-draft'), hr_status: DRAFT },
+    'dz-appr': { ...draftRow('dz-appr'), hr_status: PROCESSED },
+  };
+  // Approve a DRAFT whose structure is disabled → 409 BEFORE any payslip email/update.
+  const app = await fetch(`${base}/payroll/dz-draft/approve`, { method: 'PATCH' });
+  assert.strictEqual(app.status, 409);
+  assert.match((await app.json()).error, /disabled/i);
+  // Release an APPROVED row whose structure is disabled → 409.
+  const rel = await fetch(`${base}/payroll/dz-appr/release`, { method: 'PATCH' });
+  assert.strictEqual(rel.status, 409);
+  assert.match((await rel.json()).error, /disabled/i);
+  assert.strictEqual(updates.length, 0, 'neither endpoint wrote anything');
+  // Bulk Release All applies the SAME rule: an approved row with a disabled structure is skipped.
+  payrollRows = [{ ...draftRow('dz-appr'), hr_status: PROCESSED }];
+  const body = await (await postReleaseMonth()).json();
+  assert.strictEqual(body.released, 0);
+  assert.strictEqual(body.skippedDisabled, 1);
+  assert.strictEqual(updates.length, 0, 'bulk wrote nothing for the disabled-structure row');
 });
