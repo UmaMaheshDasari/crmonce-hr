@@ -185,6 +185,7 @@ export default function LateLoginPage({ requestType = 'late_login' } = {}) {
   const [period, setPeriod] = useState('this_month');
   const [statusF, setStatusF] = useState('');
   const [deptF, setDeptF] = useState('');
+  const [empF, setEmpF] = useState('');   // HR: filter by a single employee
 
   const { data: policyRes } = useQuery({ queryKey: [`${cfg.key}-policy`], queryFn: () => lateLoginApi.policy({ requestType }).then(r => r.data) });
   const policy = policyRes || {};
@@ -199,8 +200,8 @@ export default function LateLoginPage({ requestType = 'late_login' } = {}) {
     if (period === 'last_month') { const d = new Date(now.getFullYear(), now.getMonth() - 1, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
     return undefined;
   })();
-  const params = { month: monthParam, status: statusF || undefined, department: deptF || undefined, requestType };
-  const { data: listRes, isLoading } = useQuery({ queryKey: [cfg.key, period, statusF, deptF], queryFn: () => lateLoginApi.list(params).then(r => r.data) });
+  const params = { month: monthParam, status: statusF || undefined, department: deptF || undefined, employeeId: empF || undefined, requestType };
+  const { data: listRes, isLoading } = useQuery({ queryKey: [cfg.key, period, statusF, deptF, empF], queryFn: () => lateLoginApi.list(params).then(r => r.data) });
   const rows = useMemo(() => listRes?.data || [], [listRes]);
 
   // HR/Admin decision on a 3rd (manager_pending) permission.
@@ -262,6 +263,13 @@ export default function LateLoginPage({ requestType = 'late_login' } = {}) {
           <select value={deptF} onChange={e => setDeptF(e.target.value)} className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm">
             <option value="">All Departments</option>
             {departments.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        )}
+        {hr && (
+          <select value={empF} onChange={e => setEmpF(e.target.value)} className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm max-w-[16rem]">
+            <option value="">All Employees</option>
+            {[...employees].sort((a, b) => String(a.hr_hremployee1 || '').localeCompare(String(b.hr_hremployee1 || '')))
+              .map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
           </select>
         )}
         <div className="ml-auto flex gap-2">
