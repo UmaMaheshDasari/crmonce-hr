@@ -130,3 +130,20 @@ test('shape: PF not applicable zeroes the PF amount on read', () => {
   assert.strictEqual(s.totalDeductions, 200);
   assert.strictEqual(s.netSalary, 29800);
 });
+
+test('validate: accepts status "disabled" (exclude-from-payroll flag)', () => {
+  const r = svc.validate({ employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic: 40000, status: 'disabled' }, { requireEmployee: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.value.status, 'disabled');
+});
+
+test('validate: an unknown status falls back to "active"', () => {
+  const r = svc.validate({ employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic: 40000, status: 'bogus' }, { requireEmployee: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.value.status, 'active');
+});
+
+test('shape: a disabled revision reports status "disabled" (the signal payroll skips on)', () => {
+  const s = svc.shape({ hr_salarystructureid: 'd1', hr_basic: 40000, hr_status: 'disabled' });
+  assert.strictEqual(s.status, 'disabled');
+});

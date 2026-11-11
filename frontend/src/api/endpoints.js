@@ -154,6 +154,7 @@ export const payrollApi = {
   lock: (id) => api.patch(`/payroll/${id}/lock`),
   unlock: (id) => api.patch(`/payroll/${id}/unlock`),
   lockMonth: (data) => api.post('/payroll/lock-month', data),
+  releaseMonth: (data) => api.post('/payroll/release-month', data),   // bulk-release all APPROVED rows for a month
   downloadPayslip: (id) => api.get(`/payroll/${id}/payslip`, { responseType: 'blob' }),
   payslipData: (id) => api.get(`/payroll/${id}/payslip-data`),
   emailPayslip: (id) => api.post(`/payroll/${id}/email`),
@@ -206,6 +207,8 @@ export const salaryStructureApi = {
   get: (id) => api.get(`/payroll/salary-structures/${id}`),
   create: (data) => api.post('/payroll/salary-structures', data),
   update: (id, data) => api.patch(`/payroll/salary-structures/${id}`, data),
+  disable: (id, remarks) => api.patch(`/payroll/salary-structures/${id}/disable`, remarks != null ? { remarks } : {}),   // exclude from payroll (reversible)
+  enable: (id) => api.patch(`/payroll/salary-structures/${id}/enable`),
   delete: (id) => api.delete(`/payroll/salary-structures/${id}`),
 };
 

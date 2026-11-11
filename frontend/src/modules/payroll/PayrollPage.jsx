@@ -260,6 +260,13 @@ export default function PayrollPage() {
     onSuccess: () => { toast.success('Payroll released'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
     onError: (err) => toast.error(err.response?.data?.error || 'Release failed'),
   });
+  // Bulk-release every APPROVED (processed) row for the selected month → Released. Drafts are
+  // never released by this (they must be approved first); already-released rows are untouched.
+  const releaseMonthMutation = useMutation({
+    mutationFn: ({ month, year }) => payrollApi.releaseMonth({ month, year }),
+    onSuccess: (res) => { toast.success(res.data?.message || 'Approved payrolls released'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Release all failed'),
+  });
   const lockMutation = useMutation({
     mutationFn: (id) => payrollApi.lock(id),
     onSuccess: (res) => { toast.success(res.data?.message || 'Payroll locked'); qc.invalidateQueries({ queryKey: ['payroll'] }); },
@@ -413,6 +420,21 @@ export default function PayrollPage() {
             <option value={0}>All months</option>
             {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
           </select>
+          {canProcess && (
+            <button
+              onClick={() => {
+                if (!filterMonth) { toast.error('Pick a specific month to release all.'); return; }
+                const period = `${MONTHS[filterMonth - 1]} ${filterYear}`;
+                if (!window.confirm(`Release ALL approved payrolls for ${period}?\n\nOnly Approved records are released. Drafts are skipped (approve them first) and already-released records stay as they are.`)) return;
+                releaseMonthMutation.mutate({ month: filterMonth, year: filterYear });
+              }}
+              disabled={!filterMonth || releaseMonthMutation.isPending}
+              title={filterMonth ? 'Release every approved payroll for the selected month' : 'Pick a specific month first'}
+              className="ml-auto inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <BanknotesIcon className="w-4 h-4" /> {releaseMonthMutation.isPending ? 'Releasing…' : 'Release All (Approved)'}
+            </button>
+          )}
         </div>
       </div>
 

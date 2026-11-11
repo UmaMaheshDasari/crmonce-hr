@@ -108,7 +108,7 @@ function validate(input = {}, opts = {}) {
 
   v.gross = computeGross(v);
   v.professionalTax = calculateProfessionalTax(v.gross);   // auto — slab, never manual
-  v.status = ['active', 'superseded', 'draft'].includes(input.status) ? input.status : 'active';
+  v.status = ['active', 'superseded', 'draft', 'disabled'].includes(input.status) ? input.status : 'active';
   v.remarks = input.remarks != null ? String(input.remarks) : '';
   if (input.employeeName != null) v.employeeName = String(input.employeeName);
 

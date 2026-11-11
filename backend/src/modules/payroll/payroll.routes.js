@@ -218,7 +218,7 @@ async function runGeneration({ month, year, employeeIds } = {}) {
   const ptConfigured = (await ptMaster.loadActiveSlabs().catch(() => [])).length > 0;
 
   const draft = toValue('hr_payroll_status', 'draft');
-  let created = 0, updated = 0, skipped = 0, locked = 0, noStructure = 0;
+  let created = 0, updated = 0, skipped = 0, locked = 0, noStructure = 0, disabledStructure = 0;
   const warnings = [];   // per-employee payroll warnings (surfaced in the UI)
   {
     for (const emp of employees) {
@@ -237,6 +237,14 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       if (!structure) {
         noStructure++;
         warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'no_salary_structure', message: `Salary Structure not found for the payroll period (no revision effective on or before ${month}/${year}).` });
+        continue;
+      }
+      // A DISABLED salary structure is excluded from payroll: the effective revision for this
+      // period is disabled, so skip the employee (no silent fall-back to an older revision — that
+      // could pay a stale amount). Enable it, or add a new revision, to include them.
+      if (structure.status === 'disabled') {
+        disabledStructure++;
+        warnings.push({ employeeId: emp.hr_hremployeeid, employeeName: emp.hr_hremployee1, code: 'salary_structure_disabled', message: `Salary Structure is disabled for the payroll period — payroll skipped. Enable it or add a new revision to include this employee.` });
         continue;
       }
       const earnings = { basic: structure.basic, hra: structure.hra, special: structure.special, medical: structure.medical, conveyance: structure.conveyance, otherAllowance: structure.otherAllowance };
@@ -316,7 +324,7 @@ async function runGeneration({ month, year, employeeIds } = {}) {
       } catch { /* audit is best-effort */ }
     }
   }
-  return { created, updated, skipped, locked, noStructure, count: created + updated, warnings };
+  return { created, updated, skipped, locked, noStructure, disabledStructure, count: created + updated, warnings };
 }
 
 /**
@@ -345,7 +353,7 @@ async function generatePayroll(req, res, next) {
     const r = await runGeneration({ month, year, employeeIds: sel.ids });
     try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${r.created + r.updated} employees${r.locked ? `, ${r.locked} locked skipped` : ''}${r.noStructure ? `, ${r.noStructure} without salary structure` : ''}` }); } catch {}
     broadcast('payroll:processed', { month: `${month}/${year}`, count: r.created + r.updated });
-    res.json({ message: `Payroll generated for ${r.created + r.updated} employees (${r.skipped} finalised, ${r.locked} locked skipped${r.noStructure ? `, ${r.noStructure} without salary structure` : ''})`, ...r });
+    res.json({ message: `Payroll generated for ${r.created + r.updated} employees (${r.skipped} finalised, ${r.locked} locked skipped${r.noStructure ? `, ${r.noStructure} without salary structure` : ''}${r.disabledStructure ? `, ${r.disabledStructure} with a disabled salary structure` : ''})`, ...r });
   } catch (err) { next(err); }
 }
 
@@ -497,6 +505,36 @@ payrollRouter.post('/lock-month', requireAnyPermission('payroll.edit'), async (r
     try { activity.record({ category: 'Payroll', type: 'payroll_locked', title: 'Payroll Month Locked', name: req.user?.name, meta: `${req.user?.name || 'Admin'} locked ${n} payroll rows for ${month}/${year}` }); } catch {}
     res.json({ message: `Locked ${n} payroll record(s) for ${month}/${year}.`, locked: n });
   } catch (err) { res.status(err.status || 400).json({ error: err.message || 'Failed to lock month' }); }
+});
+
+// POST /release-month  — bulk-release EVERY APPROVED (processed) row for a month → 'paid' (HR).
+// Only 'processed' rows are released; DRAFT rows are never released (they must be approved first),
+// and already-released ('paid') rows are left unchanged. Returns how many were released + skipped.
+payrollRouter.post('/release-month', requireAnyPermission('payroll.process'), async (req, res, next) => {
+  try {
+    const month = odInt(req.body.month), year = odInt(req.body.year);
+    if (month === null || year === null || month < 1 || month > 12) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
+    const processed = toValue('hr_payroll_status', 'processed');
+    const draft = toValue('hr_payroll_status', 'draft');
+    // Fetch all rows for the month so we can both release the approved ones AND report how many
+    // drafts were skipped (drafts are intentionally NOT released).
+    const { data } = await d365.getListOptional(PAYROLL, {
+      select: 'hr_hrpayrollid,hr_status,hr_month,hr_year,_hr_hremployee_value',
+      filter: `hr_month eq ${month} and hr_year eq ${year}`,
+    });
+    let released = 0, skippedDrafts = 0;
+    const releasedBy = req.user?.name || req.user?.email || 'HR';
+    for (const r of data || []) {
+      if (String(r.hr_status) === String(draft)) { skippedDrafts++; continue; }   // never release a draft
+      if (String(r.hr_status) !== String(processed)) continue;                     // already paid / other → leave as-is
+      await updateOpt(r.hr_hrpayrollid, { hr_status: RELEASED_STATUS, hr_releasedby: releasedBy, hr_releaseddate: new Date().toISOString() });
+      // Releasing makes the payslip visible to the employee — notify them (best-effort).
+      if (r._hr_hremployee_value) { try { notifyUser(r._hr_hremployee_value, 'payroll:processed', { month: `${month}/${year}` }); } catch {} }
+      released++;
+    }
+    try { activity.record({ category: 'Payroll', type: 'payroll_released', title: 'Payroll Month Released', name: req.user?.name, meta: `${releasedBy} released ${released} approved payroll row(s) for ${month}/${year} (${skippedDrafts} draft(s) skipped)` }); } catch {}
+    res.json({ message: `Released ${released} approved payroll record(s) for ${month}/${year}.${skippedDrafts ? ` ${skippedDrafts} draft(s) were skipped (approve them first).` : ''}`, released, skippedDrafts });
+  } catch (err) { res.status(err.status || 400).json({ error: err.message || 'Failed to release month' }); }
 });
 
 // PATCH /:id/release  — release payroll → status 'paid'
