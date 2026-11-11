@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requireRole, requireAnyPermission } = require('../../middleware/auth.middleware');
 const automation = require('../../services/payroll-automation.service');
+const { parseEmployeeIds } = require('./payroll.routes');   // same employee-selection validation as /generate
 
 // GET /jobs  — automation run history (most recent first).
 router.get('/jobs', requireAnyPermission('payroll.process'), async (req, res, next) => {
@@ -20,7 +21,9 @@ router.post('/run', requireAnyPermission('payroll.process'), async (req, res, ne
   try {
     const month = Number(req.body.month), year = Number(req.body.year);
     if (!month || !year) return res.status(400).json({ error: 'month and year are required.' });
-    const job = await automation.runJob({ month, year, employeeIds: req.body.employeeIds, user: req.user, trigger: 'manual' });
+    const sel = parseEmployeeIds(req.body.employeeIds);   // optional scope — same rules as /generate
+    if (!sel.ok) return res.status(sel.error.status).json({ error: sel.error.message });
+    const job = await automation.runJob({ month, year, employeeIds: sel.ids, user: req.user, trigger: 'manual' });
     res.status(202).json(job);
   } catch (err) {
     console.error('[automation/run] FAILED:', err.message);

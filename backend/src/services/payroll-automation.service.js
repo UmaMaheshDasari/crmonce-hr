@@ -11,6 +11,7 @@
  */
 const d365 = require('./d365.service');
 const { toValue } = require('./picklist');
+const { odGuid } = require('./odata.util');
 const activity = require('./activity.service');
 const { broadcast } = require('./notification.service');
 const leaveEngine = require('./leave-engine.service');
@@ -115,7 +116,10 @@ async function ensureTable() { try { await d365.getList(ENTITY, { top: 1 }); } c
 
 async function runStages({ id, month, year, employeeIds, stages, logs, summary, onlyKeys }) {
   const employees = await (async () => {
-    const filter = employeeIds?.length ? employeeIds.map((x) => `hr_hremployeeid eq '${x}'`).join(' or ') : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
+    // employeeIds are GUID-validated before interpolation — a raw client string
+    // must never reach the OData filter (filter-injection / scope escape).
+    const validIds = [...new Set((Array.isArray(employeeIds) ? employeeIds : []).map(odGuid).filter(Boolean))];
+    const filter = validIds.length ? validIds.map((x) => `hr_hremployeeid eq '${x}'`).join(' or ') : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
     const { data } = await d365.getList(EMP, { select: 'hr_hremployeeid', filter, top: 5000 });
     return data || [];
   })();
@@ -160,6 +164,9 @@ async function executeJob({ id, month, year, employeeIds, stages, logs, summary,
  */
 async function runJob({ month, year, employeeIds, user, trigger = 'manual', wait = false }) {
   await ensureTable();
+  // Restrict to valid GUIDs up front — an invalid/missing id can never silently
+  // widen the background run to every active employee.
+  const validIds = [...new Set((Array.isArray(employeeIds) ? employeeIds : []).map(odGuid).filter(Boolean))];
   const stages = blankStages();
   const logs = [{ ts: new Date().toISOString(), level: 'info', message: `Automation started for ${MONTHS[month]} ${year} by ${user?.name || 'system'}.` }];
   const summary = {};
@@ -169,7 +176,7 @@ async function runJob({ month, year, employeeIds, user, trigger = 'manual', wait
     hr_stages: stages, hr_summary: summary, hr_logs: logs,
   });
   const id = created.hr_payrolljobid;
-  const exec = executeJob({ id, month, year, employeeIds, stages, logs, summary });
+  const exec = executeJob({ id, month, year, employeeIds: validIds, stages, logs, summary });
   if (wait) await exec; else exec.catch(() => {});
   return shapeJob({ ...created, hr_payrolljobid: id, hr_stages: JSON.stringify(stages), hr_logs: JSON.stringify(logs), hr_summary: JSON.stringify(summary) });
 }

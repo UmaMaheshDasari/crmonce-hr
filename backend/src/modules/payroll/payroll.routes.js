@@ -31,6 +31,11 @@ const E = d365.constructor.entities;
 const PAYROLL = E.payroll;
 const pad2 = (n) => String(n).padStart(2, '0');
 
+// A payslip is visible to the EMPLOYEE only after HR releases it (status 'paid').
+// Draft / approved (processed) rows stay HR-only until release.
+const RELEASED_STATUS = toValue('hr_payroll_status', 'paid');
+const isReleased = (p) => String(p?.hr_status) === String(RELEASED_STATUS) || toLabel('hr_payroll_status', p?.hr_status) === 'paid';
+
 // Base columns always present + computed/workflow columns that may not be
 // provisioned yet (selected/stored optionally so payroll works before migration).
 const BASE_SELECT = 'hr_hrpayrollid,hr_month,hr_year,hr_basic,hr_allowances,hr_deductions,hr_netpay,hr_status,hr_processeddate,_hr_hremployee_value';
@@ -153,8 +158,11 @@ payrollRouter.get('/', requireAnyPermission('payroll.view', 'payslip.view'), asy
     const { employeeId, month, year, page = 1, limit = 20 } = req.query;
     const filters = [];
     // Employees are locked to their own id; HR may pass an employeeId (validated GUID).
-    const targetId = req.user.role === 'employee' ? req.user.id : employeeId;
+    const isEmployee = req.user.role === 'employee';
+    const targetId = isEmployee ? req.user.id : employeeId;
     if (targetId) filters.push(`_hr_hremployee_value eq '${odGuid(targetId) || odStr(targetId)}'`);
+    // Until HR RELEASES a payslip, the employee must not see it at all (draft or approved).
+    if (isEmployee) filters.push(`hr_status eq ${RELEASED_STATUS}`);
     // month/year are interpolated UNQUOTED — must be integers or a crafted value could
     // break out of the self-scope (`?month=1 or hr_year eq 2025`). Validate strictly.
     const m = odInt(month); if (m !== null) filters.push(`hr_month eq ${m}`);
@@ -189,9 +197,12 @@ payrollRouter.get('/', requireAnyPermission('payroll.view', 'payslip.view'), asy
 // Payroll Automation orchestrator. Idempotent: updates an existing DRAFT, skips
 // locked/finalised months. Returns counts (no HTTP). Runs Attendance → Leave →
 // LOP → Advance → Salary Calculation → Payroll for each employee.
+// `employeeIds` (optional) restricts the run to exactly those employees — a
+// single id generates ONE employee's payroll. Ids are GUID-validated: anything
+// invalid is dropped, never interpolated (an id can only narrow the run).
 async function runGeneration({ month, year, employeeIds } = {}) {
   month = odInt(month); year = odInt(year);   // never interpolate a raw month/year
-  const validIds = (employeeIds || []).map(odGuid).filter(Boolean);
+  const validIds = [...new Set((Array.isArray(employeeIds) ? employeeIds : []).map(odGuid).filter(Boolean))];
   const filter = validIds.length
     ? validIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ')
     : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
@@ -308,13 +319,30 @@ async function runGeneration({ month, year, employeeIds } = {}) {
   return { created, updated, skipped, locked, noStructure, count: created + updated, warnings };
 }
 
+/**
+ * Validate the optional `employeeIds` selection (single-employee or small-batch
+ * generation). Returns { ok, ids } — ids is a de-duplicated GUID array, or null
+ * when the field is absent (→ bulk generation for ALL active employees, the
+ * unchanged legacy behaviour). A malformed selection (non-array / empty / any
+ * non-GUID entry) is REJECTED: silently dropping a bad id must never widen the
+ * run back to "everyone" — that would expose salary rows HR never asked to touch.
+ */
+function parseEmployeeIds(v) {
+  if (v === undefined || v === null) return { ok: true, ids: null };
+  const bad = () => { const e = new Error('employeeIds must be a non-empty array of employee GUIDs (omit it to generate for all employees).'); e.status = 400; return { ok: false, error: e }; };
+  if (!Array.isArray(v) || v.length === 0) return bad();
+  if (!v.every((x) => typeof x === 'string' && odGuid(x))) return bad();
+  return { ok: true, ids: [...new Set(v)] };   // de-duplicated GUIDs
+}
+
 // POST /generate  — HTTP wrapper around runGeneration (HR).
 async function generatePayroll(req, res, next) {
   try {
     const month = odInt(req.body.month), year = odInt(req.body.year);
-    const { employeeIds } = req.body;
     if (month === null || year === null || month < 1 || month > 12) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
-    const r = await runGeneration({ month, year, employeeIds });
+    const sel = parseEmployeeIds(req.body.employeeIds);
+    if (!sel.ok) return res.status(sel.error.status).json({ error: sel.error.message });
+    const r = await runGeneration({ month, year, employeeIds: sel.ids });
     try { activity.record({ category: 'Payroll', type: 'payroll_generated', title: 'Payroll Generated', name: req.user?.name, meta: `${req.user?.name || 'Admin'} generated payroll for ${month}/${year} — ${r.created + r.updated} employees${r.locked ? `, ${r.locked} locked skipped` : ''}${r.noStructure ? `, ${r.noStructure} without salary structure` : ''}` }); } catch {}
     broadcast('payroll:processed', { month: `${month}/${year}`, count: r.created + r.updated });
     res.json({ message: `Payroll generated for ${r.created + r.updated} employees (${r.skipped} finalised, ${r.locked} locked skipped${r.noStructure ? `, ${r.noStructure} without salary structure` : ''})`, ...r });
@@ -328,7 +356,9 @@ async function validateGeneration(req, res, next) {
   try {
     const month = odInt(req.body.month), year = odInt(req.body.year);
     if (month === null || year === null || month < 1 || month > 12) return res.status(400).json({ error: 'A valid month (1-12) and year are required.' });
-    const validIds = (req.body.employeeIds || []).map(odGuid).filter(Boolean);
+    const sel = parseEmployeeIds(req.body.employeeIds);
+    if (!sel.ok) return res.status(sel.error.status).json({ error: sel.error.message });
+    const validIds = sel.ids || [];
     const filter = validIds.length ? validIds.map(id => `hr_hremployeeid eq '${id}'`).join(' or ') : `hr_status eq ${toValue('hr_employee_status', 'active')}`;
     const { data: employees } = await d365.getListOptional(E.employee, { select: 'hr_hremployeeid,hr_hremployee1', optionalSelect: 'hr_ptstate', filter });
     const settings = await payrollSettings.getResolved().catch(() => payrollSettings.resolve(null));
@@ -375,7 +405,7 @@ async function finalizeMonth({ month, year, employeeIds } = {}) {
   const draft = toValue('hr_payroll_status', 'draft');
   const processed = toValue('hr_payroll_status', 'processed');
   const filters = [`hr_year eq ${odInt(year)}`, `hr_month eq ${odInt(month)}`, `hr_status eq ${draft}`];
-  const validIds = (employeeIds || []).map(odGuid).filter(Boolean);
+  const validIds = [...new Set((Array.isArray(employeeIds) ? employeeIds : []).map(odGuid).filter(Boolean))];
   if (validIds.length) filters.push('(' + validIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ') + ')');
   const { data } = await d365.getListOptional(PAYROLL, { select: BASE_SELECT, optionalSelect: OPT_SELECT, filter: filters.join(' and '), top: 2000 });
   let approved = 0, emailed = 0, emailFailed = 0, notified = 0, failed = 0;
@@ -472,11 +502,14 @@ payrollRouter.post('/lock-month', requireAnyPermission('payroll.edit'), async (r
 // PATCH /:id/release  — release payroll → status 'paid'
 payrollRouter.patch('/:id/release', requireAnyPermission('payroll.process'), async (req, res, next) => {
   try {
+    const p = await d365.getByIdOptional(PAYROLL, req.params.id, { select: 'hr_hrpayrollid,hr_month,hr_year,_hr_hremployee_value', optionalSelect: 'hr_status' });
     await updateOpt(req.params.id, {
-      hr_status: toValue('hr_payroll_status', 'paid'),
+      hr_status: RELEASED_STATUS,
       hr_releasedby: req.user?.name || req.user?.email || 'HR',
       hr_releaseddate: new Date().toISOString(),
     });
+    // Releasing is what makes the payslip visible to the employee — tell them.
+    if (p?._hr_hremployee_value) { try { notifyUser(p._hr_hremployee_value, 'payroll:processed', { month: `${p.hr_month}/${p.hr_year}` }); } catch {} }
     res.json({ message: 'Payroll released' });
   } catch (err) {
     console.error('[payroll/release] FAILED:', err.message);
@@ -557,6 +590,9 @@ payrollRouter.get('/:id/payslip', requireAnyPermission('payroll.view', 'payslip.
     if (req.user.role === 'employee' && payroll._hr_hremployee_value !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
+    if (req.user.role === 'employee' && !isReleased(payroll)) {
+      return res.status(403).json({ error: 'This payslip has not been released yet.' });
+    }
     const empId = payroll._hr_hremployee_value;
     const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
       select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
@@ -577,6 +613,7 @@ payrollRouter.get('/:id/payslip', requireAnyPermission('payroll.view', 'payslip.
 async function loadPayrollWithEmployee(id, user) {
   const payroll = await d365.getByIdOptional(PAYROLL, id, { select: BASE_SELECT, optionalSelect: OPT_SELECT });
   if (user.role === 'employee' && payroll._hr_hremployee_value !== user.id) { const e = new Error('Access denied'); e.status = 403; throw e; }
+  if (user.role === 'employee' && !isReleased(payroll)) { const e = new Error('This payslip has not been released yet.'); e.status = 403; throw e; }
   const empId = payroll._hr_hremployee_value;
   const employee = empId ? await d365.getByIdOptional(E.employee, empId, {
     select: 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_designation,_hr_manager_value',
@@ -609,3 +646,4 @@ module.exports = payrollRouter;
 module.exports.runGeneration = runGeneration;    // reused by the Automation orchestrator
 module.exports.finalizeMonth = finalizeMonth;
 module.exports.computeMonthFacts = computeMonthFacts;   // exported for unit tests (attendance → payable/LOP)
+module.exports.parseEmployeeIds = parseEmployeeIds;     // shared with the automation routes (same validation)

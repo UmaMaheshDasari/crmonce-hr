@@ -86,7 +86,7 @@ function SalaryFormModal({ record, employees, onClose }) {
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">₹</span>
         <input type="number" min="0" step="1" disabled={disabled}
           className={`w-full h-10 pl-7 pr-3 bg-gray-50 border ${errors[name] ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'} rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 focus:bg-white transition-all disabled:opacity-50 disabled:bg-gray-100`}
-          {...register(name, required ? { required: true, min: { value: 1, message: 'Required' } } : {})} />
+          {...register(name, required ? { required: true, min: { value: 0, message: 'Cannot be negative' } } : { min: { value: 0, message: 'Cannot be negative' } })} />
       </div>
     </div>
   );

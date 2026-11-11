@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { payrollApi } from '../../api/endpoints';
+import { payrollApi, employeeApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
 import { CurrencyDollarIcon, PlayIcon, XMarkIcon, BanknotesIcon, UserGroupIcon, ChartBarIcon, CalendarIcon, ExclamationTriangleIcon, ArrowDownTrayIcon, CheckCircleIcon, LockClosedIcon, LockOpenIcon, EyeIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
@@ -54,18 +54,32 @@ function ProcessPayrollModal({ onClose }) {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
+  const [scope, setScope] = useState('all');        // all | single
+  const [employeeId, setEmployeeId] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [checks, setChecks] = useState(null);
   const resetPeriod = () => { setConfirmed(false); setChecks(null); };
 
+  // Employee list for single-person generation.
+  const { data: empRes } = useQuery({
+    queryKey: ['employees-lite'],
+    queryFn: () => employeeApi.list({ limit: 500 }),
+    enabled: scope === 'single',
+  });
+  const employees = empRes?.data?.data || empRes?.data || [];
+  const selectedEmployee = employees.find(e => e.hr_hremployeeid === employeeId);
+  const singleMissing = scope === 'single' && !employeeId;
+  // Backend already accepts employeeIds — a one-item array generates one person.
+  const target = () => ({ month, year, ...(scope === 'single' && employeeId ? { employeeIds: [employeeId] } : {}) });
+
   const validate = useMutation({
-    mutationFn: () => payrollApi.validate({ month, year }),
+    mutationFn: () => payrollApi.validate(target()),
     onSuccess: (res) => setChecks(res.data),
     onError: (err) => toast.error(err.response?.data?.error || 'Validation failed'),
   });
 
   const mutation = useMutation({
-    mutationFn: () => payrollApi.generate({ month, year }),
+    mutationFn: () => payrollApi.generate(target()),
     onSuccess: (res) => {
       const w = res.data?.warnings?.length || 0;
       toast.success((res.data?.message || `Payroll generated for ${res.data.count} employees`) + (w ? ` · ${w} warning(s)` : ''));
@@ -109,6 +123,31 @@ function ProcessPayrollModal({ onClose }) {
             </div>
           </div>
 
+          {/* Scope: everyone or one employee */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1.5">Generate for</label>
+            <div className="grid grid-cols-2 gap-2">
+              {[['all', 'All employees'], ['single', 'Single employee']].map(([key, label]) => (
+                <button key={key} type="button"
+                  onClick={() => { setScope(key); resetPeriod(); }}
+                  className={`px-3 py-2 rounded-xl text-sm font-semibold border transition-colors ${scope === key ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {scope === 'single' && (
+              <select value={employeeId} onChange={e => { setEmployeeId(e.target.value); resetPeriod(); }}
+                className="mt-2 w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all">
+                <option value="">Select employee…</option>
+                {employees.map(e => (
+                  <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>
+                    {e.hr_hremployee1}{e.hr_employeeid ? ` (${e.hr_employeeid})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
           {/* Selected period display */}
           <div className="flex items-center justify-center">
             <div className="inline-flex items-center gap-3 bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 rounded-2xl px-5 py-3">
@@ -119,10 +158,11 @@ function ProcessPayrollModal({ onClose }) {
 
           {/* Pre-flight validation (spec §Validation / §Warnings) */}
           <div>
-            <button onClick={() => validate.mutate()} disabled={validate.isPending}
+            <button onClick={() => validate.mutate()} disabled={validate.isPending || singleMissing}
               className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl hover:bg-indigo-100 disabled:opacity-50 transition-colors">
               <ShieldCheckIcon className="w-4 h-4" /> {validate.isPending ? 'Validating…' : 'Validate before generating'}
             </button>
+            {singleMissing && <p className="mt-2 text-xs font-medium text-amber-600">Select an employee to generate a single payslip.</p>}
             {checks && (
               <div className="mt-3 space-y-2">
                 <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
@@ -150,12 +190,13 @@ function ProcessPayrollModal({ onClose }) {
                   {confirmed ? 'Ready to process!' : 'Please confirm this action'}
                 </p>
                 <p className={`text-xs mt-1 ${confirmed ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  This will generate draft payroll for all active employees for {MONTHS[month-1]} {year}.
+                  This will generate draft payroll for {scope === 'single' ? (selectedEmployee?.hr_hremployee1 || 'the selected employee') : 'all active employees'} for {MONTHS[month-1]} {year}.
                 </p>
                 {!confirmed && (
                   <button
                     onClick={() => setConfirmed(true)}
-                    className="mt-3 text-xs font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-lg transition-colors"
+                    disabled={singleMissing}
+                    className="mt-3 text-xs font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     I understand, confirm
                   </button>
@@ -172,7 +213,7 @@ function ProcessPayrollModal({ onClose }) {
           </button>
           <button
             onClick={() => mutation.mutate()}
-            disabled={!confirmed || mutation.isPending}
+            disabled={!confirmed || mutation.isPending || singleMissing}
             className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
           >
             {mutation.isPending && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}

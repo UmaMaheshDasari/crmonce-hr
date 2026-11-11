@@ -4,6 +4,8 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import useVersionCheck from './hooks/useVersionCheck';
 import AppShell from './layouts/AppShell';
+import ModuleRoute from './components/ModuleRoute';
+import { PAYROLL_MODULE, SALARY_STRUCTURE_MODULE } from './utils/module-settings';
 import LoginPage from './modules/auth/LoginPage';
 import AzureCallback from './modules/auth/AzureCallback';
 import Dashboard from './modules/dashboard/Dashboard';
@@ -97,18 +99,24 @@ function AppRoutes() {
         <Route path="leave-opening-balance" element={<ProtectedRoute roles={['super_admin','hr_manager']}><LeaveOpeningBalancePage /></ProtectedRoute>} />
         {/* Shift History = HR/Admin only. Effective-dated shift assignments per employee. */}
         <Route path="shift-history" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ShiftHistoryPage /></ProtectedRoute>} />
-        <Route path="payroll" element={<PayrollPage />} />
-        <Route path="payroll-dashboard" element={<ProtectedRoute roles={['super_admin','hr_manager']}><PayrollDashboardPage /></ProtectedRoute>} />
-        <Route path="payroll-automation" element={<ProtectedRoute roles={['super_admin','hr_manager']}><AutomationPage /></ProtectedRoute>} />
-        {/* Salary Structure = HR/Admin only. Employees see their pay via My Payslips. */}
-        <Route path="salary-structure" element={<ProtectedRoute roles={['super_admin','hr_manager']}><SalaryStructurePage /></ProtectedRoute>} />
-        <Route path="advance-salary" element={<AdvanceSalaryPage />} />
+        {/* Payroll-family routes honour the Company Settings → Modules switches —
+            the same flags the sidebar and the backend APIs enforce, so a direct URL
+            to a disabled module redirects home instead of rendering a dead page.
+            /payroll-settings stays reachable (it lives inside Company Settings — an
+            admin must be able to configure payroll policy while payroll is off). */}
+        <Route path="payroll" element={<ModuleRoute module={PAYROLL_MODULE}><PayrollPage /></ModuleRoute>} />
+        <Route path="payroll-dashboard" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ModuleRoute module={PAYROLL_MODULE}><PayrollDashboardPage /></ModuleRoute></ProtectedRoute>} />
+        <Route path="payroll-automation" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ModuleRoute module={PAYROLL_MODULE}><AutomationPage /></ModuleRoute></ProtectedRoute>} />
+        {/* Salary Structure = HR/Admin only. Employees see their pay via My Payslips.
+            Independent module switch (can stay on while Payroll is off). */}
+        <Route path="salary-structure" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ModuleRoute module={SALARY_STRUCTURE_MODULE}><SalaryStructurePage /></ModuleRoute></ProtectedRoute>} />
+        <Route path="advance-salary" element={<ModuleRoute module={PAYROLL_MODULE}><AdvanceSalaryPage /></ModuleRoute>} />
         <Route path="payroll-settings" element={<ProtectedRoute roles={['super_admin']}><PayrollSettingsPage /></ProtectedRoute>} />
-        <Route path="pt-master" element={<ProtectedRoute roles={['super_admin','hr_manager']}><PTMasterPage /></ProtectedRoute>} />
+        <Route path="pt-master" element={<ProtectedRoute roles={['super_admin','hr_manager']}><ModuleRoute module={PAYROLL_MODULE}><PTMasterPage /></ModuleRoute></ProtectedRoute>} />
         <Route path="recruitment" element={<RecruitmentPage />} />
         <Route path="performance" element={<PerformancePage />} />
         <Route path="goals" element={<GoalsPage />} />
-        <Route path="tax-declarations" element={<TaxDeclarationPage />} />
+        <Route path="tax-declarations" element={<ModuleRoute module={PAYROLL_MODULE}><TaxDeclarationPage /></ModuleRoute>} />
         {/* Documents: HR sees all (management); an employee sees ONLY their own —
             the page and the /api/documents backend both self-scope by role. */}
         <Route path="documents" element={<DocumentsPage />} />

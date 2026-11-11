@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { companyApi, employeeApi } from '../api/endpoints';
+import { isModuleEnabled } from '../utils/module-settings';
 import NotificationBell from '../components/NotificationBell';
 import Avatar from '../components/Avatar';
 import {
@@ -82,6 +83,13 @@ const NAV = [
     ],
   },
 ];
+
+// Payroll-family screens hidden when the Payroll module is switched off in Company
+// Settings. Salary Structure has its own independent switch (see below).
+const PAYROLL_OFF_HIDDEN = new Set([
+  '/payroll', '/payroll-dashboard', '/payroll-automation',
+  '/advance-salary', '/pt-master', '/tax-declarations',
+]);
 
 const LABEL_MAP = {
   '/':            'Dashboard',
@@ -182,12 +190,100 @@ function NavGroup({ item, open, onToggle, containsActive, onNavigate }) {
   );
 }
 
+// The sidebar itself (shared by the desktop rail and the mobile drawer). Declared
+// OUTSIDE AppShell so it keeps ONE stable component identity — defining it inside
+// the render would recreate (and remount) the whole nav subtree on every render.
+function Sidebar({
+  mobile, collapsed, companyName, companyLogo, me, user,
+  visibleNav, flatNav, isGroupOpen, onToggleGroup, groupContainsActive,
+  onToggleCollapsed, onCloseMobile, onLogout,
+}) {
+  const isCollapsed = collapsed && !mobile;   // collapse only on desktop; drawer is always full
+  return (
+    <nav
+      aria-label="Primary"
+      className={`relative flex flex-col h-full transition-[width] duration-200 ${mobile ? 'w-[250px]' : (isCollapsed ? 'w-[68px]' : 'lg:w-[220px] xl:w-[250px] w-[250px]')}`}
+      style={{ background: 'linear-gradient(180deg, #1B4F72 0%, #0E2F44 100%)' }}
+    >
+      {/* Company header */}
+      <div className={`flex items-center h-16 flex-shrink-0 ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'}`}>
+        <div className="w-10 h-10 flex-shrink-0 rounded-xl bg-white flex items-center justify-center overflow-hidden" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+          <img src={companyLogo} alt={companyName} className="w-full h-full object-contain p-0.5"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        </div>
+        {!isCollapsed && (
+          <div className="min-w-0 leading-tight">
+            <span className="block font-semibold text-white text-[15px] tracking-tight truncate">{companyName.split('(')[0].trim()}</span>
+            <span className="block text-[11px] text-slate-400 font-medium tracking-wide uppercase truncate">HR System</span>
+          </div>
+        )}
+        {mobile && (
+          <button onClick={onCloseMobile} aria-label="Close menu" className="ml-auto text-slate-400 hover:text-white transition-colors">
+            <XMarkIcon className="w-5 h-5" />
+          </button>
+        )}
+        {/* Desktop collapse toggle */}
+        {!mobile && (
+          <button
+            onClick={onToggleCollapsed}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={isCollapsed ? 'Expand' : 'Collapse'}
+            className={`${isCollapsed ? 'absolute -right-3 top-5 z-30 bg-[#0E2F44] border border-white/10 shadow-md' : 'ml-auto'} w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors`}
+          >
+            {isCollapsed ? <ChevronDoubleRightIcon className="w-3.5 h-3.5" /> : <ChevronDoubleLeftIcon className="w-3.5 h-3.5" />}
+          </button>
+        )}
+      </div>
+
+      <div className="mx-3 h-px bg-white/[0.06]" />
+
+      {/* Navigation */}
+      <div className="flex-1 sidebar-scroll overflow-y-auto px-3 py-3">
+        {!isCollapsed && (
+          <p className="px-2 pb-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Menu</p>
+        )}
+        <div className="space-y-1">
+          {isCollapsed
+            ? flatNav.map(item => (
+                <NavItem key={item.to} item={item} collapsed onClick={() => mobile && onCloseMobile()} />
+              ))
+            : visibleNav.map(item => item.children
+                ? <NavGroup key={item.group} item={item} open={isGroupOpen(item)} containsActive={groupContainsActive(item)}
+                    onToggle={() => onToggleGroup(item)} onNavigate={() => mobile && onCloseMobile()} />
+                : <NavItem key={item.to} item={item} collapsed={false} onClick={() => mobile && onCloseMobile()} />)}
+        </div>
+      </div>
+
+      {/* User profile + sign out */}
+      <div className="flex-shrink-0 border-t border-white/[0.06] px-3 py-3 space-y-1">
+        <div className={`flex items-center rounded-lg ${isCollapsed ? 'justify-center px-0 py-1' : 'gap-3 px-2 py-1.5'}`} title={isCollapsed ? `${user?.name} · ${user?.role?.replace('_', ' ')}` : undefined}>
+          <Avatar emp={me} name={user?.name} className="w-10 h-10 flex-shrink-0 bg-gradient-to-br from-[#E84C88] to-[#D81B60] rounded-full" initialsClassName="text-white text-xs font-bold" style={{ boxShadow: '0 4px 12px rgba(232, 76, 136, 0.25)' }} />
+          {!isCollapsed && (
+            <div className="min-w-0">
+              <p className="text-[14px] font-semibold text-white truncate">{user?.name}</p>
+              <p className="text-[12px] text-slate-400 capitalize truncate">{user?.role?.replace('_', ' ')}</p>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onLogout}
+          title={isCollapsed ? 'Sign out' : undefined}
+          aria-label="Sign out"
+          className={`group flex items-center h-11 w-full rounded-lg text-[14px] font-medium text-slate-300/80 hover:bg-white/[0.06] hover:text-white transition-colors duration-200 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#E84C88]/50 focus-visible:ring-inset ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'}`}
+        >
+          <ArrowRightOnRectangleIcon className="w-[18px] h-[18px] flex-shrink-0 text-slate-400 group-hover:text-rose-400 transition-colors" aria-hidden />
+          {!isCollapsed && <span>Sign out</span>}
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 export default function AppShell() {
   const { user, logout, hasRole, hasPermission } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   const toggleCollapsed = () => setCollapsed(c => { localStorage.setItem('sidebarCollapsed', c ? '0' : '1'); return !c; });
-  const [expandedMenu, setExpandedMenu] = useState(null);   // accordion: at most ONE open group
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -208,7 +304,17 @@ export default function AppShell() {
   // so the Employee role never sees those two; every other item is unchanged.)
   // A nav item is visible when its role gate (if any) AND its granular permission gate
   // (if any) both pass. Permission gating (RBAC Phase E) drives the Admin RBAC items.
-  const canSee = (n) => (!n.roles || hasRole(...n.roles)) && (!n.permission || hasPermission(n.permission));
+  // Module switches (Company Settings). While the company query is loading they
+  // default to ON so the sidebar never flickers items out mid-render.
+  const payrollEnabled = !company || isModuleEnabled(company.hr_payrollenabled);
+  const salaryStructureEnabled = !company || isModuleEnabled(company.hr_salarystructureenabled);
+  const canSee = (n) => {
+    if (n.roles && !hasRole(...n.roles)) return false;
+    if (n.permission && !hasPermission(n.permission)) return false;
+    if (n.to && !payrollEnabled && PAYROLL_OFF_HIDDEN.has(n.to)) return false;
+    if (n.to === '/salary-structure' && !salaryStructureEnabled) return false;
+    return true;
+  };
   const visibleNav = NAV.map(item => {
     if (!canSee(item)) return null;
     if (item.children) {
@@ -231,102 +337,24 @@ export default function AppShell() {
 
   // Accordion: exactly one group open at a time. On navigation, auto-open the group
   // that holds the active route (and collapse all others). A user toggle switches
-  // the single open group; clicking the open one collapses it.
+  // the single open group; clicking the open one collapses it. The manual choice is
+  // stored per-path so it survives re-renders and is dropped on navigation — derived
+  // while rendering (no effect, so no cascading re-render).
+  const activeGroup = (NAV.find(i => i.children && i.children.some(c => c.to === currentPath)) || {}).group || null;
+  const [manualOpen, setManualOpen] = useState(null);   // { path, group } — the user's toggle for the current path
+  const expandedMenu = manualOpen?.path === currentPath ? manualOpen.group : activeGroup;
   const groupContainsActive = (item) => item.children.some(c => c.to === currentPath);
-  useEffect(() => {
-    const active = NAV.find(i => i.children && i.children.some(c => c.to === currentPath));
-    setExpandedMenu(active ? active.group : null);
-  }, [currentPath]);
   const isGroupOpen = (item) => expandedMenu === item.group;
-  const toggleGroup = (item) => setExpandedMenu(cur => (cur === item.group ? null : item.group));
-
-  const Sidebar = ({ mobile = false }) => {
-    const isCollapsed = collapsed && !mobile;   // collapse only on desktop; drawer is always full
-    return (
-    <nav
-      aria-label="Primary"
-      className={`relative flex flex-col h-full transition-[width] duration-200 ${mobile ? 'w-[250px]' : (isCollapsed ? 'w-[68px]' : 'lg:w-[220px] xl:w-[250px] w-[250px]')}`}
-      style={{ background: 'linear-gradient(180deg, #1B4F72 0%, #0E2F44 100%)' }}
-    >
-      {/* Company header */}
-      <div className={`flex items-center h-16 flex-shrink-0 ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'}`}>
-        <div className="w-10 h-10 flex-shrink-0 rounded-xl bg-white flex items-center justify-center overflow-hidden" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-          <img src={companyLogo} alt={companyName} className="w-full h-full object-contain p-0.5"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-        </div>
-        {!isCollapsed && (
-          <div className="min-w-0 leading-tight">
-            <span className="block font-semibold text-white text-[15px] tracking-tight truncate">{companyName.split('(')[0].trim()}</span>
-            <span className="block text-[11px] text-slate-400 font-medium tracking-wide uppercase truncate">HR System</span>
-          </div>
-        )}
-        {mobile && (
-          <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="ml-auto text-slate-400 hover:text-white transition-colors">
-            <XMarkIcon className="w-5 h-5" />
-          </button>
-        )}
-        {/* Desktop collapse toggle */}
-        {!mobile && (
-          <button
-            onClick={toggleCollapsed}
-            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            title={isCollapsed ? 'Expand' : 'Collapse'}
-            className={`${isCollapsed ? 'absolute -right-3 top-5 z-30 bg-[#0E2F44] border border-white/10 shadow-md' : 'ml-auto'} w-6 h-6 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors`}
-          >
-            {isCollapsed ? <ChevronDoubleRightIcon className="w-3.5 h-3.5" /> : <ChevronDoubleLeftIcon className="w-3.5 h-3.5" />}
-          </button>
-        )}
-      </div>
-
-      <div className="mx-3 h-px bg-white/[0.06]" />
-
-      {/* Navigation */}
-      <div className="flex-1 sidebar-scroll overflow-y-auto px-3 py-3">
-        {!isCollapsed && (
-          <p className="px-2 pb-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Menu</p>
-        )}
-        <div className="space-y-1">
-          {isCollapsed
-            ? flatNav.map(item => (
-                <NavItem key={item.to} item={item} collapsed onClick={() => mobile && setSidebarOpen(false)} />
-              ))
-            : visibleNav.map(item => item.children
-                ? <NavGroup key={item.group} item={item} open={isGroupOpen(item)} containsActive={groupContainsActive(item)}
-                    onToggle={() => toggleGroup(item)} onNavigate={() => mobile && setSidebarOpen(false)} />
-                : <NavItem key={item.to} item={item} collapsed={false} onClick={() => mobile && setSidebarOpen(false)} />)}
-        </div>
-      </div>
-
-      {/* User profile + sign out */}
-      <div className="flex-shrink-0 border-t border-white/[0.06] px-3 py-3 space-y-1">
-        <div className={`flex items-center rounded-lg ${isCollapsed ? 'justify-center px-0 py-1' : 'gap-3 px-2 py-1.5'}`} title={isCollapsed ? `${user?.name} · ${user?.role?.replace('_', ' ')}` : undefined}>
-          <Avatar emp={me} name={user?.name} className="w-10 h-10 flex-shrink-0 bg-gradient-to-br from-[#E84C88] to-[#D81B60] rounded-full" initialsClassName="text-white text-xs font-bold" style={{ boxShadow: '0 4px 12px rgba(232, 76, 136, 0.25)' }} />
-          {!isCollapsed && (
-            <div className="min-w-0">
-              <p className="text-[14px] font-semibold text-white truncate">{user?.name}</p>
-              <p className="text-[12px] text-slate-400 capitalize truncate">{user?.role?.replace('_', ' ')}</p>
-            </div>
-          )}
-        </div>
-        <button
-          onClick={handleLogout}
-          title={isCollapsed ? 'Sign out' : undefined}
-          aria-label="Sign out"
-          className={`group flex items-center h-11 w-full rounded-lg text-[14px] font-medium text-slate-300/80 hover:bg-white/[0.06] hover:text-white transition-colors duration-200 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#E84C88]/50 focus-visible:ring-inset ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'}`}
-        >
-          <ArrowRightOnRectangleIcon className="w-[18px] h-[18px] flex-shrink-0 text-slate-400 group-hover:text-rose-400 transition-colors" aria-hidden />
-          {!isCollapsed && <span>Sign out</span>}
-        </button>
-      </div>
-    </nav>
-    );
-  };
+  const toggleGroup = (item) => setManualOpen(expandedMenu === item.group ? { path: currentPath, group: null } : { path: currentPath, group: item.group });
 
   return (
     <div className="flex h-[100dvh] bg-gray-50 overflow-hidden">
       {/* Desktop sidebar */}
       <div className="hidden lg:flex flex-shrink-0">
-        <Sidebar />
+        <Sidebar mobile={false} collapsed={collapsed} companyName={companyName} companyLogo={companyLogo} me={me} user={user}
+          visibleNav={visibleNav} flatNav={flatNav} isGroupOpen={isGroupOpen} onToggleGroup={toggleGroup}
+          groupContainsActive={groupContainsActive} onToggleCollapsed={toggleCollapsed}
+          onCloseMobile={() => setSidebarOpen(false)} onLogout={handleLogout} />
       </div>
 
       {/* Mobile sidebar overlay */}
@@ -334,7 +362,10 @@ export default function AppShell() {
         <div className="fixed inset-0 z-50 lg:hidden animate-fade-in">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
           <div className="relative flex h-full w-[250px] animate-slide-up">
-            <Sidebar mobile />
+            <Sidebar mobile collapsed={collapsed} companyName={companyName} companyLogo={companyLogo} me={me} user={user}
+              visibleNav={visibleNav} flatNav={flatNav} isGroupOpen={isGroupOpen} onToggleGroup={toggleGroup}
+              groupContainsActive={groupContainsActive} onToggleCollapsed={toggleCollapsed}
+              onCloseMobile={() => setSidebarOpen(false)} onLogout={handleLogout} />
           </div>
         </div>
       )}

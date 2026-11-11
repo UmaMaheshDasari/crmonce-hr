@@ -56,6 +56,9 @@ const COLUMNS = [
   str('hr_TimeFormat', 'Time Format', 10),
   str('hr_FinancialYearStart', 'Financial Year Start (MM-DD)', 5),
   str('hr_LeaveYearStart', 'Leave Year Start (MM-DD)', 5),
+  // Module ON/OFF switches.
+  str('hr_PayrollEnabled', 'Payroll Module Enabled', 10),
+  str('hr_SalaryStructureEnabled', 'Salary Structure Module Enabled', 10),
   // Full config as one JSON blob — persistence fallback if a scalar column can't be provisioned.
   memo('hr_SettingsJson', 'Settings (JSON)'),
 ];

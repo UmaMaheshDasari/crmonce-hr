@@ -28,12 +28,53 @@ test('computeTotals: PF not applicable → PF excluded from deductions', () => {
   assert.strictEqual(t.netSalary, 29800);
 });
 
-test('validate: requires employee (POST), valid date, positive basic', () => {
+test('validate: requires employee (POST) and a valid date', () => {
   const r = svc.validate({}, { requireEmployee: true });
   assert.strictEqual(r.ok, false);
   assert.ok(r.errors.some(e => /select an employee/i.test(e)));
   assert.ok(r.errors.some(e => /Effective From/i.test(e)));
-  assert.ok(r.errors.some(e => /Basic Salary/i.test(e)));
+});
+
+test('validate: accepts a zero-value salary structure (basic 0)', () => {
+  const r = svc.validate({ employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic: 0 }, { requireEmployee: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.value.basic, 0);
+  assert.strictEqual(r.value.gross, 0);
+});
+
+test('validate: every component accepts 0 (a fully zero placeholder structure)', () => {
+  const r = svc.validate({
+    employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic: 0,
+    hra: 0, special: 0, medical: 0, conveyance: 0, otherAllowance: 0, pfAmount: 0, incomeTax: 0, otherDeductions: 0,
+  }, { requireEmployee: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.value.gross, 0);
+  assert.strictEqual(r.value.pfAmount, 0);
+});
+
+test('validate: rejects a negative basic', () => {
+  const r = svc.validate({ employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic: -5 }, { requireEmployee: true });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some(e => /cannot be negative/i.test(e)));
+});
+
+test('validate: rejects a null or non-numeric basic', () => {
+  for (const basic of [null, 'abc', '1,000']) {
+    const r = svc.validate({ employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic }, { requireEmployee: true });
+    assert.strictEqual(r.ok, false, `basic ${JSON.stringify(basic)} must be rejected`);
+    assert.ok(r.errors.some(e => /Basic Salary/i.test(e)), 'names the basic salary field');
+  }
+});
+
+test('validate: rejects a null or non-numeric allowance/deduction component', () => {
+  for (const hra of [null, 'abc']) {
+    const r = svc.validate({ employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic: 100, hra }, { requireEmployee: true });
+    assert.strictEqual(r.ok, false, `hra ${JSON.stringify(hra)} must be rejected`);
+    assert.ok(r.errors.some(e => /hra must be a number/i.test(e)));
+  }
+  const pf = svc.validate({ employeeId: '11111111-1111-1111-1111-111111111111', effectiveFrom: '2026-04-01', basic: 100, pfAmount: 'NaN-value' }, { requireEmployee: true });
+  assert.strictEqual(pf.ok, false);
+  assert.ok(pf.errors.some(e => /pfAmount must be a number/i.test(e)));
 });
 
 test('validate: rejects a non-GUID employee', () => {

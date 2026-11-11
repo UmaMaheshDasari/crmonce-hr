@@ -5,6 +5,7 @@ import { companyApi } from '../../api/endpoints';
 import { REMINDER_INTERVAL, validateReminderInterval } from '../../utils/reminder-settings';
 import { GOAL_MILESTONES, GOAL_OVERDUE_INTERVAL, normalizeGoalToggles } from '../../utils/goal-reminder-settings';
 import { GOAL_REMINDERS_ENABLED, PROFILE_REMINDERS_ENABLED, normalizeEnableToggles } from '../../utils/reminder-enable-settings';
+import { PAYROLL_MODULE, SALARY_STRUCTURE_MODULE, normalizeModuleToggles } from '../../utils/module-settings';
 import { CurrencyDollarIcon, GlobeAltIcon, ClockIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import PayrollSettingsPage from '../payroll/PayrollSettingsPage';
@@ -73,6 +74,14 @@ const SECTIONS = [
     ],
   },
   {
+    title: 'Modules',
+    hint: 'Turn a module off to hide it from the app and block its APIs. Existing data is always preserved — switch it back on any time.',
+    fields: [
+      { name: PAYROLL_MODULE.key, label: PAYROLL_MODULE.label, type: 'toggle', hint: PAYROLL_MODULE.help },
+      { name: SALARY_STRUCTURE_MODULE.key, label: SALARY_STRUCTURE_MODULE.label, type: 'toggle', hint: SALARY_STRUCTURE_MODULE.help },
+    ],
+  },
+  {
     title: 'Goal Reminder Settings',
     hint: 'Reminder emails are sent relative to each goal’s DUE DATE. Enable the milestones you want; overdue reminders repeat at the interval below.',
     fields: [
@@ -105,7 +114,7 @@ function GeneralTab() {
   // Boolean toggles (goal milestones + the two master ON/OFF switches) persist as
   // 'true'/'false' strings; convert to booleans so the checkboxes/switches bind correctly
   // (a non-empty string like 'false' would otherwise read truthy).
-  const toForm = (c) => (c ? { ...c, ...normalizeGoalToggles(c), ...normalizeEnableToggles(c) } : c);
+  const toForm = (c) => (c ? { ...c, ...normalizeGoalToggles(c), ...normalizeEnableToggles(c), ...normalizeModuleToggles(c) } : c);
   useEffect(() => { if (company) reset(toForm(company)); }, [company, reset]);
 
   const mutation = useMutation({

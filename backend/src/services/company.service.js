@@ -66,6 +66,11 @@ const COMPANY_DEFAULTS = {
   hr_timeformat: '12h',              // 12h | 24h
   hr_financialyearstart: '04-01',    // MM-DD — India FY starts 1 April
   hr_leaveyearstart: '01-01',        // MM-DD — leave year (Jan–Dec)
+  // ── Module ON/OFF switches (Company Settings → Modules) ──
+  // When off, the module is hidden from the app AND its APIs return 403.
+  // Existing data is preserved — flipping it back on restores access.
+  hr_payrollenabled: 'true',
+  hr_salarystructureenabled: 'true',
 };
 
 // Absolute path to the bundled logo file — used by the payslip PDF (pdfkit reads

@@ -35,6 +35,7 @@ const holidayRoutes    = require('./modules/attendance/holiday.routes');
 const etimeAgentRoutes = require('./modules/attendance/etime-agent.routes');
 
 const { authenticateToken } = require('./middleware/auth.middleware');
+const { requirePayrollEnabled, requireSalaryStructureEnabled } = require('./middleware/module-flags.middleware');
 const { isAxiosError, formatAxiosError, summarize } = require('./utils/axiosError');
 const { initJobs }          = require('./jobs');
 const { initSocket }        = require('./services/notification.service');
@@ -117,13 +118,17 @@ app.use('/api/employees',   authenticateToken, employeeRoutes);
 // mounted WITHOUT authenticateToken. Still rate-limited by the /api limiter above.
 app.use('/api/etime',       etimeAgentRoutes);
 app.use('/api/attendance',  authenticateToken, attendanceRoutes);
-app.use('/api/payroll/tax-declarations', authenticateToken, taxDeclarationRoutes);
+// Payroll-family modules honour the Company Settings ON/OFF switches. Salary
+// Structure has its own switch so it can stay available while payroll is off.
+app.use('/api/payroll/tax-declarations', authenticateToken, requirePayrollEnabled, taxDeclarationRoutes);
+// Settings stay reachable even when payroll is off — an admin must be able to
+// inspect/configure payroll policy while the module is disabled.
 app.use('/api/payroll/settings', authenticateToken, payrollSettingsRoutes);
-app.use('/api/payroll/salary-structures', authenticateToken, salaryStructureRoutes);
-app.use('/api/payroll/advances', authenticateToken, advanceRoutes);
-app.use('/api/payroll/automation', authenticateToken, payrollAutomationRoutes);
-app.use('/api/payroll/pt-slabs', authenticateToken, ptMasterRoutes);
-app.use('/api/payroll',     authenticateToken, payrollRoutes);
+app.use('/api/payroll/salary-structures', authenticateToken, requireSalaryStructureEnabled, salaryStructureRoutes);
+app.use('/api/payroll/advances', authenticateToken, requirePayrollEnabled, advanceRoutes);
+app.use('/api/payroll/automation', authenticateToken, requirePayrollEnabled, payrollAutomationRoutes);
+app.use('/api/payroll/pt-slabs', authenticateToken, requirePayrollEnabled, ptMasterRoutes);
+app.use('/api/payroll',     authenticateToken, requirePayrollEnabled, payrollRoutes);
 app.use('/api/recruitment', authenticateToken, recruitmentRoutes);
 app.use('/api/performance/goals', authenticateToken, goalsRoutes);
 app.use('/api/performance', authenticateToken, performanceRoutes);

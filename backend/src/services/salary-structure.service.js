@@ -32,6 +32,23 @@ const round = (v) => Math.round(num(v));
 const bool = (v) => v === true || /^(true|yes|1|on)$/i.test(String(v ?? ''));
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
 
+/**
+ * One salary amount. 0 is VALID everywhere (a placeholder structure before the
+ * pay is finalised). Negative amounts are rejected, and null / non-numeric
+ * values are rejected outright — never silently coerced to 0. `undefined`
+ * (field absent) and '' (a cleared number input) read as 0 for the OPTIONAL
+ * components; the basic salary has its own presence check first.
+ * Returns { ok, value } or { ok:false, error }.
+ */
+function parseAmount(label, x) {
+  if (x === undefined || x === '') return { ok: true, value: 0 };
+  if (x === null) return { ok: false, error: `${label} must be a number.` };
+  const n = Number(x);
+  if (!Number.isFinite(n)) return { ok: false, error: `${label} must be a number.` };
+  if (n < 0) return { ok: false, error: `${label} cannot be negative.` };
+  return { ok: true, value: Math.round(n) };
+}
+
 /** Gross = Basic + HRA + Special + Medical + Conveyance + Other Allowance. */
 function computeGross(src = {}) {
   return EARNING_FIELDS.reduce((sum, f) => sum + round(src[f]), 0);
@@ -68,16 +85,22 @@ function validate(input = {}, opts = {}) {
   if (!isDate(input.effectiveFrom)) errors.push('Effective From must be a valid date (YYYY-MM-DD).');
   else v.effectiveFrom = String(input.effectiveFrom).slice(0, 10);
 
-  const basic = round(input.basic);
-  if (!(basic > 0)) errors.push('Basic Salary is required and must be greater than 0.');
-  v.basic = basic;
+  // Basic Salary: the field is required, but 0 IS a valid amount (a placeholder
+  // structure before the pay is finalised). Missing, null, non-numeric and
+  // negative values are all rejected.
+  if (input.basic === undefined || input.basic === null || input.basic === '') {
+    errors.push('Basic Salary is required.');
+  } else {
+    const p = parseAmount('Basic Salary', input.basic);
+    if (p.ok) v.basic = p.value; else errors.push(p.error);
+  }
 
-  // Every amount must be a non-negative number. Professional Tax is intentionally
-  // EXCLUDED — it is never accepted from the client; it is derived from the slab.
+  // Every other amount must be a valid non-negative number (0 allowed).
+  // Professional Tax is intentionally EXCLUDED — it is never accepted from the
+  // client; it is derived from the slab.
   for (const f of ['hra', 'special', 'medical', 'conveyance', 'otherAllowance', 'pfAmount', 'incomeTax', 'otherDeductions']) {
-    const n = round(input[f]);
-    if (n < 0) errors.push(`${f} cannot be negative.`);
-    v[f] = Math.max(0, n);
+    const p = parseAmount(f, input[f]);
+    if (p.ok) v[f] = p.value; else errors.push(p.error);
   }
 
   v.pfApplicable = input.pfApplicable === undefined ? true : bool(input.pfApplicable);
