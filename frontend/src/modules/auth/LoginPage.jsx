@@ -42,11 +42,11 @@ const BRAND_VISUAL_CSS = `
 .cr-stage{position:relative;width:22rem;height:20rem;max-width:100%;margin-top:.25rem}
 .cr-net{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
 .cr-net-g{animation:crNet 11s ease-in-out infinite;transform-origin:center}
-.cr-ring{position:absolute;top:50%;left:50%;border-style:solid;border-width:1px;border-radius:50%;transform-origin:center}
-.cr-ring1{width:340px;height:340px;border-color:rgba(232,76,136,.22);animation:crTumble1 44s linear infinite}
-.cr-ring2{width:248px;height:248px;border-color:rgba(74,163,223,.24);animation:crTumble2 34s linear infinite}
-.cr-ring3{width:168px;height:168px;border-color:rgba(46,204,113,.24);animation:crTumble3 26s linear infinite}
-.cr-core{position:absolute;top:50%;left:50%;width:92px;height:92px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.2) 0%,rgba(74,163,223,.12) 45%,transparent 70%);animation:crPulse 6.5s ease-in-out infinite}
+.cr-ring{position:absolute;top:50%;left:50%;border-style:solid;border-width:1px;border-radius:50%;transform-origin:center;transform:translate(-50%,-50%)}
+.cr-ring1{width:340px;height:340px;border-color:rgba(232,76,136,.22);transform:translate(-50%,-50%) scaleY(.46);animation:crTumble1 44s linear infinite}
+.cr-ring2{width:248px;height:248px;border-color:rgba(74,163,223,.24);transform:translate(-50%,-50%) scaleY(.52);animation:crTumble2 34s linear infinite}
+.cr-ring3{width:168px;height:168px;border-color:rgba(46,204,113,.24);transform:translate(-50%,-50%) scaleY(.6);animation:crTumble3 26s linear infinite}
+.cr-core{position:absolute;top:50%;left:50%;width:92px;height:92px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.2) 0%,rgba(74,163,223,.12) 45%,transparent 70%);transform:translate(-50%,-50%);animation:crPulse 6.5s ease-in-out infinite}
 .cr-orbit{position:absolute;top:50%;left:50%;width:0;height:0;animation-name:crSpin;animation-timing-function:linear;animation-iteration-count:infinite;animation-duration:14s}
 .cr-node{position:absolute;left:0;top:0;border-radius:50%}
 .cr-p{position:absolute;border-radius:50%;opacity:0;animation-name:crFloat;animation-timing-function:ease-in-out;animation-iteration-count:infinite}
