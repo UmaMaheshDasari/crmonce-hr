@@ -13,6 +13,53 @@ const MicrosoftIcon = () => (
   </svg>
 );
 
+// ── Premium animated brand visual (left panel) — CSS-only, lightweight ──
+// Orbiting glowing dots, curved orbit lines, a connected node network and
+// floating particles in the CRMONCE brand palette (blue / pink / green / white).
+const ORBITS = [
+  { r: 150, dur: 18, color: '#E84C88', size: 9, rev: false },
+  { r: 110, dur: 13, color: '#4AA3DF', size: 7, rev: true },
+  { r: 72, dur: 9, color: '#2ECC71', size: 6, rev: false },
+];
+const PARTICLES = Array.from({ length: 16 }, (_, i) => ({
+  left: 6 + ((i * 37) % 88),
+  top: 8 + ((i * 53) % 82),
+  size: 3 + (i % 3),
+  color: ['#4AA3DF', '#E84C88', '#2ECC71', '#FFFFFF'][i % 4],
+  dur: 7 + (i % 5) * 1.3,
+  delay: (i % 6) * 1.1,
+}));
+const NET_NODES = [
+  { x: 58, y: 72, c: '#E84C88', r: 3.5 },
+  { x: 150, y: 42, c: '#4AA3DF', r: 3 },
+  { x: 252, y: 84, c: '#2ECC71', r: 3.5 },
+  { x: 214, y: 168, c: '#FFFFFF', r: 2.5 },
+  { x: 92, y: 186, c: '#4AA3DF', r: 3 },
+  { x: 158, y: 120, c: '#E84C88', r: 3 },
+];
+const NET_LINES = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0], [1, 5], [3, 5], [4, 5]];
+const BRAND_VISUAL_CSS = `
+.cr-stage{position:relative;width:22rem;height:20rem;max-width:100%;margin-top:.25rem}
+.cr-net{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+.cr-net-g{animation:crNet 11s ease-in-out infinite;transform-origin:center}
+.cr-ring{position:absolute;top:50%;left:50%;border-style:solid;border-width:1px;border-radius:50%;transform-origin:center;transform:translate(-50%,-50%)}
+.cr-ring1{width:340px;height:340px;border-color:rgba(232,76,136,.22);transform:translate(-50%,-50%) scaleY(.46);animation:crTumble1 44s linear infinite}
+.cr-ring2{width:248px;height:248px;border-color:rgba(74,163,223,.24);transform:translate(-50%,-50%) scaleY(.52);animation:crTumble2 34s linear infinite}
+.cr-ring3{width:168px;height:168px;border-color:rgba(46,204,113,.24);transform:translate(-50%,-50%) scaleY(.6);animation:crTumble3 26s linear infinite}
+.cr-core{position:absolute;top:50%;left:50%;width:92px;height:92px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.2) 0%,rgba(74,163,223,.12) 45%,transparent 70%);transform:translate(-50%,-50%);animation:crPulse 6.5s ease-in-out infinite}
+.cr-orbit{position:absolute;top:50%;left:50%;width:0;height:0;animation-name:crSpin;animation-timing-function:linear;animation-iteration-count:infinite;animation-duration:14s}
+.cr-node{position:absolute;left:0;top:0;border-radius:50%}
+.cr-p{position:absolute;border-radius:50%;opacity:0;animation-name:crFloat;animation-timing-function:ease-in-out;animation-iteration-count:infinite}
+@keyframes crSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes crTumble1{from{transform:translate(-50%,-50%) rotate(0) scaleY(.46)}to{transform:translate(-50%,-50%) rotate(360deg) scaleY(.46)}}
+@keyframes crTumble2{from{transform:translate(-50%,-50%) rotate(0) scaleY(.52)}to{transform:translate(-50%,-50%) rotate(-360deg) scaleY(.52)}}
+@keyframes crTumble3{from{transform:translate(-50%,-50%) rotate(0) scaleY(.6)}to{transform:translate(-50%,-50%) rotate(360deg) scaleY(.6)}}
+@keyframes crPulse{0%,100%{opacity:.45;transform:translate(-50%,-50%) scale(.9)}50%{opacity:.85;transform:translate(-50%,-50%) scale(1.08)}}
+@keyframes crFloat{0%{opacity:0;transform:translateY(16px) scale(.5)}15%{opacity:.85}55%{opacity:.7;transform:translateY(-16px) scale(1)}100%{opacity:0;transform:translateY(-44px) scale(.4)}}
+@keyframes crNet{0%,100%{opacity:.4;transform:translateY(0)}50%{opacity:.65;transform:translateY(-6px)}}
+@media (prefers-reduced-motion: reduce){.cr-stage *{animation:none!important}.cr-p{opacity:.6}.cr-core{opacity:.7}}
+`;
+
 export default function LoginPage() {
   const { login, loginWithAzure } = useAuth();
   const [azureLoading, setAzureLoading] = useState(false);
@@ -50,47 +97,47 @@ export default function LoginPage() {
         <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full" style={{ background: 'radial-gradient(circle, rgba(46,139,87,0.12) 0%, transparent 70%)' }} />
 
         {/* Content */}
-        <div className="relative z-10 flex flex-col items-center text-center px-12 max-w-lg">
-          {/* Logo */}
-          <div className="mb-8 bg-white rounded-2xl px-6 py-4 shadow-2xl">
+        <div className="relative z-10 flex flex-col items-center justify-center px-12 w-full max-w-lg">
+          <style>{BRAND_VISUAL_CSS}</style>
+
+          {/* Logo card (unchanged) */}
+          <div className="mb-10 bg-white rounded-2xl px-6 py-4 shadow-2xl">
             <img src={logoImg} alt="CRMONCE" className="w-56 h-auto object-contain" />
           </div>
 
-          {/* Company Name */}
-          <h1 className="text-4xl font-bold tracking-wide mb-1">
-            <span style={{ color: '#E84C88' }}>CRM</span>
-            <span className="text-white/40 mx-0.5">|</span>
-            <span className="text-white">ONCE</span>
-          </h1>
-          <p className="text-white/40 text-sm font-medium tracking-[0.2em] uppercase mb-6">(OPC) Private Limited</p>
+          {/* Premium animated brand visual — CSS-only */}
+          <div className="cr-stage" aria-hidden="true">
+            {/* connected glowing node network */}
+            <svg className="cr-net" viewBox="0 0 320 320" fill="none">
+              <g className="cr-net-g">
+                {NET_LINES.map(([a, b], i) => (
+                  <line key={i} x1={NET_NODES[a].x} y1={NET_NODES[a].y} x2={NET_NODES[b].x} y2={NET_NODES[b].y} stroke="rgba(255,255,255,0.16)" strokeWidth="1" />
+                ))}
+                {NET_NODES.map((n, i) => (
+                  <circle key={i} cx={n.x} cy={n.y} r={n.r} fill={n.c} style={{ filter: `drop-shadow(0 0 4px ${n.c})` }} />
+                ))}
+              </g>
+            </svg>
 
-          {/* Divider */}
-          <div className="w-16 h-0.5 rounded-full mb-6" style={{ background: 'linear-gradient(90deg, #E84C88, #2E8B57)' }} />
+            {/* curved orbit lines */}
+            <span className="cr-ring cr-ring1" />
+            <span className="cr-ring cr-ring2" />
+            <span className="cr-ring cr-ring3" />
 
-          {/* Tagline */}
-          <p className="text-xl font-light text-white/80 tracking-wide mb-3">
-            Build Your Career
-          </p>
-          <p className="text-white/35 text-sm leading-relaxed max-w-sm">
-            Unified HR platform for payroll, attendance, recruitment & performance management
-          </p>
+            {/* glowing core */}
+            <span className="cr-core" />
 
-          {/* Bottom stats */}
-          <div className="mt-12 flex gap-8">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-white/90">500+</div>
-              <div className="text-xs text-white/30 uppercase tracking-wider">Employees</div>
-            </div>
-            <div className="w-px bg-white/10" />
-            <div className="text-center">
-              <div className="text-2xl font-bold text-white/90">98%</div>
-              <div className="text-xs text-white/30 uppercase tracking-wider">Uptime</div>
-            </div>
-            <div className="w-px bg-white/10" />
-            <div className="text-center">
-              <div className="text-2xl font-bold text-white/90">24/7</div>
-              <div className="text-xs text-white/30 uppercase tracking-wider">Support</div>
-            </div>
+            {/* orbiting glowing dots */}
+            {ORBITS.map((o, i) => (
+              <span key={i} className="cr-orbit" style={{ animationDuration: `${o.dur}s`, animationDirection: o.rev ? 'reverse' : 'normal' }}>
+                <span className="cr-node" style={{ width: o.size, height: o.size, background: o.color, boxShadow: `0 0 10px 2px ${o.color}`, transform: `translate(-50%,-50%) translateX(${o.r}px)` }} />
+              </span>
+            ))}
+
+            {/* floating particles */}
+            {PARTICLES.map((p, i) => (
+              <span key={i} className="cr-p" style={{ left: `${p.left}%`, top: `${p.top}%`, width: p.size, height: p.size, background: p.color, boxShadow: `0 0 6px ${p.color}`, animationDuration: `${p.dur}s`, animationDelay: `${p.delay}s` }} />
+            ))}
           </div>
         </div>
 
@@ -119,35 +166,6 @@ export default function LoginPage() {
             <div className="mb-8">
               <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Welcome back</h1>
               <p className="text-gray-400 text-sm mt-1">Sign in to CRMONCE HR portal</p>
-            </div>
-
-            {/* Azure AD Button — Primary */}
-            <button
-              type="button"
-              onClick={async () => {
-                setAzureLoading(true);
-                try { await loginWithAzure(); }
-                catch { toast.error('Failed to initiate Microsoft sign-in'); setAzureLoading(false); }
-              }}
-              disabled={azureLoading}
-              className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-[#1B4F72] rounded-xl text-sm font-semibold text-white hover:bg-[#154360] transition-all duration-200 disabled:opacity-50 shadow-lg shadow-[#1B4F72]/20 mb-6"
-            >
-              {azureLoading ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <MicrosoftIcon />
-              )}
-              Sign in with Microsoft
-            </button>
-
-            {/* Divider */}
-            <div className="relative mb-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-200" />
-              </div>
-              <div className="relative flex justify-center text-xs">
-                <span className="bg-white px-3 text-gray-400">or sign in with email</span>
-              </div>
             </div>
 
             {/* Email/Password Form */}
@@ -197,6 +215,35 @@ export default function LoginPage() {
                 {loading ? 'Signing in...' : 'Sign in'}
               </button>
             </form>
+
+            {/* Divider */}
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-200" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-white px-3 text-gray-400">or continue with</span>
+              </div>
+            </div>
+
+            {/* Azure AD Button — moved to bottom (handler unchanged) */}
+            <button
+              type="button"
+              onClick={async () => {
+                setAzureLoading(true);
+                try { await loginWithAzure(); }
+                catch { toast.error('Failed to initiate Microsoft sign-in'); setAzureLoading(false); }
+              }}
+              disabled={azureLoading}
+              className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-[#1B4F72] rounded-xl text-sm font-semibold text-white hover:bg-[#154360] transition-all duration-200 disabled:opacity-50 shadow-lg shadow-[#1B4F72]/20"
+            >
+              {azureLoading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <MicrosoftIcon />
+              )}
+              Sign in with Microsoft
+            </button>
 
             {/* Footer */}
             <div className="mt-10 text-center">
