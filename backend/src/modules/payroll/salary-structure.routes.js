@@ -74,15 +74,21 @@ async function loadHistory(employeeId) {
   return (data || []).map(svc.shape);
 }
 
-// Keep exactly one 'active' row per employee — the latest Effective From. Older
-// rows become 'superseded'. History is preserved (nothing deleted or overwritten).
+// Status by effective date: ONLY the latest revision (newest Effective From) is 'active';
+// every older revision is 'superseded'. A 'disabled' revision is left untouched and is NEVER
+// auto-promoted — so disabling the latest revision leaves the employee with NO active structure
+// (excluded from payroll) until it is Enabled again or a newer revision is added. There is
+// deliberately no fall-back to an older revision, which would silently pay a stale amount.
+// History is always preserved.
 async function resequence(employeeId, log) {
   const rows = await loadHistory(employeeId);   // already newest-first
   for (let i = 0; i < rows.length; i++) {
-    const want = i === 0 ? 'active' : 'superseded';
-    if (rows[i].status !== want) {
-      try { await d365.update(ENTITY, rows[i].id, { hr_status: want }); }
-      catch (e) { (log || console).warn?.(`[salary] resequence ${rows[i].id}: ${e.message}`); }
+    const row = rows[i];
+    if (row.status === 'disabled') continue;     // disabled stays disabled — never promoted
+    const want = i === 0 ? 'active' : 'superseded';   // only the newest revision is active
+    if (row.status !== want) {
+      try { await d365.update(ENTITY, row.id, { hr_status: want }); }
+      catch (e) { (log || console).warn?.(`[salary] resequence ${row.id}: ${e.message}`); }
     }
   }
 }
@@ -161,6 +167,45 @@ router.post('/', requireAnyPermission('salary.edit'), async (req, res, next) => 
   } catch (err) {
     console.error('[salary/create] FAILED:', err.message);
     res.status(err.status || 400).json({ error: err.message || 'Failed to create salary structure' });
+  }
+});
+
+// ── PATCH /:id/disable  — exclude a revision from payroll (reversible). Payroll generation
+//    skips any employee whose EFFECTIVE structure for the period is disabled (no stale fall-back
+//    to an older revision). If the disabled revision is the latest, the employee has no active
+//    structure until it is Enabled again or a newer revision is added. ──
+router.patch('/:id/disable', requireAnyPermission('salary.edit'), async (req, res, next) => {
+  try {
+    const current = svc.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: svc.SELECT }));
+    if (!current.id) return res.status(404).json({ error: 'Salary structure not found.' });
+    const patch = { hr_status: 'disabled' };
+    if (req.body?.remarks != null) patch.hr_remarks = String(req.body.remarks);
+    await writeWithRepair(() => d365.update(ENTITY, req.params.id, patch));
+    await resequence(current.employeeId, global.logger);
+    const shaped = svc.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: svc.SELECT }));
+    await enrich([shaped]);
+    res.json(shaped);
+  } catch (err) {
+    console.error('[salary/disable] FAILED:', err.message);
+    res.status(err.status || 400).json({ error: err.message || 'Failed to disable salary structure' });
+  }
+});
+
+// ── PATCH /:id/enable  — re-include a disabled revision in payroll. Resequence restores the
+//    correct active/superseded flags by effective date. ──
+router.patch('/:id/enable', requireAnyPermission('salary.edit'), async (req, res, next) => {
+  try {
+    const current = svc.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: svc.SELECT }));
+    if (!current.id) return res.status(404).json({ error: 'Salary structure not found.' });
+    // Neutral non-disabled status first; resequence then assigns active/superseded by date.
+    await writeWithRepair(() => d365.update(ENTITY, req.params.id, { hr_status: 'superseded' }));
+    await resequence(current.employeeId, global.logger);
+    const shaped = svc.shape(await d365.getByIdOptional(ENTITY, req.params.id, { select: svc.SELECT }));
+    await enrich([shaped]);
+    res.json(shaped);
+  } catch (err) {
+    console.error('[salary/enable] FAILED:', err.message);
+    res.status(err.status || 400).json({ error: err.message || 'Failed to enable salary structure' });
   }
 });
 

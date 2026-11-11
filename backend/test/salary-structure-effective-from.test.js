@@ -98,3 +98,17 @@ test('no structures exist → null', async () => {
   stubDataverse([]);
   assert.strictEqual(await svc.getActiveStructure(d365, EMP, monthEnd(2026, 8)), null);
 });
+
+// ── Disabled latest revision: returned WITH status 'disabled' (payroll skips, no fallback) ──
+test('a disabled latest revision resolves WITH status "disabled" — payroll excludes, never falls back', async () => {
+  // Sep is the latest effective ≤ Sep and is disabled. getActiveStructure returns it (by date),
+  // carrying status 'disabled' so the engine skips the employee — it must NOT fall back to Aug.
+  stubDataverse([
+    REVISIONS[1],   // Aug, superseded, ₹12,000
+    { ...REVISIONS[2], hr_status: 'disabled' },   // Sep, disabled, ₹15,000 (latest)
+  ]);
+  const s = await svc.getActiveStructure(d365, EMP, monthEnd(2026, 9));
+  assert.strictEqual(s.id, 'r-sep', 'the latest effective revision is selected by date, not status');
+  assert.strictEqual(s.status, 'disabled', 'status is surfaced so payroll can skip');
+  assert.strictEqual(s.basic, 15000, 'it does NOT fall back to the older Aug ₹12,000 revision');
+});

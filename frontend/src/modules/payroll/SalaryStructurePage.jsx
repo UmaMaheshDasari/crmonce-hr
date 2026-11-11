@@ -5,6 +5,7 @@ import { salaryStructureApi, employeeApi } from '../../api/endpoints';
 import {
   BanknotesIcon, PlusIcon, XMarkIcon, PencilSquareIcon, TrashIcon,
   ClockIcon, CheckBadgeIcon, ArrowTrendingUpIcon, UserCircleIcon,
+  NoSymbolIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
 import { fmtDate } from '../../utils/format';
@@ -28,6 +29,7 @@ const STATUS_BADGE = {
   active: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
   superseded: 'bg-gray-100 text-gray-500 ring-gray-500/10',
   draft: 'bg-amber-50 text-amber-700 ring-amber-600/20',
+  disabled: 'bg-rose-50 text-rose-700 ring-rose-600/20',
 };
 
 // ── Avatar — delegates to the shared component (resolver + broken-image → initials) ──
@@ -235,10 +237,11 @@ function HistoryModal({ employeeId, employeeName, onClose }) {
 }
 
 // ── Salary card ──
-function SalaryCard({ record, canEdit, canDelete, onEdit, onDelete, onHistory }) {
+function SalaryCard({ record, canEdit, canDelete, onEdit, onDelete, onHistory, onDisable, onEnable, busy }) {
   const e = record._employee || {};
+  const isDisabled = record.status === 'disabled';
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+    <div className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-shadow overflow-hidden ${isDisabled ? 'border-rose-200' : 'border-gray-100'}`}>
       <div className="p-5">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3 min-w-0">
@@ -269,11 +272,20 @@ function SalaryCard({ record, canEdit, canDelete, onEdit, onDelete, onHistory })
           <div className="bg-gray-50 rounded-lg px-3 py-2"><p className="text-gray-400">Gross</p><p className="font-semibold text-gray-800"><SensitiveAmount value={inr(record.gross)} label="gross salary" /></p></div>
           <div className="bg-gray-50 rounded-lg px-3 py-2"><p className="text-gray-400">Deductions</p><p className="font-semibold text-red-600">−<SensitiveAmount value={inr(record.totalDeductions)} label="deductions" /></p></div>
         </div>
+
+        {isDisabled && (
+          <div className="mt-4 flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <NoSymbolIcon className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>Excluded from payroll — this employee is skipped until the structure is enabled or a new revision is added.</span>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center border-t border-gray-50 divide-x divide-gray-50">
         <button onClick={() => onHistory(record)} className="flex-1 py-2.5 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:bg-indigo-50/40 flex items-center justify-center gap-1.5"><ClockIcon className="w-4 h-4" /> History</button>
-        {canEdit && <button onClick={() => onEdit(record)} className="flex-1 py-2.5 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:bg-indigo-50/40 flex items-center justify-center gap-1.5"><PencilSquareIcon className="w-4 h-4" /> Edit</button>}
+        {canEdit && !isDisabled && <button onClick={() => onEdit(record)} className="flex-1 py-2.5 text-xs font-medium text-gray-500 hover:text-indigo-600 hover:bg-indigo-50/40 flex items-center justify-center gap-1.5"><PencilSquareIcon className="w-4 h-4" /> Edit</button>}
+        {canEdit && !isDisabled && <button onClick={() => onDisable(record)} disabled={busy} className="flex-1 py-2.5 text-xs font-medium text-gray-500 hover:text-rose-600 hover:bg-rose-50/40 disabled:opacity-50 flex items-center justify-center gap-1.5"><NoSymbolIcon className="w-4 h-4" /> Disable</button>}
+        {canEdit && isDisabled && <button onClick={() => onEnable(record)} disabled={busy} className="flex-1 py-2.5 text-xs font-medium text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50/40 disabled:opacity-50 flex items-center justify-center gap-1.5"><ArrowPathIcon className="w-4 h-4" /> Enable</button>}
         {canDelete && <button onClick={() => onDelete(record)} className="flex-1 py-2.5 text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50/40 flex items-center justify-center gap-1.5"><TrashIcon className="w-4 h-4" /> Delete</button>}
       </div>
     </div>
@@ -298,18 +310,30 @@ export default function SalaryStructurePage() {
   const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500 }), enabled: isHR });
   const employees = empRes?.data?.data || empRes?.data || [];
 
-  // Main grid = the active revision per employee.
+  // Main grid = the LATEST revision per employee (any status), so a disabled structure stays
+  // visible with an Enable action. allRows is newest-first, so the first row seen per employee
+  // is that employee's current revision. Superseded older revisions live in History.
   const active = useMemo(() => {
-    let rows = allRows.filter(r => r.status === 'active');
+    const seen = new Set();
+    let rows = [];
+    for (const r of allRows) {
+      if (seen.has(r.employeeId)) continue;
+      seen.add(r.employeeId);
+      rows.push(r);
+    }
     if (empFilter) rows = rows.filter(r => r.employeeId === empFilter);
     return rows;
   }, [allRows, empFilter]);
 
-  const summary = useMemo(() => ({
-    count: active.length,
-    gross: active.reduce((s, r) => s + r.gross, 0),
-    net: active.reduce((s, r) => s + r.netSalary, 0),
-  }), [active]);
+  // Payroll totals count only employees who are actually payable (disabled are excluded).
+  const summary = useMemo(() => {
+    const payable = active.filter(r => r.status !== 'disabled');
+    return {
+      count: payable.length,
+      gross: payable.reduce((s, r) => s + r.gross, 0),
+      net: payable.reduce((s, r) => s + r.netSalary, 0),
+    };
+  }, [active]);
 
   const deleteMutation = useMutation({
     mutationFn: (id) => salaryStructureApi.delete(id),
@@ -317,6 +341,21 @@ export default function SalaryStructurePage() {
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to delete'),
   });
   const handleDelete = (r) => { if (window.confirm(`Delete the salary revision for ${r.employeeName} effective ${r.effectiveFrom}? History for other revisions is kept.`)) deleteMutation.mutate(r.id); };
+
+  // Disable = exclude this employee from payroll (reversible); Enable re-includes them.
+  const invalidateSalary = () => { qc.invalidateQueries({ queryKey: ['salary-structures'] }); qc.invalidateQueries({ queryKey: ['salary-history'] }); };
+  const disableMutation = useMutation({
+    mutationFn: (id) => salaryStructureApi.disable(id),
+    onSuccess: () => { toast.success('Salary structure disabled — employee excluded from payroll'); invalidateSalary(); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to disable'),
+  });
+  const enableMutation = useMutation({
+    mutationFn: (id) => salaryStructureApi.enable(id),
+    onSuccess: () => { toast.success('Salary structure enabled — employee included in payroll'); invalidateSalary(); },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to enable'),
+  });
+  const handleDisable = (r) => { if (window.confirm(`Disable the salary structure for ${r._employee?.name || r.employeeName}?\n\nThis employee will be EXCLUDED from payroll generation until you enable it again or add a new revision. No pay is calculated for them while disabled.`)) disableMutation.mutate(r.id); };
+  const handleEnable = (r) => enableMutation.mutate(r.id);
 
   const openCreate = () => { setEditRecord(null); setShowForm(true); };
   const openEdit = (r) => { setEditRecord(r); setShowForm(true); };
@@ -384,7 +423,9 @@ export default function SalaryStructurePage() {
           {active.map(r => (
             <SalaryCard key={r.id} record={r}
               canEdit={canEditSalary} canDelete={isSuperAdmin}
-              onEdit={openEdit} onDelete={handleDelete} onHistory={setHistoryFor} />
+              onEdit={openEdit} onDelete={handleDelete} onHistory={setHistoryFor}
+              onDisable={handleDisable} onEnable={handleEnable}
+              busy={disableMutation.isPending || enableMutation.isPending} />
           ))}
         </div>
       )}
