@@ -473,6 +473,7 @@ function ApplyLeaveModal({ onClose, editLeave }) {
     mutationFn: () => isEdit
       ? requestLifecycleApi.edit('leave', editLeave.hr_hrleaveid, {
           fromDate: form.from, toDate: form.to, reason: form.reason, days,
+          halfDay: applyHalfDay,   // Full/Half-day change — backend recomputes & sets hr_halfday
         })
       : leaveApi.apply({
           hr_leavetype: form.type,
