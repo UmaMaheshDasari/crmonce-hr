@@ -70,9 +70,9 @@ registerAdapter({
   },
   cancelledPatch: () => ({ hr_status: toValue('hr_leave_status', 'cancelled') }),
   resubmitPatch: () => ({ hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_l2status: '' }),
-  // Editable while PENDING (or on resubmit): reason + dates. Leave TYPE stays fixed
-  // (option-set) and status fields are never employee-editable. hr_days is ALWAYS
-  // recomputed from the dates (working days only) — never trust a client day count.
+  // Editable while PENDING (or on resubmit): reason + dates + Full/Half day. Leave TYPE
+  // stays fixed (option-set) and status fields are never employee-editable. hr_days is
+  // ALWAYS recomputed from the dates (working days only) — never trust a client day count.
   applyEdits: (e) => {
     // Editing/resubmitting a leave must honour the SAME 4000-char reason limit as
     // apply — the create route validates, so the edit path must too (no artificial
@@ -84,7 +84,21 @@ registerAdapter({
     const out = mapEdits(e, { reason: 'hr_reason', fromDate: 'hr_fromdate', toDate: 'hr_todate' });
     if (e.fromDate && e.toDate) {
       const f = String(e.fromDate).slice(0, 10), t = String(e.toDate).slice(0, 10);
-      if (f && t && t >= f) out.hr_days = String(rangeCounts(f, t).working);
+      if (f && t && t >= f) {
+        const working = rangeCounts(f, t).working;
+        out.hr_days = String(working);   // Int32 working-day count (never 0.5)
+        // Full Day / Half Day — honoured only when the client sends the flag, and
+        // recomputed from the dates so it can never be forged. Mirrors the create route
+        // (leave.routes.js): a half day is valid ONLY for a single working day; hr_days
+        // stays the integer span (1) and the 0.5 is carried by the authoritative
+        // hr_halfday flag. A stale half flag on a now multi-day range is normalised to
+        // a full day (never trusted). This lets an employee flip a pending single-day
+        // leave between Half (0.5) and Full (1) before any approver acts.
+        if (e.halfDay !== undefined) {
+          const isHalf = (e.halfDay === true || e.halfDay === 'true') && working === 1;
+          out.hr_halfday = isHalf ? 'true' : 'false';
+        }
+      }
     }
     return out;
   },

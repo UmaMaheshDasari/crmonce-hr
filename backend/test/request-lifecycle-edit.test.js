@@ -133,6 +133,60 @@ test('owner edits own PENDING leave → dates/days/reason patched, type/status u
   assert.ok(!('hr_leavetype' in patch) && !('hr_status' in patch), 'type + status never edited');
 });
 
+// ── Leave Full/Half-day edit (employee self-service, pending only) ──────────────
+// A half day is stored as hr_days = 1 (Int32) + hr_halfday = 'true' (authoritative
+// 0.5 flag), mirroring the create route. The edit path recomputes both from the
+// dates so the flag can never be forged.
+const halfLeaveRow = (over = {}) => ({ hr_hrleaveid: 'l1', _hr_hremployee_value: OWNER.id, hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_leavetype: toValue('hr_leave_type', 'Casual Leave'), hr_fromdate: '2026-05-11', hr_todate: '2026-05-11', hr_days: 1, hr_halfday: 'false', ...over });
+
+test('edit Full → Half on a single working day → hr_halfday=true, hr_days=1', async () => {
+  let patch; d365.getByIdOptional = async () => halfLeaveRow(); d365.update = async (_e, _id, p) => { patch = p; return {}; };
+  await lifecycle.edit({ type: 'leave', id: 'l1', edits: { fromDate: '2026-05-11', toDate: '2026-05-11', days: 0.5, reason: 'half now', halfDay: true }, user: OWNER });
+  assert.strictEqual(patch.hr_halfday, 'true');
+  assert.strictEqual(patch.hr_days, '1', 'hr_days stays the Int32 span (never 0.5)');
+  assert.ok(!('hr_leavetype' in patch) && !('hr_status' in patch), 'type + status never touched');
+});
+
+test('edit Half → Full on a single day → hr_halfday=false, hr_days=1', async () => {
+  let patch; d365.getByIdOptional = async () => halfLeaveRow({ hr_halfday: 'true' }); d365.update = async (_e, _id, p) => { patch = p; return {}; };
+  await lifecycle.edit({ type: 'leave', id: 'l1', edits: { fromDate: '2026-05-11', toDate: '2026-05-11', days: 1, halfDay: false }, user: OWNER });
+  assert.strictEqual(patch.hr_halfday, 'false');
+  assert.strictEqual(patch.hr_days, '1');
+});
+
+test('a stale Half flag on a now MULTI-day range is normalised to Full (never trusted)', async () => {
+  let patch; d365.getByIdOptional = async () => halfLeaveRow({ hr_halfday: 'true' }); d365.update = async (_e, _id, p) => { patch = p; return {}; };
+  await lifecycle.edit({ type: 'leave', id: 'l1', edits: { fromDate: '2026-05-11', toDate: '2026-05-13', days: 3, halfDay: true }, user: OWNER });
+  assert.strictEqual(patch.hr_halfday, 'false', 'half day is impossible for a 3-day range → forced full');
+  assert.strictEqual(patch.hr_days, '3');
+});
+
+test('an edit that omits halfDay leaves the flag untouched (back-compat)', async () => {
+  let patch; d365.getByIdOptional = async () => halfLeaveRow(); d365.update = async (_e, _id, p) => { patch = p; return {}; };
+  await lifecycle.edit({ type: 'leave', id: 'l1', edits: { fromDate: '2026-05-11', toDate: '2026-05-11', reason: 'just reason' }, user: OWNER });
+  assert.ok(!('hr_halfday' in patch), 'flag only written when the client sends halfDay');
+});
+
+// ── Block editing once ANY approver (L1) has acted — the core self-service rule ──
+test('editing a leave already approved by L1 (manager_approved) → 409, nothing written', async () => {
+  let updated = false;
+  d365.getByIdOptional = async () => halfLeaveRow({ hr_l1status: 'approved' });   // L1 approved → canonical manager_approved
+  d365.update = async () => { updated = true; return {}; };
+  await assert.rejects(
+    () => lifecycle.edit({ type: 'leave', id: 'l1', edits: { halfDay: true, fromDate: '2026-05-11', toDate: '2026-05-11' }, user: OWNER }),
+    (e) => e.status === 409 && /can no longer be modified/i.test(e.message),
+  );
+  assert.strictEqual(updated, false, 'an L1-approved leave is locked for the employee');
+});
+
+test('a non-owner cannot edit someone else\'s pending leave → 403', async () => {
+  let updated = false;
+  d365.getByIdOptional = async () => halfLeaveRow();
+  d365.update = async () => { updated = true; return {}; };
+  await assert.rejects(() => lifecycle.edit({ type: 'leave', id: 'l1', edits: { halfDay: true, fromDate: '2026-05-11', toDate: '2026-05-11' }, user: OTHER }), /Access denied/);
+  assert.strictEqual(updated, false);
+});
+
 // ── Leave Reason 4000-char limit on the EDIT path (matches the create route) ──
 const pendingLeaveRow = () => ({ hr_hrleaveid: 'l1', _hr_hremployee_value: OWNER.id, hr_status: toValue('hr_leave_status', 'pending'), hr_l1status: 'pending', hr_leavetype: toValue('hr_leave_type', 'Casual Leave'), hr_startdate: '2026-05-10', hr_enddate: '2026-05-12' });
 
