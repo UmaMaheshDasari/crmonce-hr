@@ -11,6 +11,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { dashboardApi, attendanceApi, lateLoginApi, leaveApi, attendanceRequestApi, compOffApi, historicalAttendanceApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
+import { leaveDuration } from '../../utils/leave-duration';
 // ActivityFeed is intentionally not imported — Recent Activity is withdrawn
 // from this dashboard for every role. See the note in the attendance section.
 import SensitiveAmount from '../../components/SensitiveAmount';
@@ -165,7 +166,7 @@ export default function AdminDashboard() {
   const leaveRows = (leaveQ.data || []).map(l => ({
     key: 'leave-' + l.hr_hrleaveid, type: 'Leave', to: '/leave',
     employee: leaveName(l), date: l.hr_fromdate,
-    details: `${l.hr_leavetype || 'Leave'}${l.hr_days ? ` · ${l.hr_days} day${Number(l.hr_days) === 1 ? '' : 's'}` : ''}`,
+    details: `${l.hr_leavetype || 'Leave'}${l.hr_days ? ` · ${leaveDuration(l).label}` : ''}`,
     status: leaveLevel(l),
   }));
   const correctionRows = (corrQ.data || []).map(r => ({
