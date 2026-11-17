@@ -277,8 +277,18 @@ function decision(d) {
 
     if (isDetailed) {
       const rows = [];
-      const total = b.total || b.paid;
-      if (total) rows.push(['Total Paid Leave', `<strong>${esc(total.remaining)} / ${esc(total.entitled)} days remaining</strong>`]);
+      // Casual Leave + Sick Leave shown as SEPARATE rows (same "X / Y days remaining"
+      // shape) — each paid-leave type's own remaining / entitled. Replaces the former
+      // combined "Total Paid Leave" row. Each row renders only when its balance object
+      // is present (dynamic, never fabricated; zero balances still show, e.g. "0 / 12").
+      // Falls back to the combined paid total only for a legacy payload that carries
+      // `total`/`paid` without the casual/sick breakdown.
+      if (b.casual) rows.push(['Casual Leave', `<strong>${esc(b.casual.remaining)} / ${esc(b.casual.entitled)} days remaining</strong>`]);
+      if (b.sick) rows.push(['Sick Leave', `<strong>${esc(b.sick.remaining)} / ${esc(b.sick.entitled)} days remaining</strong>`]);
+      if (!b.casual && !b.sick) {
+        const total = b.total || b.paid;
+        if (total) rows.push(['Total Paid Leave', `<strong>${esc(total.remaining)} / ${esc(total.entitled)} days remaining</strong>`]);
+      }
       // Comp Off (separate from Total Paid Leave) — shown whenever comp-off is
       // available (balance > 0), and also on a comp-off request so the post-approval
       // decrement is visible (e.g. 2 → 1, or 1 → 0). The balance is computed AFTER
