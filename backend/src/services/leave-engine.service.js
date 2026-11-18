@@ -75,12 +75,20 @@ function adjustmentsByCategory(ledger) {
 }
 
 // Default max CL days carried to the next year (overridable via Payroll Settings →
-// leavePolicy.casualCarryForwardMax). Carry = MIN(clamp0(prev-year CL remaining), max).
+// leavePolicy.casualCarryForwardMax).
+// Rule: carry forward ONLY when the prev-year CL remaining is at least the cap; a
+// remaining BELOW the cap carries nothing. So with the default cap of 5:
+//   remaining >= 5 → carry 5 ;  remaining < 5 → carry 0.
 const CASUAL_CARRY_FORWARD_MAX = 5;
-/** Pure carry-forward formula: MIN(max(0, remaining), max). Negative → 0. */
+/**
+ * Pure carry-forward formula. Carries the full cap only when the remaining balance
+ * reaches the cap; below the cap nothing is carried. Negative/zero → 0.
+ *   carry = (clamp0(remaining) >= cap) ? cap : 0
+ */
 function casualCarryForward(remaining, max = CASUAL_CARRY_FORWARD_MAX) {
   const r = clamp0(remaining);                 // never carry a negative balance
-  return Math.min(r, Math.max(0, r2(max)));    // never carry more than the cap
+  const cap = Math.max(0, r2(max));            // the cap (default 5)
+  return r >= cap ? cap : 0;                    // at/above the cap → cap; below → nothing
 }
 
 /**
