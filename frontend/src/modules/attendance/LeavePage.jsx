@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { leaveApi, employeeApi, requestLifecycleApi } from '../../api/endpoints';
 import { PlusIcon, CheckIcon, XMarkIcon, CalendarDaysIcon, ClockIcon, DocumentTextIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
@@ -21,7 +21,6 @@ import { useAuth } from '../../context/AuthContext';
 import { format, subDays } from 'date-fns';
 import { leaveDuration } from '../../utils/leave-duration';
 import { LEAVE_TABS, hrLeaveListParams, mergeLeaveRows } from '../../utils/leave-list-query';
-import { MONTH_OPTIONS, filterLeavesByMonth } from '../../utils/leave-month-filter';
 import toast from 'react-hot-toast';
 
 // Selectable leave types in the employee application. Earned Leave is intentionally
@@ -841,10 +840,6 @@ export default function LeavePage() {
   const [editLeave, setEditLeave] = useState(null);   // employee editing their own pending/rejected leave
   const [filter, setFilter] = useState('pending');
   const [empF, setEmpF] = useState('');   // HR only: '' = All Employees, else a single employee id
-  const [monthF, setMonthF] = useState('');   // '' = All Months, else 1..12 (submission month)
-  // Request-list year for the month filter — current calendar year. This is the
-  // REQUEST list year and is deliberately separate from the Leave Balance year selector.
-  const reqYear = new Date().getFullYear();
 
   // Employee options for the HR "All Employees" filter (active employees). Loaded
   // only for HR roles — a non-HR user can never filter to another employee (the
@@ -876,15 +871,7 @@ export default function LeavePage() {
     },
   });
 
-  // Month filter is applied CLIENT-SIDE on the fetched rows by submission date
-  // (createdon, IST month of reqYear). It runs after the HR list / non-HR merge, so it
-  // covers reportee-pending rows too, and combines with the employee + status filters
-  // (each is independent state, so changing one preserves the others). Not in the query
-  // key — switching month re-derives locally without a refetch.
-  const leaves = useMemo(
-    () => filterLeavesByMonth(data?.data?.data || [], { year: reqYear, month: monthF }),
-    [data, monthF, reqYear],
-  );
+  const leaves = data?.data?.data || [];
 
   const tabs = LEAVE_TABS;
 
@@ -902,10 +889,10 @@ export default function LeavePage() {
       {/* Leave Balance dashboard (Paid / Casual / Sick / Comp Off / LOP / Available) */}
       <LeaveBalance />
 
-      {/* Filters: status tabs + month filter + (HR only) employee filter.
-          All three are independent state and combine (AND) — changing one preserves
-          the others. Month filters by submission date (createdon); employee + status
-          hit the backend; month is applied client-side on the result. */}
+      {/* Filters: status tabs + (HR only) employee filter. The two combine (AND) and
+          are independent state — changing the employee preserves the active status tab
+          and vice-versa. There is no month/date restriction: a selected employee + status
+          shows ALL matching requests across every month, past and future. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Pill-style Status Tabs */}
         <div className="inline-flex bg-gray-100/80 p-1 rounded-xl gap-0.5 flex-wrap">
@@ -924,45 +911,27 @@ export default function LeavePage() {
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Month filter — all users. Defaults to All Months; filters by the month the
-              request was submitted (createdon), for the current year. */}
+        {/* Request employee filter — HR only. Defaults to All Employees; changing it
+            refilters the request LIST while the active status tab is preserved. This
+            is independent of the "Balance for" picker in the Leave Balance card above. */}
+        {hr && (
           <label className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Month</span>
+            <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Requests for</span>
             <select
-              value={monthF}
-              onChange={e => setMonthF(e.target.value)}
-              title="Filter by the month the request was submitted (current year)"
-              className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
+              value={empF}
+              onChange={e => setEmpF(e.target.value)}
+              title="Employee whose leave requests are listed (independent of the balance picker)"
+              className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 max-w-[16rem] focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
             >
-              {MONTH_OPTIONS.map(m => (
-                <option key={m.label} value={m.value}>{m.label}</option>
-              ))}
+              <option value="">All Employees</option>
+              {[...employees]
+                .sort((a, b) => String(a.hr_hremployee1 || '').localeCompare(String(b.hr_hremployee1 || '')))
+                .map(e => (
+                  <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>
+                ))}
             </select>
           </label>
-
-          {/* Request employee filter — HR only. Defaults to All Employees; changing it
-              refilters the request LIST while the active status tab + month are preserved.
-              Independent of the "Balance for" picker in the Leave Balance card above. */}
-          {hr && (
-            <label className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Requests for</span>
-              <select
-                value={empF}
-                onChange={e => setEmpF(e.target.value)}
-                title="Employee whose leave requests are listed (independent of the balance picker)"
-                className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 max-w-[16rem] focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
-              >
-                <option value="">All Employees</option>
-                {[...employees]
-                  .sort((a, b) => String(a.hr_hremployee1 || '').localeCompare(String(b.hr_hremployee1 || '')))
-                  .map(e => (
-                    <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>
-                  ))}
-              </select>
-            </label>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Leave Cards */}
