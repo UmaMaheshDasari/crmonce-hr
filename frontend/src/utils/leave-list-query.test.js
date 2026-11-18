@@ -46,6 +46,18 @@ test('HR: All Employees + Approved → status=approved, no employeeId', () => {
   assert.deepStrictEqual(hrLeaveListParams('approved', ''), { status: 'approved', employeeId: undefined });
 });
 
+// ── No month/date restriction: the request is scoped ONLY by status + employee ──
+// (The month filter was removed — a selected employee + status returns every matching
+// request regardless of the month it was submitted, past or future.)
+test('request params carry only status + employeeId — no month/date key', () => {
+  for (const [status, emp] of [['', ''], ['pending', 'emp-1'], ['approved', ''], ['rejected', 'emp-2']]) {
+    const params = hrLeaveListParams(status, emp);
+    assert.deepStrictEqual(Object.keys(params).sort(), ['employeeId', 'status']);
+    assert.ok(!('month' in params) && !('year' in params) && !('createdon' in params),
+      'no month/year/createdon restriction in the request params');
+  }
+});
+
 // ── Non-HR Pending merge: own + reportee approvals, de-duplicated ────────────
 test('mergeLeaveRows: own + approval rows, de-duplicated by leave id, own first', () => {
   const own = [{ hr_hrleaveid: 'a' }, { hr_hrleaveid: 'b' }];
