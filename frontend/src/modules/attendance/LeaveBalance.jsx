@@ -108,12 +108,16 @@ function ManageModal({ employeeId, employeeName, onClose }) {
 }
 
 // `employeeId` pins the balance to one person: HR Employee Details, or the Leave page's
-// SINGLE "Employee" selector (passed down with `controlled`). There is no picker inside
-// this component. `controlled` means the parent drives the employee choice — and when HR
-// has selected "All Employees" (no employeeId) the Leave page shows a placeholder rather
-// than an arbitrary or aggregate balance. The year selector stays and is not an employee
-// filter. Non-HR users always see their own balance.
-export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedName, controlled = false }) {
+// SINGLE "Employee" selector. When `controlled`, the parent owns the employee choice and
+// this component RENDERS that selector next to the Year dropdown (`employees` +
+// `onEmployeeChange`) — the one selector drives both the balance cards here and the
+// request list in the parent. HR with "All Employees" (no employeeId) shows a placeholder
+// rather than an arbitrary/aggregate balance. The Year selector stays and is not an
+// employee filter. Non-HR users always see their own balance and get no selector.
+export default function LeaveBalance({
+  employeeId: fixedId, employeeName: fixedName, controlled = false,
+  employees = [], onEmployeeChange,
+}) {
   const { user, isHR, hasPermission } = useAuth();
   const hr = isHR();   // HR scope — role concept, unchanged
   const canManageBalance = hasPermission('leave.manage_balance');   // RBAC Phase D — Manage action
@@ -160,12 +164,31 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
           </h2>
           <p className="text-xs text-gray-400">Leave year Jan–Dec. Policy: 12 Casual + 6 Sick = 18 paid/year. Beyond that becomes LOP (unpaid).</p>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Year history (req 10) */}
-          <select value={year} onChange={e => setYear(Number(e.target.value))}
-            className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Year history (req 10) — controls the balance year only, not the employee. */}
+          <label className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Year</span>
+            <select value={year} onChange={e => setYear(Number(e.target.value))}
+              className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </label>
+
+          {/* SINGLE employee selector — HR only, parent-controlled. Defaults to All
+              Employees; drives BOTH these balance cards and the request list below. */}
+          {controlled && hr && onEmployeeChange && (
+            <label className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Employee</span>
+              <select value={fixedId || ''} onChange={e => onEmployeeChange(e.target.value)}
+                title="Employee whose leave balance and requests are shown"
+                className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 max-w-[14rem] focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+                <option value="">All Employees</option>
+                {[...employees]
+                  .sort((a, b) => String(a.hr_hremployee1 || '').localeCompare(String(b.hr_hremployee1 || '')))
+                  .map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
+              </select>
+            </label>
+          )}
           {canManageBalance && manageEmpId && (
             <button onClick={() => setShowManage(true)}
               className="inline-flex items-center gap-1.5 h-9 px-3 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700"
