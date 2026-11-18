@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leaveApi, employeeApi } from '../../api/endpoints';
+import { leaveApi } from '../../api/endpoints';
 import { XMarkIcon, AdjustmentsHorizontalIcon, GiftIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
-import { resolveBalanceTargetId } from '../../utils/leave-balance-target';
+import { resolveBalanceView } from '../../utils/leave-balance-target';
 import toast from 'react-hot-toast';
 
 const d = (n) => `${Number(n || 0)}`;
@@ -107,31 +107,32 @@ function ManageModal({ employeeId, employeeName, onClose }) {
   );
 }
 
-// `employeeId` fixes the summary to one person (My Profile / HR Employee Details);
-// omit it for the Leave page, where HR gets an employee picker and the default is
-// the signed-in user.
-export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedName }) {
+// `employeeId` pins the balance to one person: HR Employee Details, or the Leave page's
+// SINGLE "Employee" selector (passed down with `controlled`). There is no picker inside
+// this component. `controlled` means the parent drives the employee choice — and when HR
+// has selected "All Employees" (no employeeId) the Leave page shows a placeholder rather
+// than an arbitrary or aggregate balance. The year selector stays and is not an employee
+// filter. Non-HR users always see their own balance.
+export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedName, controlled = false }) {
   const { user, isHR, hasPermission } = useAuth();
-  const hr = isHR();   // HR scope (employee picker / see-all) — role concept, unchanged
+  const hr = isHR();   // HR scope — role concept, unchanged
   const canManageBalance = hasPermission('leave.manage_balance');   // RBAC Phase D — Manage action
-  const [selectedEmp, setSelectedEmp] = useState('');
   const [showManage, setShowManage] = useState(false);
   const nowYear = new Date().getFullYear();
   const [year, setYear] = useState(nowYear);
   const years = [nowYear + 1, nowYear, nowYear - 1, nowYear - 2];   // history (req 10)
 
-  const showPicker = hr && !fixedId;
-  const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500 }), enabled: showPicker });
-  const employees = empRes?.data?.data || empRes?.data || [];
-  // Whose balance to show — independent of the request-list employee filter.
-  // undefined → self on the backend (never an arbitrary employee).
-  const targetId = resolveBalanceTargetId({ fixedId, hr, selectedEmp });
-  const manageEmpId = fixedId || selectedEmp;   // a concrete employee HR can manage
-  const targetName = fixedName || (fixedId ? '' : (hr && selectedEmp ? (employees.find(e => e.hr_hremployeeid === selectedEmp)?.hr_hremployee1 || 'Employee') : (user?.name || 'You')));
+  // Whose balance to show (and whether to show the "pick an employee" placeholder).
+  // undefined targetId → self on the backend (non-HR). HR on the Leave page with no
+  // employee selected shows a placeholder, never an arbitrary/aggregate balance.
+  const { showPlaceholder, targetId } = resolveBalanceView({ controlled, hr, fixedId });
+  const manageEmpId = fixedId;                             // only a concrete employee is manageable
+  const targetName = fixedName || (!hr ? (user?.name || 'You') : '');
 
   const { data: bal, isLoading } = useQuery({
     queryKey: ['leave-balance', targetId || 'self', year],
     queryFn: () => leaveApi.balance({ ...(targetId ? { employeeId: targetId } : {}), year }),
+    enabled: !showPlaceholder,
   });
   const b = bal?.data;
 
@@ -165,17 +166,6 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
             className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          {showPicker && (
-            <label className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Balance for</span>
-              <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)}
-                title="Employee whose leave balance is shown (independent of the request filter)"
-                className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
-                <option value="">Me</option>
-                {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
-              </select>
-            </label>
-          )}
           {canManageBalance && manageEmpId && (
             <button onClick={() => setShowManage(true)}
               className="inline-flex items-center gap-1.5 h-9 px-3 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700"
@@ -186,7 +176,12 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
         </div>
       </div>
 
-      {isLoading ? (
+      {showPlaceholder ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white/60 px-4 py-8 text-center">
+          <p className="text-sm font-medium text-gray-500">Select an employee to view leave balance.</p>
+          <p className="text-xs text-gray-400 mt-1">Leave balance is shown per employee — choose one from the Employee filter above.</p>
+        </div>
+      ) : isLoading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">{[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-white rounded-xl border border-gray-100 animate-pulse" />)}</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
