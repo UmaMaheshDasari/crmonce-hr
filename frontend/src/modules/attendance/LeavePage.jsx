@@ -850,6 +850,8 @@ export default function LeavePage() {
     enabled: hr,
   });
   const employees = empRes?.data?.data || empRes?.data || [];
+  // Name of the currently selected employee — drives the Leave Balance heading.
+  const selectedEmpName = empF ? (employees.find(e => e.hr_hremployeeid === empF)?.hr_hremployee1 || '') : '';
 
   // Leave list. Authorization is ENFORCED SERVER-SIDE (unchanged):
   //  • HR: one authoritative list — all employees, or a single employee when one is
@@ -886,13 +888,16 @@ export default function LeavePage() {
         <Button onClick={() => setShowModal(true)} icon={PlusIcon}>Apply Leave</Button>
       </div>
 
-      {/* Leave Balance dashboard (Paid / Casual / Sick / Comp Off / LOP / Available) */}
-      <LeaveBalance />
+      {/* Leave Balance dashboard — driven by the SINGLE employee selector below.
+          A selected employee shows that person's balance; HR + All Employees shows a
+          placeholder. Non-HR always sees their own balance. */}
+      <LeaveBalance employeeId={empF || undefined} employeeName={selectedEmpName} controlled />
 
-      {/* Filters: status tabs + (HR only) employee filter. The two combine (AND) and
-          are independent state — changing the employee preserves the active status tab
-          and vice-versa. There is no month/date restriction: a selected employee + status
-          shows ALL matching requests across every month, past and future. */}
+      {/* Filters: status tabs + (HR only) SINGLE employee selector. The employee
+          selector controls the whole page — both the Leave Balance cards above and the
+          request list below. It combines (AND) with the status tab, which is preserved
+          when the employee changes. There is no month/date restriction: a selected
+          employee + status shows ALL matching requests across every month. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Pill-style Status Tabs */}
         <div className="inline-flex bg-gray-100/80 p-1 rounded-xl gap-0.5 flex-wrap">
@@ -911,16 +916,16 @@ export default function LeavePage() {
           ))}
         </div>
 
-        {/* Request employee filter — HR only. Defaults to All Employees; changing it
-            refilters the request LIST while the active status tab is preserved. This
-            is independent of the "Balance for" picker in the Leave Balance card above. */}
+        {/* Single employee selector — HR only. Defaults to All Employees; controls BOTH
+            the Leave Balance cards and the request list. The active status tab is preserved
+            when it changes. */}
         {hr && (
           <label className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Requests for</span>
+            <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Employee</span>
             <select
               value={empF}
               onChange={e => setEmpF(e.target.value)}
-              title="Employee whose leave requests are listed (independent of the balance picker)"
+              title="Employee whose leave balance and requests are shown"
               className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 max-w-[16rem] focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
             >
               <option value="">All Employees</option>
