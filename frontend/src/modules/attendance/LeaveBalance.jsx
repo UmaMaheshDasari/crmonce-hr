@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { leaveApi, employeeApi } from '../../api/endpoints';
 import { XMarkIcon, AdjustmentsHorizontalIcon, GiftIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../context/AuthContext';
+import { resolveBalanceTargetId } from '../../utils/leave-balance-target';
 import toast from 'react-hot-toast';
 
 const d = (n) => `${Number(n || 0)}`;
@@ -122,7 +123,9 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
   const showPicker = hr && !fixedId;
   const { data: empRes } = useQuery({ queryKey: ['employees-lite'], queryFn: () => employeeApi.list({ limit: 500 }), enabled: showPicker });
   const employees = empRes?.data?.data || empRes?.data || [];
-  const targetId = fixedId || (hr ? (selectedEmp || undefined) : undefined);   // undefined → self on the backend
+  // Whose balance to show — independent of the request-list employee filter.
+  // undefined → self on the backend (never an arbitrary employee).
+  const targetId = resolveBalanceTargetId({ fixedId, hr, selectedEmp });
   const manageEmpId = fixedId || selectedEmp;   // a concrete employee HR can manage
   const targetName = fixedName || (fixedId ? '' : (hr && selectedEmp ? (employees.find(e => e.hr_hremployeeid === selectedEmp)?.hr_hremployee1 || 'Employee') : (user?.name || 'You')));
 
@@ -150,7 +153,10 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
     <div className="bg-gray-50/60 rounded-2xl border border-gray-100 p-4 sm:p-5 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold text-gray-900">Leave Balance · {year}</h2>
+          <h2 className="text-sm font-bold text-gray-900">
+            Leave Balance · {year}
+            {targetName && <span className="text-gray-500 font-semibold"> · {targetName}</span>}
+          </h2>
           <p className="text-xs text-gray-400">Leave year Jan–Dec. Policy: 12 Casual + 6 Sick = 18 paid/year. Beyond that becomes LOP (unpaid).</p>
         </div>
         <div className="flex items-center gap-2">
@@ -160,11 +166,15 @@ export default function LeaveBalance({ employeeId: fixedId, employeeName: fixedN
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
           {showPicker && (
-            <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)}
-              className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
-              <option value="">Me</option>
-              {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
-            </select>
+            <label className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Balance for</span>
+              <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)}
+                title="Employee whose leave balance is shown (independent of the request filter)"
+                className="h-9 px-3 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+                <option value="">Me</option>
+                {employees.map(e => <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>)}
+              </select>
+            </label>
           )}
           {canManageBalance && manageEmpId && (
             <button onClick={() => setShowManage(true)}
