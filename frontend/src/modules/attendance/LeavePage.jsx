@@ -908,21 +908,26 @@ export default function LeavePage() {
           ))}
         </div>
 
-        {/* Employee filter — HR only. Defaults to All Employees; changing it refilters
-            the list while the active status tab is preserved. */}
+        {/* Request employee filter — HR only. Defaults to All Employees; changing it
+            refilters the request LIST while the active status tab is preserved. This
+            is independent of the "Balance for" picker in the Leave Balance card above. */}
         {hr && (
-          <select
-            value={empF}
-            onChange={e => setEmpF(e.target.value)}
-            className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 max-w-[16rem] focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
-          >
-            <option value="">All Employees</option>
-            {[...employees]
-              .sort((a, b) => String(a.hr_hremployee1 || '').localeCompare(String(b.hr_hremployee1 || '')))
-              .map(e => (
-                <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>
-              ))}
-          </select>
+          <label className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-gray-500 whitespace-nowrap">Requests for</span>
+            <select
+              value={empF}
+              onChange={e => setEmpF(e.target.value)}
+              title="Employee whose leave requests are listed (independent of the balance picker)"
+              className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 max-w-[16rem] focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
+            >
+              <option value="">All Employees</option>
+              {[...employees]
+                .sort((a, b) => String(a.hr_hremployee1 || '').localeCompare(String(b.hr_hremployee1 || '')))
+                .map(e => (
+                  <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>
+                ))}
+            </select>
+          </label>
         )}
       </div>
 

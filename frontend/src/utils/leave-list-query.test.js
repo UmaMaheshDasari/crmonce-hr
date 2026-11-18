@@ -41,6 +41,11 @@ test('HR: Approved / Rejected pass through with the selected employee', () => {
   assert.deepStrictEqual(hrLeaveListParams('rejected', ''), { status: 'rejected', employeeId: undefined });
 });
 
+// ── 5b. Approved tab with All Employees → every authorized approved request ──
+test('HR: All Employees + Approved → status=approved, no employeeId', () => {
+  assert.deepStrictEqual(hrLeaveListParams('approved', ''), { status: 'approved', employeeId: undefined });
+});
+
 // ── Non-HR Pending merge: own + reportee approvals, de-duplicated ────────────
 test('mergeLeaveRows: own + approval rows, de-duplicated by leave id, own first', () => {
   const own = [{ hr_hrleaveid: 'a' }, { hr_hrleaveid: 'b' }];
