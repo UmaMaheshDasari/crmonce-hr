@@ -956,7 +956,7 @@ router.get('/pending-approvals', async (req, res, next) => {
     // Get all pending leaves for my reportees
     const orFilter = reporteeIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ');
     const result = await d365.getList(ENTITY, {
-      select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date',
+      select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date,createdon',
       filter: `(${orFilter}) and hr_l1status eq 'pending'`,
       orderby: 'createdon desc',
     });
@@ -971,7 +971,7 @@ router.get('/pending-approvals', async (req, res, next) => {
     if (subIds.length > 0) {
       const subFilter = subIds.map(id => `_hr_hremployee_value eq '${id}'`).join(' or ');
       const l2Result = await d365.getList(ENTITY, {
-        select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date',
+        select: 'hr_hrleaveid,hr_leavetype,hr_fromdate,hr_todate,hr_days,hr_reason,hr_status,hr_remarks,_hr_hremployee_value,hr_l1status,hr_l1remarks,hr_l1approvedby,hr_l1date,hr_l2status,hr_l2remarks,hr_l2approvedby,hr_l2date,createdon',
         filter: `(${subFilter}) and hr_l2status eq 'pending_l2'`,
         orderby: 'createdon desc',
       });
