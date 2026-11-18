@@ -20,6 +20,7 @@ import { CertUploader, CertReview } from '../../components/MedicalCertificate';
 import { useAuth } from '../../context/AuthContext';
 import { format, subDays } from 'date-fns';
 import { leaveDuration } from '../../utils/leave-duration';
+import { LEAVE_TABS, hrLeaveListParams, mergeLeaveRows } from '../../utils/leave-list-query';
 import toast from 'react-hot-toast';
 
 // Selectable leave types in the employee application. Earned Leave is intentionally
@@ -831,33 +832,48 @@ function getOverallStatusLabel(leave) {
 
 export default function LeavePage() {
   const { isHR, user, hasPermission } = useAuth();
+  const hr = isHR();   // super_admin / hr_manager → see-all + employee filter
   // HR override approve/reject → leave.approve / leave.reject (RBAC Phase D). L1/L2 manager
   // workflow below stays status-driven and is NOT changed.
   const canOverrideLeave = hasPermission('leave.approve') || hasPermission('leave.reject');
   const [showModal, setShowModal] = useState(false);
   const [editLeave, setEditLeave] = useState(null);   // employee editing their own pending/rejected leave
   const [filter, setFilter] = useState('pending');
+  const [empF, setEmpF] = useState('');   // HR only: '' = All Employees, else a single employee id
 
-  // Standard leave list query
+  // Employee options for the HR "All Employees" filter (active employees). Loaded
+  // only for HR roles — a non-HR user can never filter to another employee (the
+  // backend ignores employeeId for role 'employee' and scopes to self).
+  const { data: empRes } = useQuery({
+    queryKey: ['employees-all'],
+    queryFn: () => employeeApi.list({ limit: 500, status: 'active' }),
+    enabled: hr,
+  });
+  const employees = empRes?.data?.data || empRes?.data || [];
+
+  // Leave list. Authorization is ENFORCED SERVER-SIDE (unchanged):
+  //  • HR: one authoritative list — all employees, or a single employee when one is
+  //    selected. The status tab maps straight to the backend status filter.
+  //  • Non-HR: own requests. On the Pending tab we additionally fold in requests
+  //    awaiting THIS user's approval (managers' reportees) so the approval queue is
+  //    preserved now that the separate "Pending My Approval" tab is removed. The
+  //    backend scopes both calls, so the merge can never widen what the user may see.
   const { data, isLoading } = useQuery({
-    queryKey: ['leaves', filter],
-    queryFn: () => {
-      if (filter === 'my_approvals') {
-        return leaveApi.pendingApprovals();
+    queryKey: ['leaves', filter, hr ? empF : 'self'],
+    queryFn: async () => {
+      if (hr) {
+        return leaveApi.list(hrLeaveListParams(filter, empF));
       }
-      return leaveApi.list({ status: filter || undefined });
+      const own = await leaveApi.list({ status: filter || undefined });
+      if (filter !== 'pending') return own;
+      const approvals = await leaveApi.pendingApprovals();
+      return { data: { data: mergeLeaveRows(own?.data?.data, approvals?.data?.data) } };
     },
   });
 
   const leaves = data?.data?.data || [];
 
-  const tabs = [
-    { key: '', label: 'All', count: null },
-    { key: 'pending', label: 'Pending', count: null },
-    { key: 'approved', label: 'Approved', count: null },
-    { key: 'rejected', label: 'Rejected', count: null },
-    { key: 'my_approvals', label: 'Pending My Approval', count: null },
-  ];
+  const tabs = LEAVE_TABS;
 
   return (
     <div className="space-y-6">
@@ -873,21 +889,41 @@ export default function LeavePage() {
       {/* Leave Balance dashboard (Paid / Casual / Sick / Comp Off / LOP / Available) */}
       <LeaveBalance />
 
-      {/* Pill-style Status Tabs */}
-      <div className="inline-flex bg-gray-100/80 p-1 rounded-xl gap-0.5 flex-wrap">
-        {tabs.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setFilter(t.key)}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 whitespace-nowrap ${
-              filter === t.key
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
-            }`}
+      {/* Filters: status tabs + (HR only) employee filter */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Pill-style Status Tabs */}
+        <div className="inline-flex bg-gray-100/80 p-1 rounded-xl gap-0.5 flex-wrap">
+          {tabs.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setFilter(t.key)}
+              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 whitespace-nowrap ${
+                filter === t.key
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Employee filter — HR only. Defaults to All Employees; changing it refilters
+            the list while the active status tab is preserved. */}
+        {hr && (
+          <select
+            value={empF}
+            onChange={e => setEmpF(e.target.value)}
+            className="h-10 px-3 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 max-w-[16rem] focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 outline-none transition-all"
           >
-            {t.label}
-          </button>
-        ))}
+            <option value="">All Employees</option>
+            {[...employees]
+              .sort((a, b) => String(a.hr_hremployee1 || '').localeCompare(String(b.hr_hremployee1 || '')))
+              .map(e => (
+                <option key={e.hr_hremployeeid} value={e.hr_hremployeeid}>{e.hr_hremployee1}</option>
+              ))}
+          </select>
+        )}
       </div>
 
       {/* Leave Cards */}
