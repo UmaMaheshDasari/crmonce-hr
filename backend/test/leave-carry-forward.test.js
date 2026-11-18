@@ -1,6 +1,8 @@
 /**
- * Casual Leave annual carry-forward (max 5):
- *   carry = MIN(clamp0(prev-year CL remaining), max)   [default max 5]
+ * Casual Leave annual carry-forward (cap 5):
+ *   carry = (clamp0(prev-year CL remaining) >= cap) ? cap : 0   [default cap 5]
+ *   i.e. carry the full cap ONLY when remaining reaches the cap; below the cap
+ *   nothing is carried.
  *   next-year CL entitlement = annual allocation + carried days (via the leave ledger)
  *   rollover is IDEMPOTENT — running twice never double-credits.
  *
@@ -24,12 +26,14 @@ const LEDGER = d365.constructor.entities.leaveLedger;
 const CL = toValue('hr_leave_type', 'Casual Leave');
 
 // ── 1. Pure formula: the exact table from the business rule ──
-test('casualCarryForward = MIN(max(0, remaining), 5)', () => {
-  const cases = [[10, 5], [8, 5], [5, 5], [4, 4], [3, 3], [2, 2], [1, 1], [0, 0], [-2, 0], [-0.5, 0], [5.5, 5]];
+test('casualCarryForward = (max(0, remaining) >= 5) ? 5 : 0', () => {
+  // At/above the cap → carry the full cap; strictly below the cap → carry nothing.
+  const cases = [[10, 5], [8, 5], [5, 5], [5.5, 5], [4.9, 0], [4, 0], [3, 0], [2, 0], [1, 0], [0, 0], [-2, 0], [-0.5, 0]];
   for (const [remaining, expected] of cases) {
     assert.strictEqual(engine.casualCarryForward(remaining), expected, `remaining ${remaining} → ${expected}`);
   }
-  assert.strictEqual(engine.casualCarryForward(10, 3), 3, 'a different max is honoured');
+  assert.strictEqual(engine.casualCarryForward(3, 3), 3, 'a different cap is honoured (remaining meets cap 3)');
+  assert.strictEqual(engine.casualCarryForward(2, 3), 0, 'below the configured cap → nothing');
 });
 
 // ── 2. Entitlement folding: carry_forward raises next-year CL entitlement ──
@@ -42,11 +46,18 @@ test('a carry_forward ledger credit raises next-year CL entitlement (12 + carry 
   assert.strictEqual(b.casual.remaining, 17, 'nothing used yet');
 });
 
-test('worked example: 2026 used 9 (remaining 3) → 2027 opening = 12 + 3 = 15', () => {
-  const carry = engine.casualCarryForward(3);
+test('worked example: 2026 used 4 (remaining 8) → 2027 opening = 12 + 5 = 17', () => {
+  const carry = engine.casualCarryForward(8);   // remaining 8 ≥ cap → full cap of 5
   const b = engine.computeBalance({ leaves: [], policy: { casual: 12, sick: 6 }, ledger: [{ kind: 'carry_forward', category: 'casual', days: carry }] });
-  assert.strictEqual(carry, 3);
-  assert.strictEqual(b.casual.entitled, 15);
+  assert.strictEqual(carry, 5);
+  assert.strictEqual(b.casual.entitled, 17);
+});
+
+test('worked example: 2026 used 9 (remaining 3, below cap) → 2027 opening = 12 (nothing carried)', () => {
+  const carry = engine.casualCarryForward(3);   // remaining 3 < cap → nothing carries
+  const b = engine.computeBalance({ leaves: [], policy: { casual: 12, sick: 6 }, ledger: [{ kind: 'carry_forward', category: 'casual', days: carry }] });
+  assert.strictEqual(carry, 0);
+  assert.strictEqual(b.casual.entitled, 12);
 });
 
 // ── async rollover harness ──
@@ -81,16 +92,16 @@ function stub({ fromYear = 2026, usedByEmp = {}, existingCarry = {} } = {}) {
   return created;
 }
 
-// ── 3. Rollover carries MIN(remaining, 5) for multiple employees ──
-test('rollover: multiple employees each get MIN(remaining, 5); 0-remaining gets nothing', async () => {
+// ── 3. Rollover carries the full cap only for employees at/above the cap ──
+test('rollover: only employees with remaining >= cap carry (the full 5); below-cap carries nothing', async () => {
   const created = stub({ fromYear: 2026, usedByEmp: { A: 2, B: 8, C: 12 } });   // remaining 10, 4, 0
   const employees = [{ hr_hremployeeid: 'A', hr_hremployee1: 'Amy' }, { hr_hremployeeid: 'B', hr_hremployee1: 'Ben' }, { hr_hremployeeid: 'C', hr_hremployee1: 'Cy' }];
   const r = await engine.rollCasualLeaveForward({ fromYear: 2026, toYear: 2027, employees });
-  assert.strictEqual(r.carried, 2, 'A and B carried, C (0) skipped');
-  assert.strictEqual(r.totalDays, 9, '5 + 4');
+  assert.strictEqual(r.carried, 1, 'only A (remaining 10 ≥ 5) carried; B (4) and C (0) skipped');
+  assert.strictEqual(r.totalDays, 5, 'A carries the full cap of 5');
   const byEmp = Object.fromEntries(created.map(x => [x.hr_employeeid, x]));
   assert.strictEqual(Number(byEmp.A.hr_days), 5, 'A remaining 10 → 5');
-  assert.strictEqual(Number(byEmp.B.hr_days), 4, 'B remaining 4 → 4');
+  assert.ok(!byEmp.B, 'B remaining 4 (below cap) → no entry');
   assert.ok(!byEmp.C, 'C remaining 0 → no entry');
   // Every written row is a carry_forward casual credit into 2027 — nothing else touched.
   for (const x of created) {
@@ -111,7 +122,7 @@ test('rollover is idempotent — employees already carried are skipped, nothing 
 });
 
 test('rollover: mixed — new employee carried, already-carried employee skipped', async () => {
-  const created = stub({ fromYear: 2026, usedByEmp: { A: 2, B: 8 }, existingCarry: { A: true } });
+  const created = stub({ fromYear: 2026, usedByEmp: { A: 2, B: 2 }, existingCarry: { A: true } });   // both remaining 10 (≥ cap)
   const employees = [{ hr_hremployeeid: 'A', hr_hremployee1: 'Amy' }, { hr_hremployeeid: 'B', hr_hremployee1: 'Ben' }];
   const r = await engine.rollCasualLeaveForward({ fromYear: 2026, toYear: 2027, employees });
   assert.strictEqual(r.carried, 1);
@@ -121,12 +132,21 @@ test('rollover: mixed — new employee carried, already-carried employee skipped
 });
 
 // ── 5. Consecutive years: the SAME rule applies each year ──
-test('consecutive years: 2027→2028 carry uses 2027 remaining (same MIN(remaining,5) rule)', async () => {
-  const created = stub({ fromYear: 2027, usedByEmp: { A: 9 } });   // 2027 remaining 3
+test('consecutive years: 2027→2028 carry uses 2027 remaining (same at/above-cap rule)', async () => {
+  const created = stub({ fromYear: 2027, usedByEmp: { A: 5 } });   // 2027 remaining 7 (≥ cap)
   const r = await engine.rollCasualLeaveForward({ fromYear: 2027, toYear: 2028, employees: [{ hr_hremployeeid: 'A', hr_hremployee1: 'Amy' }] });
   assert.strictEqual(r.carried, 1);
-  assert.strictEqual(Number(created[0].hr_days), 3);
+  assert.strictEqual(Number(created[0].hr_days), 5);
   assert.strictEqual(created[0].hr_year, '2028');
+});
+
+// ── 5b. Below-cap remaining carries nothing in the rollover too ──
+test('consecutive years: 2027 remaining below cap → nothing carried', async () => {
+  const created = stub({ fromYear: 2027, usedByEmp: { A: 9 } });   // 2027 remaining 3 (< cap)
+  const r = await engine.rollCasualLeaveForward({ fromYear: 2027, toYear: 2028, employees: [{ hr_hremployeeid: 'A', hr_hremployee1: 'Amy' }] });
+  assert.strictEqual(r.carried, 0);
+  assert.strictEqual(r.totalDays, 0);
+  assert.strictEqual(created.length, 0);
 });
 
 test('toYear defaults to fromYear + 1', async () => {
