@@ -1,12 +1,11 @@
 /**
  * Monthly permission policy — create() integration + manager decision (effective 2026-11-01).
  *
- * The monthly policy applies to EARLY LOGOUT ONLY. Under the revised policy every qualifying
- * early-logout event is auto_approved (NO CL/salary penalty); only the notification stage
- * escalates (4th HR warning, 5th final, 6th+ escalation). LATE LOGIN is information-only and
- * EXEMPT — it is never counted, never auto_approved by the policy, never escalated, never
- * debits CL. Pre-effective dates keep the legacy 'submitted' behaviour. No attendance punch is
- * ever written. d365 + leave engine + notify are stubbed — no network.
+ * The monthly policy applies to EARLY LOGOUT ONLY. Under the CURRENT policy every early-logout
+ * event is created `manager_pending` (requires HR / Super Admin approval; NO CL/salary penalty).
+ * LATE LOGIN is information-only and EXEMPT — it is never counted, never approved by the policy,
+ * never escalated, never debits CL. Pre-effective dates keep the legacy 'submitted' behaviour.
+ * No attendance punch is ever written. d365 + leave engine + notify are stubbed — no network.
  */
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_DRY_RUN = 'true';
@@ -74,51 +73,43 @@ function stub({ priorByType = {}, shiftStart = '09:00', shiftEnd = '18:00', clRe
 // Early Logout (the policy-tracked type): leaving 17:00 against an 18:00 shift end = 1h early (valid).
 const mk = (over = {}) => ({ employeeId: 'E1', employeeName: 'V', date: NOV, actualTime: '17:00', reason: 'r', requestType: 'early_logout', ...over });
 
-// ── Early Logout: the monthly policy applies (revised — every event auto_approved) ──
-test('Early Logout 1st event (Nov) → auto_approved', async () => {
+// ── Early Logout: the current policy applies — every event → manager_pending (HR approval) ──
+test('Early Logout 1st event (Nov) → manager_pending', async () => {
   const s = stub({ priorByType: { early_logout: 0 } });
   const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
-  assert.strictEqual(s.creates[0].payload.hr_status, 'auto_approved');
+  assert.strictEqual(r.record.status, 'manager_pending');
+  assert.strictEqual(s.creates[0].payload.hr_status, 'manager_pending');
+  assert.strictEqual(s.creates[0].payload.hr_managerstatus, 'pending');
+  assert.match(r.warning, /pending HR approval/i);
 });
 
-test('Early Logout 2nd event → auto_approved', async () => {
+test('Early Logout 2nd event → manager_pending', async () => {
   stub({ priorByType: { early_logout: 1 } });
   const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
+  assert.strictEqual(r.record.status, 'manager_pending');
 });
 
-test('Early Logout 3rd event → auto_approved, NO escalation email, NO CL', async () => {
+test('Early Logout 3rd event → manager_pending, NO CL', async () => {
   const s = stub({ priorByType: { early_logout: 2 } });
   const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
-  assert.ok(!s.creates[0].payload.hr_managerstatus, 'no manager approval under the revised policy');
-  assert.strictEqual(r.warning, '', '1st–3rd: no warning email');
+  assert.strictEqual(r.record.status, 'manager_pending');
   assert.strictEqual(s.ledgerWrites.length, 0, 'never a CL debit');
 });
 
-test('Early Logout 4th event → auto_approved + HR warning, NEVER a CL/leave debit', async () => {
+test('Early Logout 4th event → manager_pending, NEVER a CL/leave debit', async () => {
   const s = stub({ priorByType: { early_logout: 3 }, clRemaining: 5 });
   const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
+  assert.strictEqual(r.record.status, 'manager_pending');
   assert.strictEqual(s.ledgerWrites.length, 0, 'NO CL deduction at the 4th event');
-  assert.match(r.warning, /HR warning/i);
 });
 
-test('Early Logout 5th event → auto_approved + FINAL warning, no CL', async () => {
-  const s = stub({ priorByType: { early_logout: 4 }, clRemaining: 0 });
-  const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
-  assert.strictEqual(s.ledgerWrites.length, 0);
-  assert.match(r.warning, /final warning/i);
-});
-
-test('Early Logout 6th event → auto_approved + HR/manager escalation, no CL', async () => {
-  const s = stub({ priorByType: { early_logout: 5 } });
-  const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
-  assert.strictEqual(s.ledgerWrites.length, 0);
-  assert.match(r.warning, /contact HR or your manager/i);
+test('Early Logout 5th/6th event → manager_pending, no CL', async () => {
+  for (const prior of [4, 5]) {
+    const s = stub({ priorByType: { early_logout: prior }, clRemaining: 0 });
+    const r = await lateLogin.create(mk());
+    assert.strictEqual(r.record.status, 'manager_pending');
+    assert.strictEqual(s.ledgerWrites.length, 0);
+  }
 });
 
 // ── Late Login: EXEMPT — always information-only 'submitted', never the policy ──
@@ -133,14 +124,14 @@ test('Late Login is EXEMPT: 1st/2nd/3rd/4th all → submitted, no warning, no CL
   }
 });
 
-test('Late Login and Early Logout: only Early Logout is counted/auto-approved', async () => {
-  // Late Login already has 5 this month → still 'submitted' (exempt). Early Logout 1st → auto_approved.
+test('Late Login and Early Logout: only Early Logout is policy-tracked', async () => {
+  // Late Login already has 5 this month → still 'submitted' (exempt). Early Logout 1st → manager_pending.
   let s = stub({ priorByType: { late_login: 5, early_logout: 0 } });
   const late = await lateLogin.create(mk({ requestType: 'late_login', actualTime: '09:30' }));
-  assert.strictEqual(late.record.status, 'submitted', 'Late Login is never auto_approved by the policy');
+  assert.strictEqual(late.record.status, 'submitted', 'Late Login is never policy-tracked');
   s = stub({ priorByType: { late_login: 5, early_logout: 0 } });
   const early = await lateLogin.create(mk({ requestType: 'early_logout', actualTime: '17:00' }));
-  assert.strictEqual(early.record.status, 'auto_approved', 'Early Logout is counted/auto-approved independently');
+  assert.strictEqual(early.record.status, 'manager_pending', 'Early Logout requires HR approval independently');
 });
 
 test('month boundary: an Oct 31 Early Logout is PRE-effective → legacy submitted (no policy)', async () => {
@@ -161,8 +152,7 @@ test('month boundary RESET (Early Logout): Nov has 5 qualifying, but a December 
   };
   const r = await lateLogin.create(mk({ date: '2026-12-05' }));
   assert.strictEqual(r.record.month, '2026-12');
-  assert.strictEqual(r.record.status, 'auto_approved');
-  assert.strictEqual(r.warning, '', 'the 1st event of the new month → no escalation email (count reset)');
+  assert.strictEqual(r.record.status, 'manager_pending');
   assert.strictEqual(s.ledgerWrites.length, 0, 'no CL at any count');
 });
 
@@ -177,29 +167,28 @@ test('NO CL is ever written, even at the 4th+ Early Logout and even if a legacy 
   const s = stub({ priorByType: { early_logout: 3 }, clRemaining: 5 });
   leaveEngine.readLedger = async () => [{ hr_reason: require('../src/services/permission-policy.service').clReason('early_logout', 'E1', NOV), hr_days: '-0.5' }];
   const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
+  assert.strictEqual(r.record.status, 'manager_pending');
   assert.strictEqual(s.ledgerWrites.length, 0, 'the policy never debits/reverses CL');
 });
 
-test('rejected/cancelled Early Logout events do NOT inflate the count: 2 qualifying + 1 rejected → 3rd (auto, no email), no CL', async () => {
+test('rejected/cancelled Early Logout events do NOT inflate the count: 2 qualifying + 1 rejected → still manager_pending, no CL', async () => {
   const s = stub({ clRemaining: 10 });
   d365.getList = async (entity, opts) => {
     const f = String(opts?.filter || '');
     if (entity === LATE && /hr_date eq/.test(f)) return { data: [] };
     if (entity === LATE && /hr_month eq/.test(f)) return { data: [
-      { hr_status: 'auto_approved' }, { hr_status: 'auto_approved' }, { hr_status: 'manager_rejected' },
+      { hr_status: 'manager_approved' }, { hr_status: 'manager_pending' }, { hr_status: 'manager_rejected' },
     ] };
     return { data: [] };
   };
   const r = await lateLogin.create(mk());
-  assert.strictEqual(r.record.status, 'auto_approved');
-  assert.strictEqual(r.warning, '', 'the 3rd has no escalation email; the rejected one did not push it to the 4th');
+  assert.strictEqual(r.record.status, 'manager_pending');
   assert.strictEqual(s.ledgerWrites.length, 0);
 });
 
 // ── Manager decision on a legacy manager_pending record (type-agnostic mechanics) ──
 test('managerDecision approve → manager_approved (counts); reject → manager_rejected (does not count)', async () => {
-  const row = { hr_lateloginid: 'REC1', hr_employeeid: 'E1', hr_employeename: 'V', hr_status: 'manager_pending', hr_requesttype: 'early_logout', hr_date: NOV };
+  const row = { hr_lateloginid: 'REC1', hr_employeeid: 'E1', hr_employeename: 'V', hr_status: 'manager_pending', hr_requesttype: 'early_logout', hr_date: NOV, '@odata.etag': 'W/"1"' };
   const updates = [];
   d365.getByIdOptional = async () => row;
   d365.update = async (_e, _id, patch) => { updates.push(patch); return {}; };

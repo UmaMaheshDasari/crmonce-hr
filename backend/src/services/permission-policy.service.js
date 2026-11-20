@@ -20,9 +20,16 @@ const leaveEngine = require('./leave-engine.service');
 // POLICY without touching callers. Kept as ONE source of truth — no duplicate config system.
 const POLICY = {
   effectiveFrom: process.env.PERMISSION_POLICY_EFFECTIVE_FROM || '2026-11-01',
-  // Revised policy (no financial/leave penalty): EVERY qualifying event is auto-approved; only
-  // the NOTIFICATION stage escalates. 1st–3rd: auto, no escalation email. 4th: HR warning. 5th:
-  // Super Admin final warning. 6th+: HR/manager escalation (repeated, email-idempotent).
+  // CURRENT policy (2026-11-20): EVERY Early Logout requires HR / Super Admin approval — a new
+  // request is created as `manager_pending` and is NOT auto-approved. HR Managers and Super
+  // Admins both approve/reject. Configurable via EARLY_LOGOUT_REQUIRE_APPROVAL (default ON).
+  //
+  // PREVIOUS policy (being replaced): every qualifying Early Logout was `auto_approved` with no
+  // leave/salary penalty; only the NOTIFICATION stage escalated (1st–3rd auto + confirmation
+  // email, 4th HR warning, 5th Super Admin final warning, 6th+ escalation). Before that, an even
+  // older tiering auto-approved the 1st–2nd, sent the 3rd to manager approval, and debited 0.5-day
+  // CL on the 4th+. None of those rewrote stored records — only NEW submissions take the new path.
+  requireApproval: process.env.EARLY_LOGOUT_REQUIRE_APPROVAL !== 'false',   // default ON
   hrWarningAt: 4,
   finalWarningAt: 5,
   escalationFrom: 6,
@@ -61,12 +68,14 @@ function stageFor(n) {
 /**
  * Decide the outcome for the Nth qualifying event (PURE). `priorQualifying` = how many
  * qualifying events the employee already has this month for this type (0-based); N = that + 1.
- * Under the revised policy EVERY event is auto-approved with NO leave/salary penalty; only the
- * notification `stage` escalates. Returns { n, outcome:'auto_approved', stage }.
+ * Current policy: every Early Logout requires HR approval → outcome `manager_pending` (unless
+ * EARLY_LOGOUT_REQUIRE_APPROVAL=false, which restores the previous auto-approve behaviour). The
+ * monthly `n`/`stage` are still computed for counting/audit. Returns { n, outcome, stage }.
  */
 function decide(priorQualifying) {
   const n = (Number(priorQualifying) || 0) + 1;
-  return { n, outcome: 'auto_approved', stage: stageFor(n) };
+  const outcome = POLICY.requireApproval ? STATUS.MANAGER_PENDING : STATUS.AUTO_APPROVED;
+  return { n, outcome, stage: stageFor(n) };
 }
 
 // Stable idempotency key for an event's CL debit — ONE debit per (type, employee, DATE) ever,

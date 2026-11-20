@@ -22,16 +22,16 @@ test('effectiveFor: Oct 31 2026 = NO, Nov 1 2026 = YES', () => {
 });
 
 // ── Tier decision (1st/2nd auto, 3rd manager, 4th+ deduct) ──
-test('decide: ALL auto_approved; stages at 4=hr_warning, 5=final_warning, 6+=escalation (no penalty)', () => {
-  assert.deepStrictEqual(PP.decide(0), { n: 1, outcome: 'auto_approved', stage: null });
-  assert.deepStrictEqual(PP.decide(1), { n: 2, outcome: 'auto_approved', stage: null });
-  assert.deepStrictEqual(PP.decide(2), { n: 3, outcome: 'auto_approved', stage: null });
-  assert.deepStrictEqual(PP.decide(3), { n: 4, outcome: 'auto_approved', stage: 'hr_warning' });
-  assert.deepStrictEqual(PP.decide(4), { n: 5, outcome: 'auto_approved', stage: 'final_warning' });
-  assert.deepStrictEqual(PP.decide(5), { n: 6, outcome: 'auto_approved', stage: 'escalation' });
-  assert.deepStrictEqual(PP.decide(9), { n: 10, outcome: 'auto_approved', stage: 'escalation' });
-  // No outcome is ever a CL deduction or manager approval under the revised policy.
-  for (let p = 0; p < 12; p++) assert.strictEqual(PP.decide(p).outcome, 'auto_approved');
+test('decide: every Early Logout → manager_pending (requires HR approval); count/stage preserved', () => {
+  assert.deepStrictEqual(PP.decide(0), { n: 1, outcome: 'manager_pending', stage: null });
+  assert.deepStrictEqual(PP.decide(1), { n: 2, outcome: 'manager_pending', stage: null });
+  assert.deepStrictEqual(PP.decide(2), { n: 3, outcome: 'manager_pending', stage: null });
+  assert.deepStrictEqual(PP.decide(3), { n: 4, outcome: 'manager_pending', stage: 'hr_warning' });
+  assert.deepStrictEqual(PP.decide(4), { n: 5, outcome: 'manager_pending', stage: 'final_warning' });
+  assert.deepStrictEqual(PP.decide(5), { n: 6, outcome: 'manager_pending', stage: 'escalation' });
+  assert.deepStrictEqual(PP.decide(9), { n: 10, outcome: 'manager_pending', stage: 'escalation' });
+  // No outcome is ever a CL deduction or an auto-approval under the current policy.
+  for (let p = 0; p < 12; p++) assert.strictEqual(PP.decide(p).outcome, 'manager_pending');
 });
 
 test('isQualifying: rejected 3rd + cancellations do NOT count; everything else does', () => {

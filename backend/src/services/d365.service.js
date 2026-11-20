@@ -288,15 +288,22 @@ class D365Service {
     });
   }
 
-  async update(entity, id, data) {
+  // Optional OPTIMISTIC CONCURRENCY: pass { ifMatch: row['@odata.etag'] } to make the PATCH
+  // conditional — Dataverse returns 412 Precondition Failed if the row changed since it was read
+  // (and never upserts). Without ifMatch the PATCH behaves exactly as before (plain update/upsert).
+  async update(entity, id, data, opts = {}) {
     await this._withSet(entity, async (seg) => {
       const headers = await this.getHeaders();
+      if (opts.ifMatch) headers['If-Match'] = opts.ifMatch;
       try {
         await axios.patch(`${this.baseUrl}/${seg}(${id})`, data, { headers });
       } catch (err) { throw this._enrich(err, `update ${seg}`); }
     });
     return this.getById(entity, id);
   }
+
+  // True when a conditional update failed its If-Match precondition (concurrent modification).
+  _isPreconditionFailed(err) { return err?.response?.status === 412; }
 
   async delete(entity, id) {
     return this._withSet(entity, async (seg) => {

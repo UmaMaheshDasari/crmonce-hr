@@ -1,7 +1,7 @@
 /**
  * Monthly permission-policy notifications (EARLY LOGOUT only; revised policy — no penalty).
  *   1st–3rd qualifying event:
- *     • employee SUBMITTED a request (requested:true)  → a normal confirmation email (no warning).
+ *     • employee SUBMITTED a request (requested:true)  → AUTO-APPROVED → NO email (silent).
  *     • NO request (punch-only, requested:false)       → a "late without a request" warning.
  *   4th → HR warning · 5th → Super Admin final warning · 6th+ → HR/manager escalation — ALWAYS.
  * The 1st–3rd emails are keyed by the EVENT DATE; 4th/5th per month; 6th+ per event count.
@@ -60,19 +60,14 @@ afterEach(() => { Object.assign(d365, { getByIdOptional: orig.gio, getList: orig
 // The policy notifier is exercised with EARLY LOGOUT (the only tiered type).
 const notify = (over) => lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Early Logout', requestType: 'early_logout', date: '2026-11-05', decision: PP.decide(0), requested: false, ...over });
 
-// ── 1st–3rd: confirmation when requested ─────────────────────────────────────
-test('Early Logout 1st/2nd/3rd WITH a request → confirmation email (no warning), keyed per event date', async () => {
+// ── 1st–3rd: AUTO-APPROVED with a request → NO email (silent) ────────────────
+test('Early Logout 1st/2nd/3rd WITH a request → auto-approved → NO email sent', async () => {
   for (const [prior, date] of [[0, '2026-11-03'], [1, '2026-11-10'], [2, '2026-11-18']]) {
     sent = [];
     await notify({ date, decision: PP.decide(prior), requested: true });
-    assert.strictEqual(sent.length, 1);
-    assert.strictEqual(sent[0].type, 'LATE_LOGIN_CONFIRM');
-    assert.strictEqual(sent[0].to, 'emp@crmonce.com');
-    assert.deepStrictEqual(sent[0].cc, ['info@crmonce.com'], 'confirmation CC = INFO mailbox only (§E)');
-    assert.strictEqual(sent[0].date, date, 'idempotency key is the EVENT date, not the month');
-    assert.match(sent[0].subject, /Recorded/i);
+    assert.strictEqual(sent.length, 0, 'auto-approved Early Logout must not send an approval/confirmation email');
   }
-  assert.strictEqual(ledgerWrites, 0, 'no CL/leave write at any confirmation');
+  assert.strictEqual(ledgerWrites, 0, 'no CL/leave write for an auto-approved request');
 });
 
 // ── 1st–3rd: no-request warning when NOT requested ───────────────────────────
@@ -131,7 +126,8 @@ test('6th and 7th use distinct per-count keys (no cross-event suppression)', asy
 
 test('missing employee mailbox → the email is attempted with a null recipient (ledger then skips); never throws', async () => {
   d365.getByIdOptional = async () => ({ hr_email: '', hr_hremployee1: 'Emp' });
-  await notify({ decision: PP.decide(0), requested: true });
+  // Use the no-request nudge (still emailed) since an auto-approved request is now silent.
+  await notify({ decision: PP.decide(0), requested: false });
   assert.strictEqual(sent[0].to, null);
 });
 
@@ -145,19 +141,23 @@ test('EXEMPT: notifyPolicyOutcome does NOTHING for late_login (no policy email a
 });
 
 // ── End-to-end wiring ────────────────────────────────────────────────────────
-test('create() Early Logout wires requested:true → the 1st event sends a CONFIRMATION', async () => {
+test('create() Early Logout → manager_pending + HR approval email (no auto-approved confirm)', async () => {
   d365.getByIdOptional = async (entity) => (entity === EMP
-    ? { hr_hremployeeid: 'E1', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00', hr_email: 'emp@crmonce.com', hr_hremployee1: 'Emp' } : {});
+    ? { hr_hremployeeid: 'E1', hr_shiftstarttime: '09:00', hr_shiftendtime: '18:00', hr_email: 'emp@crmonce.com', hr_hremployee1: 'Emp', hr_department: 'Eng', hr_employeecode: 'EMP1' } : {});
   d365.getList = async (entity, opts) => {
     const f = String(opts?.filter || '');
     if (entity === LATE && /hr_date eq/.test(f)) return { data: [] };       // dup guard → none
     if (entity === LATE && /hr_month eq/.test(f)) return { data: [] };      // 0 prior → 1st
+    if (entity === EMP) return { data: [{ hr_email: 'hr@crmonce.com' }] };  // role recipient queries
     return { data: [] };
   };
   d365.create = async () => ({ hr_lateloginid: 'REC1' });
-  await lateLogin.create({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', actualTime: '17:00', reason: 'r', requestType: 'early_logout' });
+  const r = await lateLogin.create({ employeeId: 'E1', employeeName: 'Emp', date: '2026-11-06', actualTime: '17:00', reason: 'r', requestType: 'early_logout' });
+  assert.strictEqual(r.record.status, 'manager_pending');
   await flushUntil(() => sent.length >= 1);
-  assert.strictEqual(sent[0].type, 'LATE_LOGIN_CONFIRM');
+  assert.strictEqual(sent.length, 1, 'one HR-approval email');
+  assert.strictEqual(sent[0].type, 'EARLY_LOGOUT_APPROVAL_REQUIRED', 'HR approval-required email, not an auto-approved confirm');
+  assert.ok(!sent.some(s => s.type === 'LATE_LOGIN_CONFIRM'), 'no auto-approved confirmation email');
   assert.strictEqual(ledgerWrites, 0);
 });
 
