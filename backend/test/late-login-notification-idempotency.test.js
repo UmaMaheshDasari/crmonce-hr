@@ -48,29 +48,31 @@ beforeEach(() => {
 });
 afterEach(() => { ledger.setStore(); Object.assign(d365, { getByIdOptional: orig.gio, getList: orig.gl }); Object.assign(notif, { sendEmail: orig.se, notifyUser: orig.nu, broadcast: orig.bc }); });
 
-const confirm1st = (date) => lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Early Logout', requestType: 'early_logout', date, decision: PP.decide(0), requested: true });
+// An auto-approved request (requested:true) is now SILENT, so idempotency/retry is exercised
+// via the still-sent per-event "no request" nudge (requested:false) — identical ledger keying.
+const nudge1st = (date) => lateLogin.notifyPolicyOutcome({ employeeId: 'E1', name: 'Emp', label: 'Early Logout', requestType: 'early_logout', date, decision: PP.decide(0), requested: false });
 
 test('a failed send is recorded failed (retryable), NOT sent', async () => {
   nextResults = [false];                                  // first attempt fails
-  await confirm1st('2026-11-05');
+  await nudge1st('2026-11-05');
   assert.strictEqual(sendCalls.length, 1);
-  assert.strictEqual(store.rows.get('E1|2026-11-05|LATE_LOGIN_CONFIRM'), 'failed', 'kept retryable, never false-"sent"');
+  assert.strictEqual(store.rows.get('E1|2026-11-05|LATE_LOGIN_NO_REQUEST'), 'failed', 'kept retryable, never false-"sent"');
 });
 
 test('retry after a failure sends exactly once more, then never duplicates', async () => {
   nextResults = [false, true];                            // fail, then succeed
-  await confirm1st('2026-11-05');                         // attempt 1 → failed
-  await confirm1st('2026-11-05');                         // attempt 2 → sent
-  await confirm1st('2026-11-05');                         // attempt 3 → suppressed (already sent)
-  await confirm1st('2026-11-05');                         // attempt 4 → suppressed
+  await nudge1st('2026-11-05');                           // attempt 1 → failed
+  await nudge1st('2026-11-05');                           // attempt 2 → sent
+  await nudge1st('2026-11-05');                           // attempt 3 → suppressed (already sent)
+  await nudge1st('2026-11-05');                           // attempt 4 → suppressed
   assert.strictEqual(sendCalls.length, 2, 'one failed + one successful delivery; no duplicate after success');
-  assert.strictEqual(store.rows.get('E1|2026-11-05|LATE_LOGIN_CONFIRM'), 'sent');
+  assert.strictEqual(store.rows.get('E1|2026-11-05|LATE_LOGIN_NO_REQUEST'), 'sent');
 });
 
 test('distinct events (different dates) each deliver — one is never suppressed by the other', async () => {
-  await confirm1st('2026-11-05');
-  await confirm1st('2026-11-12');
+  await nudge1st('2026-11-05');
+  await nudge1st('2026-11-12');
   assert.strictEqual(sendCalls.length, 2);
-  assert.strictEqual(store.rows.get('E1|2026-11-05|LATE_LOGIN_CONFIRM'), 'sent');
-  assert.strictEqual(store.rows.get('E1|2026-11-12|LATE_LOGIN_CONFIRM'), 'sent');
+  assert.strictEqual(store.rows.get('E1|2026-11-05|LATE_LOGIN_NO_REQUEST'), 'sent');
+  assert.strictEqual(store.rows.get('E1|2026-11-12|LATE_LOGIN_NO_REQUEST'), 'sent');
 });

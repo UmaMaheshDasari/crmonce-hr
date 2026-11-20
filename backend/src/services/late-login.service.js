@@ -472,10 +472,15 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
     if (policyActive) {
       const priorQualifying = await qualifyingCount(employeeId, month, requestType);
       decision = PP.decide(priorQualifying);
-      // Revised policy: EVERY qualifying event is auto-approved — NO leave or salary penalty is
-      // ever applied. Only the notification stage escalates (handled by notifyPolicyOutcome).
-      finalStatus = PP.STATUS.AUTO_APPROVED;
-      warning = policyWarningText(decision, label);
+      // Current policy: EVERY Early Logout requires HR / Super Admin approval → the record is
+      // created `manager_pending` (NOT auto-approved) and HR is emailed to decide. No leave or
+      // salary penalty is ever applied. (If EARLY_LOGOUT_REQUIRE_APPROVAL=false, decision.outcome
+      // falls back to auto_approved and the previous stage-based notifications apply.)
+      finalStatus = decision.outcome;
+      finalManagerStatus = finalStatus === PP.STATUS.MANAGER_PENDING ? 'pending' : '';
+      warning = finalStatus === PP.STATUS.MANAGER_PENDING
+        ? `Your ${label} request was submitted and is pending HR approval.`
+        : policyWarningText(decision, label);
     }
     const payloadInner = {
       hr_name: `${name || employeeId} · ${label} · ${ds}`.slice(0, 250),
@@ -504,10 +509,17 @@ async function create({ employeeId, employeeName, date, expectedTime, actualTime
   audit({ category: 'Attendance', type: 'latelogin_submitted', title: `${label} submitted`, name, meta: { date: ds, requestType, ip, status: payload.hr_status, policyEvent: decision?.n, outcome: decision?.outcome } });
 
   if (policyActive) {
-    // The employee SUBMITTED a request (requested:true): 1st–3rd send a normal confirmation (no
-    // "no-request" warning); 4th+ send the existing HR/Super Admin/escalation emails unchanged.
-    notifyPolicyOutcome({ employeeId, name, label, requestType, date: ds, status: payload.hr_status, decision, requested: true })
-      .catch(e => global.logger?.warn?.(`[late-login] policy notify error: ${e.message}`));
+    // Auto-approved Early Logout sends NO confirmation email (handled in notifyPolicyOutcome);
+    // only the 4th/5th/6th+ escalation WARNINGS are emailed. If a record ever lands in
+    // `manager_pending` (HR approval required — dormant under the current auto-approve policy),
+    // notify HR (TO) + Super Admin (CC) instead.
+    if (payload.hr_status === PP.STATUS.MANAGER_PENDING) {
+      notifyEarlyLogoutApprovalRequired({ employeeId, employeeName: name, requestType, date: ds, actualTime, reason, status: payload.hr_status, createdon: created?.createdon })
+        .catch(e => global.logger?.warn?.(`[late-login] approval-required notify error: ${e.message}`));
+    } else {
+      notifyPolicyOutcome({ employeeId, name, label, requestType, date: ds, status: payload.hr_status, decision, requested: true })
+        .catch(e => global.logger?.warn?.(`[late-login] policy notify error: ${e.message}`));
+    }
   } else if (!isEarly) {
     // Legacy (pre-effective) Late Login → the existing information-only HR email.
     emailLateLoginInfoToHR({ employeeId, employeeName: name, date: ds, expectedTime: shiftStart, actualTime, reason, remarks })
@@ -537,6 +549,81 @@ async function superAdminEmails() {
     });
     return (data || []).map(e => e.hr_email).filter(Boolean);
   } catch { return []; }
+}
+
+// HR Manager recipients = employees with the hr_manager ROLE only (config-free; the role query
+// IS the mechanism). Used as the TO for an HR-approval-required notice so HR managers are the
+// primary recipients and Super Admins can be CC'd separately. '' list on error.
+async function hrManagerEmails() {
+  try {
+    const { data } = await d365.getList(EMP, {
+      select: 'hr_email',
+      filter: `hr_role eq ${toValue('hr_role', 'hr_manager')} and hr_status eq ${toValue('hr_employee_status', 'active')}`,
+    });
+    return (data || []).map(e => e.hr_email).filter(Boolean);
+  } catch { return []; }
+}
+
+/**
+ * HR-APPROVAL-REQUIRED notification for an Early Logout that is in `manager_pending` status.
+ * TO = configured HR (hr_manager role) addresses, CC = Super Admin role addresses — both
+ * resolved by role query, never hardcoded. Idempotent per (employee, date) via the ledger.
+ * Best-effort (never throws): the request is already persisted before this runs, so an email
+ * failure never affects the stored request/approval state (spec §3 / scenario G).
+ *
+ * NOTE: under the current monthly policy EVERY qualifying Early Logout is auto-approved, so this
+ * path is dormant — it fires only for a record whose status is `manager_pending` (e.g. legacy
+ * rows). It intentionally does NOT change the auto-approval policy or convert auto-approved
+ * requests into HR-approval requests.
+ */
+async function notifyEarlyLogoutApprovalRequired(record = {}) {
+  try {
+    const employeeId = record.employeeId || record.hr_employeeid;
+    if (!employeeId) return;
+    const label = REQ_LABEL[record.requestType || record.hr_requesttype] || 'Early Logout';
+    const date = String(record.date || record.hr_date || '').slice(0, 10);
+    const emp = await getEmployee(employeeId);
+    const empName = record.employeeName || record.hr_employeename || emp?.hr_hremployee1 || 'Employee';
+    const department = emp?.hr_department || '—';
+    const empCode = emp?.hr_employeecode || emp?.hr_employeeid || employeeId;
+    const logoutTime = record.actualTime || record.hr_actualtime || '—';
+    const reason = record.reason || record.hr_reason || '—';
+    const appliedAt = record.createdOn || record.createdon
+      ? time.fmtDateTime?.(record.createdOn || record.createdon) || String(record.createdOn || record.createdon)
+      : time.fmtDate(date);
+    const status = record.status || record.hr_status || PP.STATUS.MANAGER_PENDING;
+    const prettyDate = time.fmtDate(date);
+
+    // TO = HR managers (fall back to Super Admins if no HR manager is configured); CC = Super Admins.
+    let to = await hrManagerEmails();
+    const admins = await superAdminEmails();
+    if (!to.length) to = admins;                                   // never leave TO empty
+    const cc = mergeCc([admins], { excludeTo: to, from: hrSender() });   // Super Admin in CC (minus any TO overlap)
+    if (!to.length) return;                                        // nobody to notify
+
+    const rows = [
+      ['Employee', `${esc(empName)} (${esc(empCode)})`],
+      ['Department', esc(department)],
+      ['Early Logout Date', esc(prettyDate)],
+      ['Requested Logout Time', esc(logoutTime)],
+      ['Reason', esc(reason)],
+      ['Applied On', esc(appliedAt)],
+      ['Current Status', esc(status)],
+    ].map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#6b7280;">${k}</td><td style="padding:4px 0;"><b>${v}</b></td></tr>`).join('');
+
+    const appBase = (process.env.APP_URL || process.env.FRONTEND_URL || process.env.BASE_URL || 'https://hr.crmonce.com').replace(/\/+$/, '');
+    const approvalLink = `${appBase}/early-logout`;
+    await ledger.sendOnce({
+      employeeId, date, type: 'EARLY_LOGOUT_APPROVAL_REQUIRED', to,
+      from: hrSender(), cc,
+      subject: `Early Logout Approval Required — ${empName} — ${prettyDate}`,
+      html: `<p>An Early Logout request requires HR approval.</p>`
+        + `<table style="border-collapse:collapse;font-size:14px;margin:8px 0;">${rows}</table>`
+        + `<p><a href="${approvalLink}">Open the Early Logout approvals in CRMONCE HRMS</a> to <b>approve or reject</b> this request. Approval is validated on the server and restricted to authorized HR Managers and Super Admins.</p>`
+        + `<p style="color:#6b7280;font-size:12px;">CRMONCE HRMS · ${label} · ${prettyDate}</p>`,
+      entity: 'attendance',
+    });
+  } catch (e) { global.logger?.warn?.(`[late-login] early-logout approval-required notify error: ${e.message}`); }
 }
 
 /**
@@ -580,14 +667,16 @@ async function notifyPolicyOutcome({ employeeId, name, label, requestType, date,
       // 1st–3rd qualifying event. Keyed by the EVENT DATE so the three distinct events are not
       // collapsed onto a single monthly key (spec §3). No HR/salary/leave action at this tier.
       if (requested) {
-        await send(eventDate, empTo, null, 'LATE_LOGIN_CONFIRM',
-          `${label} Recorded (${prettyDate})`,
-          `<p>Your ${label.toLowerCase()} request for <b>${prettyDate}</b> has been <b>recorded and auto-approved</b> under the monthly policy. No leave or salary is deducted.</p>`);
-      } else {
-        await send(eventDate, empTo, null, 'LATE_LOGIN_NO_REQUEST',
-          `${label} Without a Request (${prettyDate})`,
-          `<p>Our attendance system recorded a <b>late login on ${prettyDate}</b> for which <b>no ${label} request was submitted</b>. Please submit a ${label} request when you arrive late. This notice is for your information — no leave or salary is deducted.</p>`);
+        // Auto-approved request: send NO email. An Early Logout that the monthly policy
+        // auto-approves must not generate an approval/auto-approved confirmation email.
+        // (The 4th/5th/6th+ escalation warnings below are policy notifications, not approval
+        // confirmations, and are intentionally preserved.)
+        return;
       }
+      // No request was submitted for a detected event → information-only notice (unchanged).
+      await send(eventDate, empTo, null, 'LATE_LOGIN_NO_REQUEST',
+        `${label} Without a Request (${prettyDate})`,
+        `<p>Our attendance system recorded a <b>late login on ${prettyDate}</b> for which <b>no ${label} request was submitted</b>. Please submit a ${label} request when you arrive late. This notice is for your information — no leave or salary is deducted.</p>`);
       return;
     }
 
@@ -622,10 +711,30 @@ async function managerDecision(id, decision, by) {
   if (String(row.hr_status) !== PP.STATUS.MANAGER_PENDING) {
     const e = new Error('Only a request pending manager approval can be decided.'); e.status = 409; throw e;
   }
+  // MANDATORY optimistic concurrency: an approval/rejection is NEVER written without a valid
+  // ETag, so two approvers can never both commit. A missing/empty ETag means concurrency
+  // validation is unavailable → REFUSE the write (no record update, no audit, no employee email)
+  // with a retryable 503. Log the condition without any employee PII (record id only).
+  const etag = row['@odata.etag'];
+  if (!etag || !String(etag).trim()) {
+    global.logger?.error?.(`[late-login] managerDecision refused for ${id}: missing @odata.etag (concurrency validation unavailable)`);
+    const e = new Error('Approval could not be processed: concurrency validation is unavailable. Please retry.'); e.status = 503; throw e;
+  }
   const status = decision === 'approved' ? PP.STATUS.MANAGER_APPROVED : PP.STATUS.MANAGER_REJECTED;
-  await d365.update(LATE, id, { hr_status: status, hr_managerstatus: decision, hr_approvedby: by?.name || '', hr_approveddate: today() });
+  // Condition the write on the ETag. If another HR Manager / Super Admin decided between our read
+  // and write, the ETag changed → Dataverse returns 412, surfaced as 409 WITHOUT overwriting the
+  // first decision.
+  try {
+    await d365.update(LATE, id, { hr_status: status, hr_managerstatus: decision, hr_approvedby: by?.name || '', hr_approveddate: today() }, { ifMatch: etag });
+  } catch (err) {
+    if (d365._isPreconditionFailed?.(err) || err?.response?.status === 412 || err?.status === 412) {
+      const e = new Error('This request was already decided by another approver.'); e.status = 409; throw e;
+    }
+    throw err;
+  }
   const label = REQ_LABEL[row.hr_requesttype] || 'Late Login';
-  audit({ category: 'Attendance', type: `permission_${decision}`, title: `${label} ${decision}`, name: row.hr_employeename, meta: { by: by?.name, id } });
+  // Record approver ID + role (+ name/decision/timestamp on the record) for the audit trail.
+  audit({ category: 'Attendance', type: `permission_${decision}`, title: `${label} ${decision}`, name: row.hr_employeename, meta: { by: by?.name, byId: by?.id, byRole: by?.role, decision, id } });
   // Notify the employee of the decision (best-effort).
   (async () => {
     const emp = await getEmployee(row.hr_employeeid);
@@ -807,5 +916,5 @@ module.exports = {
   resolveShiftStart, resolveShiftEnd, resolveShiftWindow,
   evaluatePermission, permissionMinutes, rangeMessage, MAX_PERMISSION_MINUTES, LIMIT_MESSAGE,
   existingLateFor, recordPunchLateEvent, reversePunchAutoRecord, markAutoRecordIneligible, AUTO_CREATED_BY,
-  notifyPolicyOutcome,
+  notifyPolicyOutcome, notifyEarlyLogoutApprovalRequired, hrManagerEmails, superAdminEmails,
 };

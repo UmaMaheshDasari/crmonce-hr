@@ -128,8 +128,8 @@ function SubmitModal({ requestType, cfg, isHR, employees, policy, editRecord, on
             <p>Max <b>2 hours</b> per request; for longer, please apply for Leave.</p>
             {requestType === 'early_logout' && (
               <>
-                <p>Monthly policy (per type): first <b>2 auto-approved</b> · <b>3rd</b> needs manager approval · <b>4th+</b> deducts <b>0.5 day CL</b> (HR review if CL is insufficient; salary deduction deferred).</p>
-                {policy?.usage && <p className="font-semibold text-gray-700">This month: {policy.usage.used} used · {policy.usage.autoRemaining} automatic {policy.usage.autoRemaining === 1 ? 'permission' : 'permissions'} remaining.</p>}
+                <p>Every Early Logout request requires <b>HR / Admin approval</b>. No leave or salary is deducted.</p>
+                {policy?.usage && <p className="font-semibold text-gray-700">This month: {policy.usage.used} Early Logout {policy.usage.used === 1 ? 'request' : 'requests'} submitted.</p>}
               </>
             )}
           </div>
