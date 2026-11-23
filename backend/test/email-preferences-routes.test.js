@@ -110,3 +110,24 @@ test('GET /categories → list for any authenticated user', async () => {
   assert.strictEqual(r.status, 200);
   assert.ok(Array.isArray(r.body.data) && r.body.data.length > 0);
 });
+
+// Displayed Employee ID uses the authoritative hr_employeeid (same as My Profile), not GUID/employeecode.
+test('employee shape: displayed employeeId = hr_employeeid (authoritative), not hr_employeecode or GUID', async () => {
+  d365.getByIdOptional = async () => ({
+    hr_hremployeeid: 'GUID-xyz', hr_hremployee1: 'Vishwesh Boina',
+    hr_employeeid: 'EMP1039', hr_employeecode: '40', hr_etimecode: '40',
+  });
+  const r = await callRoute('GET', '/EMPX', HR);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.data.employee.employeeId, 'EMP1039', 'uses hr_employeeid, not the eTime/employeecode value');
+  assert.strictEqual(r.body.data.employee.id, 'GUID-xyz', 'GUID kept as internal id, never shown as the Employee ID');
+});
+
+test('employee shape: falls back hr_employeeid → hr_employeecode → hr_etimecode; empty when none', async () => {
+  d365.getByIdOptional = async () => ({ hr_hremployeeid: 'G1', hr_hremployee1: 'A', hr_employeecode: 'C7', hr_etimecode: '7' });
+  assert.strictEqual((await callRoute('GET', '/G1', HR)).body.data.employee.employeeId, 'C7', 'uses employeecode when hr_employeeid missing');
+  d365.getByIdOptional = async () => ({ hr_hremployeeid: 'G2', hr_hremployee1: 'B', hr_etimecode: '42' });
+  assert.strictEqual((await callRoute('GET', '/G2', HR)).body.data.employee.employeeId, '42', 'uses etimecode when both missing');
+  d365.getByIdOptional = async () => ({ hr_hremployeeid: 'G3', hr_hremployee1: 'C' });
+  assert.strictEqual((await callRoute('GET', '/G3', HR)).body.data.employee.employeeId, '', 'empty fallback when truly unset (no fabricated ID)');
+});
