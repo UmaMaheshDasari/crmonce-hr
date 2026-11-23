@@ -585,7 +585,7 @@ router.patch('/:id/verify', requireAnyPermission('employees.edit'), async (req, 
         `<p style="margin:0 0 4px;color:#374151;">Your recent profile update has been <strong>${label.toLowerCase()}</strong> by HR.</p>` +
         T.summaryCard('Details', [['Decision', T._esc(label)], ['Reason', T._esc(note || '—')]]) +
         T.banner('Please review the note, update your profile in the HR Portal and resubmit.');
-      sendEmail(email, `Profile Update ${label} — Action Needed`, T.layout({ title: 'Profile Update', preheader: `Your profile update was ${label.toLowerCase()}`, content }), { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [email], from: hrSender() }), meta: { type: 'profile_decision' } })   // §C: HR decision → HR sender, CC info@
+      sendEmail(email, `Profile Update ${label} — Action Needed`, T.layout({ title: 'Profile Update', preheader: `Your profile update was ${label.toLowerCase()}`, content }), { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [email], from: hrSender() }), employeeId: req.params.id, meta: { type: 'profile_decision' } })   // §C: HR decision → HR sender, CC info@; employeeId → category suppression
         .catch((e) => global.logger?.warn?.(`[profile] reject email failed: ${e.message}`));
     }
     res.json({ ...emp, _verifystatus: status });

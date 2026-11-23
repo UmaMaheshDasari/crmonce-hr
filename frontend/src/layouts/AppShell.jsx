@@ -12,7 +12,7 @@ import {
   Bars3Icon, XMarkIcon, ArrowRightOnRectangleIcon,
   CalendarDaysIcon, FlagIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, ChevronDownIcon, PencilSquareIcon,
   BuildingOffice2Icon, UserCircleIcon, ShieldCheckIcon, BanknotesIcon, TableCellsIcon, BoltIcon, ScaleIcon,
-  Squares2X2Icon, ArrowPathIcon, GiftIcon, XCircleIcon, ClipboardDocumentListIcon,
+  Squares2X2Icon, ArrowPathIcon, GiftIcon, XCircleIcon, ClipboardDocumentListIcon, EnvelopeIcon,
 } from '@heroicons/react/24/outline';
 
 // Grouped navigation. Standalone items have `to`; groups have `group` + `children`.
@@ -80,6 +80,7 @@ const NAV = [
       { to: '/import-export',    label: 'Import / Export',  icon: TableCellsIcon, roles: ['super_admin', 'hr_manager'] },
       { to: '/company-settings', label: 'Company Settings', icon: BuildingOffice2Icon, roles: ['super_admin'] },
       { to: '/audit-logs',       label: 'Audit Logs',       icon: ClipboardDocumentListIcon, permission: 'audit.view' },
+      { to: '/email-notifications', label: 'Email Notifications', icon: EnvelopeIcon, roles: ['super_admin', 'hr_manager'] },
     ],
   },
 ];

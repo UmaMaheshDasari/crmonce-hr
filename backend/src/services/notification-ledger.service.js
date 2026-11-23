@@ -179,7 +179,16 @@ async function _sendOnce({ employeeId, date, type, to, cc, subject, html, from, 
     claimId = c.id;
   }
 
-  const r = await notification.sendEmail(to, subject, html, { from, cc, attachments, meta: { type } });
+  // Pass employeeId so the central pipeline can apply this employee's category preferences.
+  const r = await notification.sendEmail(to, subject, html, { from, cc, attachments, employeeId, meta: { type } });
+  // Suppressed by preference → record 'suppressed' (NOT 'sent'), so re-enabling the category
+  // lets a later run deliver it; it is never a duplicate and never a failure.
+  if (r?.suppressed) {
+    const srec = { employeeId, date, type, status: 'suppressed', to, cc, subject, error: '', requestId, entity };
+    if (typeof store.finalize === 'function') await store.finalize(claimId, srec);
+    else await store.record(srec);
+    return { skipped: true, reason: 'category_disabled' };
+  }
   const ok = !!r?.success;
   const rec = { employeeId, date, type, status: ok ? 'sent' : 'failed', to, cc, subject, error: ok ? '' : (r?.error || 'send failed'), requestId, entity };
   // Record 'sent' ONLY after the email service accepted it (never before). The winner's

@@ -372,6 +372,7 @@ async function sendOne(type, emp, settings) {
       const r = await notif?.sendEmail?.(emp.email, subject, html, {
         from,
         cc: cc.length ? cc : undefined,
+        employeeId: emp.id,   // enables per-employee category suppression (birthday/anniversary)
         meta: { type: `celebration_${type}` },
       });
       emailStatus = r?.success ? 'sent' : 'failed';
