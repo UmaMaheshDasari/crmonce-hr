@@ -33,6 +33,23 @@ function isDuplicateKey(err) {
     || /0x80060892|0x80040237/i.test(String(code));
 }
 
+// A Dataverse SCHEMA error: the table or a column is not provisioned yet (e.g. the table shell
+// exists but hr_employeeid is missing → 0x80060888 "Could not find a property named ..."). This is
+// NOT an ordinary "no preference row" — it means storage is not ready. Reads fail OPEN (all
+// enabled); writes surface a clear, retryable error instead of a raw 400.
+function isSchemaError(err) {
+  const msg = err?.response?.data?.error?.message || err?.message || '';
+  const code = String(err?.response?.data?.error?.code || '');
+  return /Could not find a property named|does not exist|Resource not found|was not found|The entity with a name/i.test(msg)
+    || /0x80060888|0x80060893|0x8006088a/i.test(code);
+}
+// Safe log line (record id only; no employee PII beyond the GUID already in logs elsewhere).
+function logDataverse(where, err) {
+  const msg = err?.response?.data?.error?.message || err?.message || '';
+  const code = err?.response?.data?.error?.code || '';
+  global.logger?.warn?.(`[email-prefs] ${where}: Dataverse ${err?.response?.status || ''} ${code} ${msg}`.trim());
+}
+
 // Small read cache (per employee) so the send pipeline does not hit Dataverse on every email.
 const CACHE_TTL_MS = 60 * 1000;
 const cache = new Map();   // employeeId → { prefs, at }
@@ -63,7 +80,10 @@ async function getPreferences(employeeId) {
     }
     cache.set(String(employeeId), { prefs: { ...prefs }, at: Date.now() });
   } catch (e) {
-    global.logger?.warn?.(`[email-prefs] read failed for ${employeeId} (fail-open: all enabled): ${e.message}`);
+    // Distinguish a storage-not-provisioned SCHEMA error from an ordinary read failure, but
+    // fail OPEN (all enabled) in both cases so email delivery is never blocked.
+    if (isSchemaError(e)) logDataverse(`storage not provisioned for ${employeeId} — failing open (all enabled)`, e);
+    else logDataverse(`read failed for ${employeeId} — failing open (all enabled)`, e);
     return defaultPreferences();
   }
   return prefs;
@@ -103,33 +123,44 @@ async function setPreference(employeeId, category, enabled, actor = {}, employee
   if (!employeeId) { const e = new Error('employeeId required'); e.status = 400; throw e; }
   if (!isValidCategory(category)) { const e = new Error(`Unknown category: ${category}`); e.status = 400; throw e; }
   const val = enabled ? 'true' : 'false';
-  const existing = await findRow(employeeId, category);
   const patch = {
     hr_enabled: val,
     hr_changedby: actor?.name || '',
     hr_changedbyrole: actor?.role || '',
     hr_changedon: nowIso(),
   };
-  if (existing) {
-    await d365.update(PREF, existing.hr_emailpreferenceid, patch);   // update in place (no duplicate row)
-  } else {
-    try {
-      await d365.create(PREF, {
-        hr_name: `${employeeId}:${category}`.slice(0, 250),
-        hr_employeeid: String(employeeId),
-        hr_employeename: employeeName || '',
-        hr_category: category,
-        ...patch,
-      });
-    } catch (err) {
-      // A concurrent create won the race (the alternate key / a prior insert rejects the duplicate):
-      // re-read the now-existing row and UPDATE it, so (employee, category) stays unique atomically.
-      if (isDuplicateKey(err)) {
-        const again = await findRow(employeeId, category);
-        if (again) await d365.update(PREF, again.hr_emailpreferenceid, patch);
-        else throw err;
-      } else throw err;
+  try {
+    const existing = await findRow(employeeId, category);
+    if (existing) {
+      await d365.update(PREF, existing.hr_emailpreferenceid, patch);   // update in place (no duplicate row)
+    } else {
+      try {
+        await d365.create(PREF, {
+          hr_name: `${employeeId}:${category}`.slice(0, 250),
+          hr_employeeid: String(employeeId),
+          hr_employeename: employeeName || '',
+          hr_category: category,
+          ...patch,
+        });
+      } catch (err) {
+        // A concurrent create won the race (the alternate key / a prior insert rejects the duplicate):
+        // re-read the now-existing row and UPDATE it, so (employee, category) stays unique atomically.
+        if (isDuplicateKey(err)) {
+          const again = await findRow(employeeId, category);
+          if (again) await d365.update(PREF, again.hr_emailpreferenceid, patch);
+          else throw err;
+        } else throw err;
+      }
     }
+  } catch (err) {
+    // Storage not provisioned (table/columns missing) → a clear, RETRYABLE error, not a raw 400,
+    // and never a silent no-op. Auto-provisioning backfills the schema; a retry then succeeds.
+    if (isSchemaError(err)) {
+      logDataverse(`write failed — storage not provisioned (${employeeId}/${category})`, err);
+      const e = new Error('Email preferences storage is not fully provisioned yet. Please try again shortly.');
+      e.status = 503; throw e;
+    }
+    throw err;
   }
   invalidate(employeeId);
   audit({
