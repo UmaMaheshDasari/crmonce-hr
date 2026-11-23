@@ -131,18 +131,65 @@ test('schema error on read (missing hr_employeeid column) → fail-open, never a
   assert.ok(Object.values(prefs).every(v => v === true), 'all enabled when storage not provisioned');
 });
 
-// Schema error on WRITE → clear retryable 503 (not a raw 400, never silent)
-test('schema error on write → retryable 503, not a raw 400', async () => {
+// Schema error on WRITE that provisioning cannot fix → clear retryable 503 (not a raw 400, never
+// silent). AUTO_PROVISION=false disables the self-heal attempt so this isolates the 503 path.
+test('schema error on write (provisioning disabled) → retryable 503, not a raw 400', async () => {
   svc._clearCache();
-  d365.getListOptional = async () => {   // findRow hits the missing column
+  const prevAP = process.env.AUTO_PROVISION;
+  process.env.AUTO_PROVISION = 'false';
+  d365.getListOptional = async () => {   // findRow hits the missing column, every time
     const e = new Error("Could not find a property named 'hr_employeeid'.");
     e.response = { status: 400, data: { error: { code: '0x80060888', message: e.message } } };
     throw e;
   };
-  await assert.rejects(
-    () => svc.setPreference('E1', 'birthday', false, actor, 'Emp'),
-    (e) => e.status === 503,
-  );
+  try {
+    await assert.rejects(
+      () => svc.setPreference('E1', 'birthday', false, actor, 'Emp'),
+      (e) => e.status === 503,
+    );
+  } finally { if (prevAP === undefined) delete process.env.AUTO_PROVISION; else process.env.AUTO_PROVISION = prevAP; }
+});
+
+// SELF-HEAL: a write schema error triggers on-demand provisioning, then the retry succeeds.
+test('write schema error → on-demand provisioning + retry succeeds (self-heal)', async () => {
+  svc._clearCache();
+  const provModule = require('../src/services/provision-email-preferences');
+  const prevEnsure = provModule.ensureEmailPreferencesTable;
+  let provisioned = false;
+  provModule.ensureEmailPreferencesTable = async () => { provisioned = true; return { status: 'backfilled' }; };
+  // Before provisioning: findRow 400s (missing column). After provisioning: the normal in-memory store.
+  const memList = d365.getListOptional;
+  d365.getListOptional = async (entity, opts) => {
+    if (!provisioned) { const e = new Error("Could not find a property named 'hr_employeeid'."); e.response = { status: 400, data: { error: { code: '0x80060888', message: e.message } } }; throw e; }
+    return memList(entity, opts);
+  };
+  try {
+    await svc.setPreference('HEAL1', 'birthday', false, actor, 'Emp');   // first write fails → provision → retry
+    assert.strictEqual(provisioned, true, 'on-demand provisioning was invoked');
+    const row = rows.find(r => r.hr_employeeid === 'HEAL1' && r.hr_category === 'birthday');
+    assert.ok(row && row.hr_enabled === 'false', 'preference written on the retry (no 503)');
+  } finally { provModule.ensureEmailPreferencesTable = prevEnsure; }
+});
+
+// Provisioning cannot fix it → 503 after exactly ONE retry (no loop).
+test('write schema error + provisioning fails → 503 after exactly one retry (no loop)', async () => {
+  svc._clearCache();
+  const provModule = require('../src/services/provision-email-preferences');
+  const prevEnsure = provModule.ensureEmailPreferencesTable;
+  let provCalls = 0;
+  provModule.ensureEmailPreferencesTable = async () => { provCalls++; return { status: 'unavailable', reason: 'app user lacks customization privilege' }; };
+  let findCalls = 0;
+  d365.getListOptional = async () => {   // findRow always schema-errors
+    findCalls++;
+    const e = new Error("Could not find a property named 'hr_employeeid'.");
+    e.response = { status: 400, data: { error: { code: '0x80060888', message: e.message } } };
+    throw e;
+  };
+  try {
+    await assert.rejects(() => svc.setPreference('E1', 'birthday', false, actor, 'Emp'), (e) => e.status === 503);
+    assert.strictEqual(provCalls, 1, 'provisioning attempted exactly once');
+    assert.strictEqual(findCalls, 2, 'exactly one retry (two write attempts total) — no loop');
+  } finally { provModule.ensureEmailPreferencesTable = prevEnsure; }
 });
 
 // unknown category → always enabled (never suppressed)

@@ -73,6 +73,17 @@ router.get('/employees', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /_provision-status — READ-ONLY storage diagnostic (HR / Super Admin only) ──
+// Registered BEFORE '/:employeeId' so the literal path is not captured as an employeeId.
+// Performs only metadata/data GETs — no create/update/delete/provisioning.
+router.get('/_provision-status', async (req, res, next) => {
+  try {
+    if (!isHR(req.user)) return res.status(403).json({ error: 'Not authorized.' });
+    const status = await require('../../services/provision-email-preferences').inspectEmailPreferences();
+    res.json({ data: status });
+  } catch (err) { next(err); }
+});
+
 // ── GET /:employeeId — an employee's current category preferences ─────────────
 router.get('/:employeeId', async (req, res, next) => {
   try {
