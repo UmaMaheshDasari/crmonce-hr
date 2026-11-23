@@ -45,7 +45,11 @@ const ENTITY_BODY = {
   }],
 };
 
-const isExists = (m) => /already exists|duplicate|with the name|with a name|is not unique/i.test(m || '');
+// Dataverse signals "already there" with varied phrasing — crucially the ENTITY-create reply is
+// "Entities already exist: hr_EmailPreference." (plural noun, singular "exist"), so match
+// "already exist" WITH OR WITHOUT a trailing "s". Treating this as exists (not a fatal error) is
+// what lets an existing table proceed to idempotent column/alt-key BACKFILL instead of aborting.
+const isExists = (m) => /already exist|duplicate|with the name|with a name|is not unique/i.test(m || '');
 const isMissing = (m) => /Could not find|does not exist|Resource not found|was not found|404/i.test(m || '');
 const isLocked = (m) => /CustomizationLockException|customization is already running|another EntityCustomization|another customization/i.test(m || '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
