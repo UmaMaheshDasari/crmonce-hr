@@ -134,6 +134,15 @@ for (const [name, type, category] of [
   });
 }
 
+// Payroll "please apply for leave" reminder — explicit category=leave + employeeId.
+test('payroll leave reminder (explicit category=leave) — disabled → suppressed; enabled → delivered', async () => {
+  prefMap = { E1: { leave: false } };
+  const off = await notif.sendEmail('e1@crmonce.com', 'Please apply for leave', '<p>x</p>', { employeeId: 'E1', category: 'leave', meta: { type: 'leave_remind' } });
+  assert.strictEqual(off.suppressed, true, 'suppressed when employee disabled leave');
+  const on = await notif.sendEmail('e2@crmonce.com', 'Please apply for leave', '<p>x</p>', { employeeId: 'E2', category: 'leave', meta: { type: 'leave_remind' } });
+  assert.ok(!on.suppressed && on.success, 'delivered when leave enabled');
+});
+
 // I: bulk loop — disabled employee skipped, enabled employees receive (per-recipient)
 test('I: bulk per-employee loop → disabled recipient skipped, enabled recipients delivered', async () => {
   prefMap = { E_OFF: { birthday: false } };   // E_ON, E_ON2 default enabled

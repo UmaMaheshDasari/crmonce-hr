@@ -13,14 +13,16 @@ const express = require('express');
 const router = express.Router();
 const d365 = require('../../services/d365.service');
 const prefs = require('../../services/email-preferences.service');
-const { CATEGORIES } = require('../../services/email-categories');
+const { CATEGORIES, isAdminRole } = require('../../services/email-categories');
+const { toLabel } = require('../../services/picklist');
 
 const EMP = d365.constructor.entities.employee;
 const HR_ROLES = ['super_admin', 'hr_manager'];
 const isHR = (u) => HR_ROLES.includes(u?.role);
 const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
-const EMP_SELECT = 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_employeecode,hr_employeeid,_hr_manager_value,hr_status';
+const EMP_SELECT = 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_employeecode,hr_employeeid,_hr_manager_value,hr_status,hr_role';
 
+const roleOf = (e) => (e && e.hr_role != null ? (toLabel('hr_role', e.hr_role) || 'employee') : 'employee');
 const shape = (e) => ({
   id: e.hr_hremployeeid,
   name: e.hr_hremployee1 || '',
@@ -28,6 +30,8 @@ const shape = (e) => ({
   department: e.hr_department || '',
   email: e.hr_email || '',
   managerId: e._hr_manager_value || null,
+  role: roleOf(e),
+  isAdmin: isAdminRole(roleOf(e)),
 });
 
 async function getEmployee(id) {
@@ -75,7 +79,7 @@ router.get('/:employeeId', async (req, res, next) => {
     const { employeeId } = req.params;
     const emp = await getEmployee(employeeId);
     if (!canManage(req.user, employeeId, emp)) return res.status(403).json({ error: 'Not authorized to view this employee\'s preferences.' });
-    const preferences = await prefs.getPreferences(employeeId);
+    const preferences = await prefs.getPreferences(employeeId, emp ? { role: roleOf(emp) } : {});
     res.json({ data: { employee: emp ? shape(emp) : { id: employeeId }, categories: CATEGORIES, preferences } });
   } catch (err) { next(err); }
 });

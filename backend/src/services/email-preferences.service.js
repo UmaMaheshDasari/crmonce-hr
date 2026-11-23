@@ -12,11 +12,13 @@
  * email delivery. Writes are only reached from the authorized API, never from the send path.
  */
 const d365 = require('./d365.service');
-const { CATEGORY_KEYS, isValidCategory, defaultPreferences } = require('./email-categories');
+const { CATEGORY_KEYS, isValidCategory, defaultPreferences, defaultPreferencesFor, defaultEnabledFor } = require('./email-categories');
+const { toLabel } = require('./picklist');
 let activity; try { activity = require('./activity.service'); } catch (_) { activity = null; }
 const audit = (p) => { try { activity?.record?.(p); } catch (_) {} };
 
 const PREF = d365.constructor.entities.emailPreference;   // 'hr_emailpreferences'
+const EMP = d365.constructor.entities.employee;
 const SELECT = 'hr_emailpreferenceid,hr_employeeid,hr_employeename,hr_category,hr_enabled,hr_changedby,hr_changedbyrole,hr_changedon';
 const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
 const asBool = (v) => String(v) === 'true';
@@ -53,7 +55,49 @@ function logDataverse(where, err) {
 // Small read cache (per employee) so the send pipeline does not hit Dataverse on every email.
 const CACHE_TTL_MS = 60 * 1000;
 const cache = new Map();   // employeeId → { prefs, at }
-function invalidate(employeeId) { cache.delete(String(employeeId)); }
+const roleCache = new Map();   // employeeId → { role, at }
+function invalidate(employeeId) { cache.delete(String(employeeId)); roleCache.delete(String(employeeId)); }
+
+// The only roles this HRMS recognizes (hr_role picklist). Anything else is treated as unresolved.
+const KNOWN_ROLES = new Set(['employee', 'hr_manager', 'recruiter', 'super_admin']);
+
+/**
+ * Resolve an employee's VERIFIED role from the employee record (trusted server-side data — never a
+ * client-supplied role). Cached.
+ *
+ * SAFE BEHAVIOUR when the role cannot be reliably resolved (lookup error, missing hr_role, or an
+ * unknown/unmapped value): we LOG it (never silent) and FAIL OPEN to 'employee'. Failing open means
+ * routine reminders DEFAULT ON (delivered) for that recipient — it never wrongly SUPPRESSES mail,
+ * and operational emails are unaffected regardless (they carry no employeeId). The only consequence
+ * of an unresolved role is that the §2C admin routine-reminder exclusion is NOT applied to that
+ * recipient until their role resolves; a genuine admin would then receive a routine reminder rather
+ * than lose any email. The warning log surfaces the misconfiguration (e.g. a blank hr_role).
+ */
+async function resolveRole(employeeId) {
+  if (!employeeId) return 'employee';
+  const c = roleCache.get(String(employeeId));
+  if (c && Date.now() - c.at < CACHE_TTL_MS) return c.role;
+  try {
+    const e = await d365.getByIdOptional(EMP, employeeId, { select: 'hr_role' });
+    if (!e || e.hr_role == null || e.hr_role === '') {
+      global.logger?.warn?.(`[email-prefs] hr_role MISSING for ${employeeId} — admin exclusion not applied; failing open to 'employee'`);
+      roleCache.set(String(employeeId), { role: 'employee', at: Date.now() });
+      return 'employee';
+    }
+    const label = toLabel('hr_role', e.hr_role);
+    if (typeof label === 'string' && KNOWN_ROLES.has(label)) {
+      roleCache.set(String(employeeId), { role: label, at: Date.now() });
+      return label;
+    }
+    global.logger?.warn?.(`[email-prefs] UNKNOWN hr_role value (${JSON.stringify(e.hr_role)}) for ${employeeId} — admin exclusion not applied; failing open to 'employee'`);
+    roleCache.set(String(employeeId), { role: 'employee', at: Date.now() });
+    return 'employee';
+  } catch (e) {
+    // Do NOT cache a transient failure (so it is retried), and do NOT silently classify as employee.
+    global.logger?.warn?.(`[email-prefs] role lookup FAILED for ${employeeId} — admin exclusion not applied; failing open to 'employee': ${e.message}`);
+    return 'employee';
+  }
+}
 
 /** Raw rows for an employee (fail-open → [] on error). */
 async function readRows(employeeId) {
@@ -66,19 +110,23 @@ async function readRows(employeeId) {
 }
 
 /**
- * The full preference map for an employee: { categoryKey: boolean } for EVERY known category,
- * defaulting to enabled where no row exists. Fail-open (all enabled) on any error.
+ * The full preference map for an employee: { categoryKey: boolean } for EVERY known category.
+ * Base defaults are ROLE-AWARE (admins' routine-personal categories default OFF, §2C); explicit
+ * preference rows (incl. an admin's "personal exception" ON) override the defaults. Fail-open
+ * (all enabled) on any error. `opts.role` may be supplied by a caller that already has it.
  */
-async function getPreferences(employeeId) {
-  const prefs = defaultPreferences();
-  if (!employeeId) return prefs;
+async function getPreferences(employeeId, opts = {}) {
+  if (!employeeId) return defaultPreferences();
   const cached = cache.get(String(employeeId));
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return { ...cached.prefs };
   try {
+    const role = opts.role || await resolveRole(employeeId);
+    const prefs = defaultPreferencesFor(role);   // role-aware defaults (admin routine → OFF)
     for (const r of await readRows(employeeId)) {
       if (isValidCategory(r.hr_category)) prefs[r.hr_category] = asBool(r.hr_enabled);
     }
     cache.set(String(employeeId), { prefs: { ...prefs }, at: Date.now() });
+    return prefs;
   } catch (e) {
     // Distinguish a storage-not-provisioned SCHEMA error from an ordinary read failure, but
     // fail OPEN (all enabled) in both cases so email delivery is never blocked.
@@ -86,7 +134,6 @@ async function getPreferences(employeeId) {
     else logDataverse(`read failed for ${employeeId} — failing open (all enabled)`, e);
     return defaultPreferences();
   }
-  return prefs;
 }
 
 /**
@@ -181,9 +228,13 @@ async function setPreferences(employeeId, changes = {}, actor = {}, employeeName
   return getPreferences(employeeId);
 }
 
-/** Reset an employee to the default (ALL categories enabled). Audited. */
+/**
+ * Reset an employee to their ROLE DEFAULTS. A normal employee → all categories enabled (§2B); an
+ * HR Manager / Super Admin → routine-personal categories OFF, the rest ON (§2C). Audited.
+ */
 async function resetToDefaults(employeeId, actor = {}, employeeName = '') {
-  const changes = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, true]));
+  const role = await resolveRole(employeeId);
+  const changes = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, defaultEnabledFor(k, role)]));
   await setPreferences(employeeId, changes, actor, employeeName);
   audit({
     category: 'Settings', type: 'email_pref_reset',
@@ -196,5 +247,6 @@ async function resetToDefaults(employeeId, actor = {}, employeeName = '') {
 
 module.exports = {
   getPreferences, isCategoryEnabled, setPreference, setPreferences, resetToDefaults,
-  _invalidate: invalidate, _clearCache: () => cache.clear(),
+  resolveRole,
+  _invalidate: invalidate, _clearCache: () => { cache.clear(); roleCache.clear(); },
 };

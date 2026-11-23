@@ -16,9 +16,11 @@ const PREF = d365.constructor.entities.emailPreference;
 
 let orig, rows, creates, updates;
 beforeEach(() => {
-  orig = { glo: d365.getListOptional, cr: d365.create, up: d365.update };
+  orig = { glo: d365.getListOptional, cr: d365.create, up: d365.update, gio: d365.getByIdOptional };
   rows = []; creates = 0; updates = 0;
   svc._clearCache();
+  // Employee role lookup → plain employee (so defaults are all-ON for these tests).
+  d365.getByIdOptional = async () => ({ hr_role: null });
   // In-memory table: filter supports hr_employeeid [and hr_category].
   d365.getListOptional = async (entity, { filter } = {}) => {
     if (entity !== PREF) return { data: [] };
@@ -31,7 +33,7 @@ beforeEach(() => {
   d365.create = async (entity, payload) => { creates++; const id = `P${rows.length + 1}`; rows.push({ hr_emailpreferenceid: id, ...payload }); return { hr_emailpreferenceid: id }; };
   d365.update = async (entity, id, patch) => { updates++; const r = rows.find(x => x.hr_emailpreferenceid === id); if (r) Object.assign(r, patch); return {}; };
 });
-afterEach(() => { Object.assign(d365, { getListOptional: orig.glo, create: orig.cr, update: orig.up }); svc._clearCache(); });
+afterEach(() => { Object.assign(d365, { getListOptional: orig.glo, create: orig.cr, update: orig.up, getByIdOptional: orig.gio }); svc._clearCache(); });
 
 const actor = { id: 'HR1', name: 'HR One', role: 'hr_manager' };
 
