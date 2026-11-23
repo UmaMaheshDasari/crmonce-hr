@@ -74,6 +74,15 @@ async function createSchema(log) {
   catch (e) { const m = e.response?.data?.error?.message || e.message; if (!isExists(m)) log?.warn?.(`[provision] email-pref alt key: ${m}`); }
 }
 
+// Required data columns (logical names) — hr_emailpreferenceid + hr_name are auto/primary.
+const REQUIRED_COLUMNS = ['hr_employeeid', 'hr_employeename', 'hr_category', 'hr_enabled', 'hr_changedby', 'hr_changedbyrole', 'hr_changedon'];
+const ALT_KEY_SCHEMA = 'hr_EmployeeCategoryKey';
+
+// Last provisioning outcome (for the read-only diagnostic). No secrets — status + trimmed reason.
+let lastProvisionResult = null;
+const remember = (r) => { lastProvisionResult = { status: r.status, reason: r.reason ? String(r.reason).slice(0, 300) : undefined, at: new Date().toISOString() }; return r; };
+const getLastProvisionResult = () => lastProvisionResult;
+
 async function ensureEmailPreferencesTable(log = console, opts = {}) {
   const { retry = false, retryIntervalMs = 30000, retryTimeoutMs = 10 * 60 * 1000 } = opts;
   // Reachability probe only (NOT a decision to skip): if Dataverse is unreachable for a reason
@@ -87,20 +96,79 @@ async function ensureEmailPreferencesTable(log = console, opts = {}) {
   catch (e) {
     const m = e.response?.data?.error?.message || e.message;
     if (isMissing(m)) { existed = false; }
-    else { log?.warn?.(`[provision] email-pref probe inconclusive (${m}); skipping`); return { status: 'unavailable', reason: m }; }
+    else { log?.warn?.(`[provision] email-pref probe inconclusive (${m}); skipping`); return remember({ status: 'unavailable', reason: m }); }
   }
   const started = Date.now();
   for (;;) {
-    try { await createSchema(log); log?.info?.(`[provision] hr_emailpreferences ready (${existed ? 'backfilled' : 'created'})`); return { status: existed ? 'backfilled' : 'created' }; }
+    try { await createSchema(log); log?.info?.(`[provision] hr_emailpreferences ready (${existed ? 'backfilled' : 'created'})`); return remember({ status: existed ? 'backfilled' : 'created' }); }
     catch (e) {
       if (e.locked && retry && Date.now() - started + retryIntervalMs <= retryTimeoutMs) {
         log?.warn?.(`[provision] email-pref: Dataverse locked — retrying in ${retryIntervalMs / 1000}s`);
         await sleep(retryIntervalMs); continue;
       }
       log?.warn?.(`[provision] could not ensure hr_emailpreferences schema: ${e.message}`);
-      return { status: e.locked ? 'locked' : 'unavailable', reason: e.message };
+      return remember({ status: e.locked ? 'locked' : 'unavailable', reason: e.message });
     }
   }
 }
 
-module.exports = { ensureEmailPreferencesTable, ENTITY_SET, ENTITY_LOGICAL, COLUMNS };
+// Sanitized error summary — status code + Dataverse error code + a trimmed message. NEVER
+// includes tokens, connection strings, headers or employee data.
+function sanitizeErr(e) {
+  return {
+    httpStatus: e?.response?.status || null,
+    code: e?.response?.data?.error?.code || null,
+    message: String(e?.response?.data?.error?.message || e?.message || '').slice(0, 300),
+  };
+}
+async function getMeta(path) { const headers = await d365.getHeaders(); return axios.get(`${d365.baseUrl}/${path}`, { headers }); }
+
+/**
+ * READ-ONLY diagnostic of the hr_emailpreference storage. Performs only GETs (never create/update/
+ * delete/provision). Returns one of: READY | TABLE_MISSING | COLUMNS_MISSING | ALTERNATE_KEY_MISSING
+ * | ALTERNATE_KEY_NOT_ACTIVE | PERMISSION_OR_METADATA_ACCESS_ERROR | UNKNOWN_ERROR, with sanitized
+ * details. A bare entity shell is NOT reported READY — columns and an ACTIVE alt key are required.
+ */
+async function inspectEmailPreferences() {
+  const result = {
+    status: 'UNKNOWN_ERROR',
+    table: false,
+    columns: { required: REQUIRED_COLUMNS.slice(), present: [], missing: [] },
+    alternateKey: { schema: ALT_KEY_SCHEMA, exists: false, active: false, indexStatus: null },
+    autoProvision: process.env.AUTO_PROVISION !== 'false',
+    lastProvision: getLastProvisionResult(),
+  };
+  // 1) Data-plane probe — does the table exist at all?
+  try { await d365.getList(ENTITY_SET, { top: 1 }); result.table = true; }
+  catch (e) {
+    const m = e.response?.data?.error?.message || e.message;
+    if (isMissing(m)) { result.status = 'TABLE_MISSING'; return result; }
+    result.status = 'PERMISSION_OR_METADATA_ACCESS_ERROR'; result.error = sanitizeErr(e); return result;
+  }
+  // 2) Columns via metadata.
+  try {
+    const { data } = await getMeta(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Attributes?$select=LogicalName`);
+    const have = new Set((data.value || []).map((a) => a.LogicalName));
+    result.columns.present = REQUIRED_COLUMNS.filter((c) => have.has(c));
+    result.columns.missing = REQUIRED_COLUMNS.filter((c) => !have.has(c));
+    if (result.columns.missing.length) { result.status = 'COLUMNS_MISSING'; return result; }
+  } catch (e) { result.status = 'PERMISSION_OR_METADATA_ACCESS_ERROR'; result.error = sanitizeErr(e); return result; }
+  // 3) Alternate key existence + activation.
+  try {
+    const { data } = await getMeta(`EntityDefinitions(LogicalName='${ENTITY_LOGICAL}')/Keys?$select=SchemaName,EntityKeyIndexStatus,KeyAttributes`);
+    const keys = data.value || [];
+    const key = keys.find((k) => k.SchemaName === ALT_KEY_SCHEMA) || keys[0];
+    if (!key) { result.status = 'ALTERNATE_KEY_MISSING'; return result; }
+    result.alternateKey.exists = true;
+    result.alternateKey.indexStatus = key.EntityKeyIndexStatus != null ? String(key.EntityKeyIndexStatus) : null;
+    result.alternateKey.active = result.alternateKey.indexStatus === 'Active';
+    if (!result.alternateKey.active) { result.status = 'ALTERNATE_KEY_NOT_ACTIVE'; return result; }
+  } catch (e) { result.status = 'PERMISSION_OR_METADATA_ACCESS_ERROR'; result.error = sanitizeErr(e); return result; }
+  result.status = 'READY';
+  return result;
+}
+
+module.exports = {
+  ensureEmailPreferencesTable, inspectEmailPreferences, getLastProvisionResult,
+  ENTITY_SET, ENTITY_LOGICAL, COLUMNS, REQUIRED_COLUMNS, ALT_KEY_SCHEMA,
+};

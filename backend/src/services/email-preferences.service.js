@@ -162,9 +162,34 @@ async function findRow(employeeId, category) {
 }
 
 /**
+ * One upsert attempt for (employee, category): update in place if a row exists, else create;
+ * a concurrent-create conflict (alt key / prior insert) is caught and converted to an update so
+ * the pair stays unique atomically. Throws the raw error otherwise (the caller classifies it).
+ */
+async function writeOnce(employeeId, category, patch, employeeName) {
+  const existing = await findRow(employeeId, category);
+  if (existing) { await d365.update(PREF, existing.hr_emailpreferenceid, patch); return; }
+  try {
+    await d365.create(PREF, {
+      hr_name: `${employeeId}:${category}`.slice(0, 250),
+      hr_employeeid: String(employeeId),
+      hr_employeename: employeeName || '',
+      hr_category: category,
+      ...patch,
+    });
+  } catch (err) {
+    if (isDuplicateKey(err)) {
+      const again = await findRow(employeeId, category);
+      if (again) await d365.update(PREF, again.hr_emailpreferenceid, patch);
+      else throw err;
+    } else throw err;
+  }
+}
+
+/**
  * Upsert ONE (employee, category) preference — enforces uniqueness (update if a row exists,
- * else create), records who/when/role, writes an audit entry, and invalidates the cache.
- * Throws on a hard write failure (surfaced by the API as 500); the SEND path never calls this.
+ * else create), records who/when/role, writes an audit entry, and invalidates the cache. On a
+ * schema error it self-heals via on-demand provisioning + one retry, else surfaces a 503.
  */
 async function setPreference(employeeId, category, enabled, actor = {}, employeeName = '') {
   if (!employeeId) { const e = new Error('employeeId required'); e.status = 400; throw e; }
@@ -177,37 +202,32 @@ async function setPreference(employeeId, category, enabled, actor = {}, employee
     hr_changedon: nowIso(),
   };
   try {
-    const existing = await findRow(employeeId, category);
-    if (existing) {
-      await d365.update(PREF, existing.hr_emailpreferenceid, patch);   // update in place (no duplicate row)
-    } else {
-      try {
-        await d365.create(PREF, {
-          hr_name: `${employeeId}:${category}`.slice(0, 250),
-          hr_employeeid: String(employeeId),
-          hr_employeename: employeeName || '',
-          hr_category: category,
-          ...patch,
-        });
-      } catch (err) {
-        // A concurrent create won the race (the alternate key / a prior insert rejects the duplicate):
-        // re-read the now-existing row and UPDATE it, so (employee, category) stays unique atomically.
-        if (isDuplicateKey(err)) {
-          const again = await findRow(employeeId, category);
-          if (again) await d365.update(PREF, again.hr_emailpreferenceid, patch);
-          else throw err;
-        } else throw err;
-      }
-    }
+    await writeOnce(employeeId, category, patch, employeeName);
   } catch (err) {
-    // Storage not provisioned (table/columns missing) → a clear, RETRYABLE error, not a raw 400,
-    // and never a silent no-op. Auto-provisioning backfills the schema; a retry then succeeds.
-    if (isSchemaError(err)) {
-      logDataverse(`write failed — storage not provisioned (${employeeId}/${category})`, err);
-      const e = new Error('Email preferences storage is not fully provisioned yet. Please try again shortly.');
-      e.status = 503; throw e;
+    if (!isSchemaError(err)) throw err;
+    // Storage not provisioned yet (table/columns missing) — GET masks this via fail-open, so a
+    // save is the first operation that actually needs a writable table. SELF-HEAL: run the app's
+    // OWN on-demand provisioning (the same idempotent backfill it runs at boot, using the
+    // backend's existing app-user rights — NOT a manual production schema change) and retry once.
+    logDataverse(`write failed — attempting on-demand provisioning + retry (${employeeId}/${category})`, err);
+    let provision = { status: 'skipped' };
+    if (process.env.AUTO_PROVISION !== 'false') {
+      try { provision = await require('./provision-email-preferences').ensureEmailPreferencesTable(global.logger || console); }
+      catch (pe) { logDataverse('on-demand provisioning threw', pe); provision = { status: 'error', reason: pe.message }; }
     }
-    throw err;
+    try {
+      await writeOnce(employeeId, category, patch, employeeName);
+    } catch (err2) {
+      if (isSchemaError(err2)) {
+        // Still failing after provisioning → genuinely unprovisionable (e.g. the app user lacks
+        // customization rights). Surface a clear, retryable error; the real Dataverse detail +
+        // provisioning outcome are logged (never swallowed), never leaked to the client.
+        logDataverse(`write STILL failing after provisioning (status=${provision.status}) (${employeeId}/${category})`, err2);
+        const e = new Error('Email preferences storage is not fully provisioned yet. Please try again shortly.');
+        e.status = 503; throw e;
+      }
+      throw err2;
+    }
   }
   invalidate(employeeId);
   audit({
