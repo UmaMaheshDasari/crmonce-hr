@@ -15,18 +15,22 @@ const d365 = require('../../services/d365.service');
 const prefs = require('../../services/email-preferences.service');
 const { CATEGORIES, isAdminRole } = require('../../services/email-categories');
 const { toLabel } = require('../../services/picklist');
+// The ONE canonical business Employee ID resolver used across the app (My Profile, Employee list,
+// request emails): hr_employeeid → hr_employeecode → hr_etimecode. Reused here so the displayed ID
+// matches every employee's profile exactly — never the Dataverse GUID, never a guessed value.
+const { employeeIdOf } = require('../../services/request-notify.service');
 
 const EMP = d365.constructor.entities.employee;
 const HR_ROLES = ['super_admin', 'hr_manager'];
 const isHR = (u) => HR_ROLES.includes(u?.role);
 const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
-const EMP_SELECT = 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_employeecode,hr_employeeid,_hr_manager_value,hr_status,hr_role';
+const EMP_SELECT = 'hr_hremployeeid,hr_hremployee1,hr_email,hr_department,hr_employeecode,hr_employeeid,hr_etimecode,_hr_manager_value,hr_status,hr_role';
 
 const roleOf = (e) => (e && e.hr_role != null ? (toLabel('hr_role', e.hr_role) || 'employee') : 'employee');
 const shape = (e) => ({
   id: e.hr_hremployeeid,
   name: e.hr_hremployee1 || '',
-  employeeId: e.hr_employeecode || e.hr_employeeid || '',
+  employeeId: employeeIdOf(e),   // authoritative business ID (same source as My Profile); '' if truly unset
   department: e.hr_department || '',
   email: e.hr_email || '',
   managerId: e._hr_manager_value || null,
