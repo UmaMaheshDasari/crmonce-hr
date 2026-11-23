@@ -76,20 +76,28 @@ async function createSchema(log) {
 
 async function ensureEmailPreferencesTable(log = console, opts = {}) {
   const { retry = false, retryIntervalMs = 30000, retryTimeoutMs = 10 * 60 * 1000 } = opts;
-  try { await d365.getList(ENTITY_SET, { top: 1 }); return { status: 'exists' }; }
+  // Reachability probe only (NOT a decision to skip): if Dataverse is unreachable for a reason
+  // OTHER than the table being missing, skip quietly. Otherwise ALWAYS run createSchema, which is
+  // fully idempotent — it creates the entity if absent and BACKFILLS any missing columns / the
+  // alternate key on an already-existing (possibly partially-provisioned) table. This repairs the
+  // "entity created but columns missing → 0x80060888 'Could not find a property named hr_employeeid'"
+  // state that a plain "exists → return" check would never fix.
+  let existed = true;
+  try { await d365.getList(ENTITY_SET, { top: 1 }); }
   catch (e) {
     const m = e.response?.data?.error?.message || e.message;
-    if (!isMissing(m)) { log?.warn?.(`[provision] email-pref probe inconclusive (${m}); skipping`); return { status: 'unavailable', reason: m }; }
+    if (isMissing(m)) { existed = false; }
+    else { log?.warn?.(`[provision] email-pref probe inconclusive (${m}); skipping`); return { status: 'unavailable', reason: m }; }
   }
   const started = Date.now();
   for (;;) {
-    try { await createSchema(log); log?.info?.('[provision] hr_emailpreferences ready'); return { status: 'created' }; }
+    try { await createSchema(log); log?.info?.(`[provision] hr_emailpreferences ready (${existed ? 'backfilled' : 'created'})`); return { status: existed ? 'backfilled' : 'created' }; }
     catch (e) {
       if (e.locked && retry && Date.now() - started + retryIntervalMs <= retryTimeoutMs) {
         log?.warn?.(`[provision] email-pref: Dataverse locked — retrying in ${retryIntervalMs / 1000}s`);
         await sleep(retryIntervalMs); continue;
       }
-      log?.warn?.(`[provision] could not auto-create hr_emailpreferences: ${e.message}`);
+      log?.warn?.(`[provision] could not ensure hr_emailpreferences schema: ${e.message}`);
       return { status: e.locked ? 'locked' : 'unavailable', reason: e.message };
     }
   }

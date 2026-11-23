@@ -116,6 +116,33 @@ test('O: preference lookup failure → fail-open (treated as enabled)', async ()
   assert.ok(Object.values(prefs).every(v => v === true), 'getPreferences fail-open all enabled');
 });
 
+// Schema error (table/columns not provisioned, 0x80060888) → read fails OPEN (all enabled)
+test('schema error on read (missing hr_employeeid column) → fail-open, never a crash', async () => {
+  svc._clearCache();
+  d365.getListOptional = async () => {
+    const e = new Error("Could not find a property named 'hr_employeeid' on type 'Microsoft.Dynamics.CRM.hr_emailpreference'.");
+    e.response = { status: 400, data: { error: { code: '0x80060888', message: e.message } } };
+    throw e;
+  };
+  assert.strictEqual(await svc.isCategoryEnabled('E1', 'birthday'), true, 'fail-open on schema error');
+  const prefs = await svc.getPreferences('E1');
+  assert.ok(Object.values(prefs).every(v => v === true), 'all enabled when storage not provisioned');
+});
+
+// Schema error on WRITE → clear retryable 503 (not a raw 400, never silent)
+test('schema error on write → retryable 503, not a raw 400', async () => {
+  svc._clearCache();
+  d365.getListOptional = async () => {   // findRow hits the missing column
+    const e = new Error("Could not find a property named 'hr_employeeid'.");
+    e.response = { status: 400, data: { error: { code: '0x80060888', message: e.message } } };
+    throw e;
+  };
+  await assert.rejects(
+    () => svc.setPreference('E1', 'birthday', false, actor, 'Emp'),
+    (e) => e.status === 503,
+  );
+});
+
 // unknown category → always enabled (never suppressed)
 test('unknown/empty category or employee → enabled (never suppressed)', async () => {
   assert.strictEqual(await svc.isCategoryEnabled('E1', 'nonexistent'), true);
