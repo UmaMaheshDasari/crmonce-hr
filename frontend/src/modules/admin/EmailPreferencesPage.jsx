@@ -133,6 +133,11 @@ export default function EmailPreferencesPage() {
               <div className="mb-4 pb-4 border-b border-gray-100">
                 <h2 className="text-base font-bold text-gray-900">{selectedEmp?.name || 'Employee'}</h2>
                 <p className="text-xs text-gray-400">{[selectedEmp?.employeeId, selectedEmp?.department].filter(Boolean).join(' · ') || '—'}</p>
+                {selectedEmp?.isAdmin && (
+                  <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                    Administrative user: routine personal reminders (Attendance, Reminders) are <b>off by default</b>. Turning one on here is a personal exception. Operational approval emails are always delivered and are not controlled here.
+                  </p>
+                )}
               </div>
               <div className="space-y-3">
                 {categories.map(c => {

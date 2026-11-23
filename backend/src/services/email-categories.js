@@ -27,9 +27,36 @@ const CATEGORIES = [
 const CATEGORY_KEYS = CATEGORIES.map((c) => c.key);
 const isValidCategory = (key) => CATEGORY_KEYS.includes(String(key || ''));
 
-// Default for every employee: ALL categories enabled (preserves existing email behaviour).
+// Administrative roles whose ROUTINE PERSONAL reminders are suppressed by default (§2C): HR
+// Managers and Super Admins are administrative users and should not receive routine
+// employee-action nudges addressed to them personally — unless they opt in (a "personal
+// exception" = an explicit enabled preference row). This NEVER affects OPERATIONAL emails
+// (approval requests etc.), which are uncategorized / not keyed to the admin's employeeId and so
+// are never evaluated here.
+const ADMIN_ROLES = new Set(['super_admin', 'hr_manager']);
+
+// The routine personal-reminder categories that default OFF for admins. These are the daily/
+// missing-punch/late/early attendance nudges and the profile/passport completion reminders.
+// Decisions, payslips, celebrations, performance and "other" stay ON by default for everyone.
+const ROUTINE_PERSONAL_CATEGORIES = new Set(['attendance', 'reminders']);
+
+const isAdminRole = (role) => ADMIN_ROLES.has(String(role || ''));
+const isRoutinePersonal = (category) => ROUTINE_PERSONAL_CATEGORIES.has(String(category || ''));
+
+/** Default enabled state for a category given the recipient's role (before explicit overrides). */
+function defaultEnabledFor(category, role) {
+  if (isAdminRole(role) && isRoutinePersonal(category)) return false;   // §2C: admin routine → OFF
+  return true;                                                          // everything else → ON
+}
+
+// Default for a NORMAL employee: ALL categories enabled (preserves existing email behaviour).
 function defaultPreferences() {
   return Object.fromEntries(CATEGORY_KEYS.map((k) => [k, true]));
+}
+
+/** Role-aware default map (admins get routine-personal categories OFF). */
+function defaultPreferencesFor(role) {
+  return Object.fromEntries(CATEGORY_KEYS.map((k) => [k, defaultEnabledFor(k, role)]));
 }
 
 /**
@@ -66,4 +93,8 @@ function categoryForType(type) {
   return null;   // uncategorized → always delivered
 }
 
-module.exports = { CATEGORIES, CATEGORY_KEYS, isValidCategory, defaultPreferences, categoryForType };
+module.exports = {
+  CATEGORIES, CATEGORY_KEYS, isValidCategory, defaultPreferences, categoryForType,
+  ADMIN_ROLES, ROUTINE_PERSONAL_CATEGORIES, isAdminRole, isRoutinePersonal,
+  defaultEnabledFor, defaultPreferencesFor,
+};

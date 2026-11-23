@@ -427,7 +427,7 @@ payrollRouter.post('/remind-leave', requireAnyPermission('payroll.process'), asy
     const emp = await d365.getByIdOptional(E.employee, employeeId, { select: 'hr_hremployee1,hr_email' });
     const monthLabel = req.body.month ? `${req.body.month}/${req.body.year || ''}` : 'the current month';
     try { notifyUser(employeeId, 'leave:reminder', { message: `Please apply leave for your absent days in ${monthLabel} — payroll is being processed.` }); } catch {}
-    if (emp?.hr_email) await sendEmail(emp.hr_email, 'Please apply for leave', `<p>Hi ${emp.hr_hremployee1 || ''},</p><p>Our records show absent days in ${monthLabel} without an approved leave request. Please apply for leave so your attendance and payroll reflect it correctly.</p><p>Regards,<br/>CRMONCE HR Team</p>`);
+    if (emp?.hr_email) await sendEmail(emp.hr_email, 'Please apply for leave', `<p>Hi ${emp.hr_hremployee1 || ''},</p><p>Our records show absent days in ${monthLabel} without an approved leave request. Please apply for leave so your attendance and payroll reflect it correctly.</p><p>Regards,<br/>CRMONCE HR Team</p>`, { employeeId, category: 'leave', meta: { type: 'leave_remind' } });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
