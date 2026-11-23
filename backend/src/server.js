@@ -145,6 +145,7 @@ app.use('/api/celebrations', authenticateToken, require('./modules/celebrations/
 app.use('/api/requests',    authenticateToken, require('./modules/shared/requests.routes'));
 app.use('/api/audit',       authenticateToken, require('./modules/audit/audit.routes'));
 app.use('/api/roles',       authenticateToken, require('./modules/roles/roles.routes'));
+app.use('/api/email-preferences', authenticateToken, require('./modules/settings/email-preferences.routes'));
 
 // ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.url} not found` }));
@@ -197,6 +198,9 @@ server.listen(PORT, () => {
     require('./services/provision-attendance-request')
       .ensureAttendanceRequestTable(logger)
       .catch(err => logger.warn(`[provision] attendance-request setup skipped: ${err.message}`));
+    require('./services/provision-email-preferences')
+      .ensureEmailPreferencesTable(logger, { retry: true })
+      .catch(err => logger.warn(`[provision] email-preferences setup skipped: ${err.message}`));
     require('./services/provision-holiday')
       .ensureHolidayTable(logger)
       .catch(err => logger.warn(`[provision] holiday setup skipped: ${err.message}`));

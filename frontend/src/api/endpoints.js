@@ -345,3 +345,12 @@ export const auditApi = {
   list: (params) => api.get('/audit', { params }),                         // audit.view
   export: (params) => api.get('/audit/export', { params, responseType: 'blob' }), // audit.export
 };
+
+// ── Email Notification Preferences (per-employee, per-category opt-out) ──
+export const emailPrefApi = {
+  categories: () => api.get('/email-preferences/categories'),
+  employees: (q) => api.get('/email-preferences/employees', { params: q ? { q } : {} }),
+  get: (employeeId) => api.get(`/email-preferences/${employeeId}`),
+  update: (employeeId, preferences) => api.put(`/email-preferences/${employeeId}`, { preferences }),
+  reset: (employeeId) => api.post(`/email-preferences/${employeeId}/reset`),
+};

@@ -358,7 +358,7 @@ async function emailDecisionToEmployee({ type, employeeId, decision, approver, a
     // manager (they were already notified at submission). CC is dropped if it equals the
     // employee's own address (mergeCc) so the employee is never double-listed.
     const ccList = mergeCc([decisionCc], { excludeTo: [emp.hr_email], from });
-    const r = await sendEmail(emp.hr_email, subject, html, { from, cc: ccList, attachments, meta: { type: `${type}_decision` } });
+    const r = await sendEmail(emp.hr_email, subject, html, { from, cc: ccList, attachments, employeeId, meta: { type: `${type}_decision` } });
     global.logger?.[r?.success ? 'info' : 'error'](
       `${cfg.title} decision email FROM ${from} → ${emp.hr_email} (cc: ${ccList.join(', ') || 'none'}): ${r?.success ? 'sent' : (r?.error || 'failed')}`);
   } catch (err) {

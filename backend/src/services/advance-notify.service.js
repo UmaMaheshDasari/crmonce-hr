@@ -13,11 +13,13 @@ const requestNotify = require('./request-notify.service');
 const EMP = d365.constructor.entities.employee;
 const inr = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
 
-async function emailTo(email, subject, title, contentHtml, from) {
+// `employeeId` is passed ONLY for an employee-directed email (decision); the approver/HR
+// notification (notifyRequested) omits it and is never suppressed (operational).
+async function emailTo(email, subject, title, contentHtml, from, employeeId) {
   if (!email || isPlaceholder(email)) return { success: false };
   const sender = from || GRAPH_SENDER;
   const cc = mergeCc([infoSender()], { excludeTo: [email], from: sender });   // §E: CC info@ (dropped when the sender IS info@)
-  return sendEmail(email, subject, T.layout({ title, preheader: title, content: contentHtml }), { from: sender, cc, meta: { type: 'advance' } }).catch(() => ({ success: false }));
+  return sendEmail(email, subject, T.layout({ title, preheader: title, content: contentHtml }), { from: sender, cc, employeeId, meta: { type: 'advance' } }).catch(() => ({ success: false }));
 }
 
 /** Employee applied → notify HR approvers (in-app + email) + activity. */
@@ -56,7 +58,7 @@ async function notifyDecision({ advance, decision, approver }) {
         : `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Your advance salary request of ${amount} has been <strong>rejected</strong>.</p>` +
           T.banner(advance.remarks ? `Reason: ${T._esc(advance.remarks)}` : 'Please contact HR for details.', 'warn');
       // §B: HR approval/rejection emails come FROM the configured HR mailbox.
-      await emailTo(emp.hr_email, `Advance Salary ${approved ? 'Approved' : 'Rejected'} — ${amount}`, `Advance Salary ${approved ? 'Approved' : 'Rejected'}`, content, hrSender());
+      await emailTo(emp.hr_email, `Advance Salary ${approved ? 'Approved' : 'Rejected'} — ${amount}`, `Advance Salary ${approved ? 'Approved' : 'Rejected'}`, content, hrSender(), advance.employeeId);
     }
   } catch (e) { global.logger?.error?.(`notifyDecision failed: ${e.message}`); }
 }

@@ -347,6 +347,7 @@ class D365Service {
     leaveOpeningAudit: 'hr_leaveopeningaudits',   // Edit-audit trail for opening-balance changes
     lateLogin:   'hr_latelogins',                 // Late Login requests (manager → HR approval; attendance stays Present)
     shiftHistory: 'hr_shifthistories',            // Effective-dated shift assignments per employee (attendance resolves shift by date)
+    emailPreference: 'hr_emailpreferences',       // Per-employee, per-category automated-email notification preferences
   };
 }
 

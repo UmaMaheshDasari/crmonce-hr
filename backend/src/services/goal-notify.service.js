@@ -138,7 +138,7 @@ async function notifyGoalAssigned({ goal, assigner, employeeId }) {
       });
 
       const r = await sendWithRetry(toEmail, subject, html, {
-        from, cc: audit.cc, meta: { type: 'goal_assigned' },
+        from, cc: audit.cc, employeeId, meta: { type: 'goal_assigned' },
       });
       audit.emailSent = !!r?.success;
       audit.emailSentTime = r?.success ? new Date().toISOString() : null;
@@ -197,7 +197,7 @@ async function notifyGoalReassigned({ goal, assigner, oldEmployeeId, newEmployee
             `<p style="margin:0 0 12px;font-size:15px;color:#111827;">Hello ${T._esc(emp.hr_hremployee1 || 'there')},</p>` +
             `<p style="margin:0 0 4px;color:#374151;">The goal <strong>${T._esc(title)}</strong> previously assigned to you has been re-assigned by ${T._esc(by)}. No further action is needed from you.</p>` +
             T.banner('If you believe this is a mistake, please contact HR.');
-          await sendEmail(emp.hr_email, `Goal Re-assigned — ${title}`, T.layout({ title: 'Goal Re-assigned', preheader: 'A goal was reassigned', content }), { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [emp.hr_email], from: hrSender() }), meta: { type: 'goal_reassigned' } });   // §E: HR-owned → HR sender, CC info@
+          await sendEmail(emp.hr_email, `Goal Re-assigned — ${title}`, T.layout({ title: 'Goal Re-assigned', preheader: 'A goal was reassigned', content }), { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [emp.hr_email], from: hrSender() }), employeeId: emp.hr_hremployeeid, meta: { type: 'goal_reassigned' } });   // §E: HR-owned → HR sender, CC info@
         }
       } catch (e) { global.logger?.warn?.(`[goal] old-assignee notify failed: ${e.message}`); }
     }

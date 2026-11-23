@@ -26,7 +26,7 @@ const broadcast = (ev, p) => { try { notif?.broadcast?.(ev, p); } catch (_) {} }
 async function emailEmployee(employeeId, subject, html) {
   try {
     const e = await d365.getById(EMP, employeeId, { select: 'hr_email,hr_hremployee1' });
-    if (e?.hr_email) await notif?.sendEmail?.(e.hr_email, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [e.hr_email], from: hrSender() }), meta: { type: 'comp_off' } });
+    if (e?.hr_email) await notif?.sendEmail?.(e.hr_email, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [e.hr_email], from: hrSender() }), employeeId, meta: { type: 'comp_off' } });
   } catch (err) { global.logger?.warn?.(`[comp-off] email skipped: ${err.message}`); }
 }
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };

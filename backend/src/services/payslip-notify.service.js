@@ -47,6 +47,7 @@ async function emailPayslip({ payroll, employee, company }) {
     const safeName = String(employee.hr_hremployee1 || 'Employee').replace(/\s+/g, '_');
     const r = await sendEmail(to, subject, html, {
       from,
+      employeeId: employee?.hr_hremployeeid,   // per-employee payroll category suppression
       attachments: [{ name: `Payslip_${safeName}_${my.replace(/\s+/g, '_')}.pdf`, contentType: 'application/pdf', contentBytes: pdf.toString('base64') }],
       meta: { type: 'payslip' },
     });

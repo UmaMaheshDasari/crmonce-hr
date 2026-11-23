@@ -33,7 +33,9 @@ const notifyUser = (id, ev, p) => { try { notif?.notifyUser?.(id, ev, p); } catc
 const broadcast = (ev, p) => { try { notif?.broadcast?.(ev, p); } catch (_) {} };
 // §B/§E: Historical Attendance emails (submit-to-HR + approve/reject/more-info decisions) all
 // route from the configured HR mailbox.
-async function sendEmail(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }), meta: { type: 'hist_attendance' } }); } catch (e) { global.logger?.warn?.(`[hist-attendance] email skipped: ${e.message}`); } }
+// `employeeId` is passed ONLY for the employee decision email (category suppression applies);
+// the submit-to-HR notification omits it and is never suppressed (operational).
+async function sendEmail(to, subject, html, employeeId) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }), employeeId, meta: { type: 'hist_attendance' } }); } catch (e) { global.logger?.warn?.(`[hist-attendance] email skipped: ${e.message}`); } }
 
 const SELECT = 'hr_histattendanceid,hr_employeeid,hr_employeename,hr_date,hr_month,hr_intime,hr_outtime,hr_reason,hr_comments,hr_attachmentid,hr_status,hr_approvedby,hr_approveddate,hr_approvercomment,hr_oldstatus,hr_newstatus,createdon';
 // Core columns the list + approval flow REQUIRE (id, scoping, status, ordering) — always present.
@@ -283,7 +285,7 @@ async function emailEmployee(emp, row, action, comment, extra = {}) {
     : action === 'rejected'
       ? `<p>Your Historical Attendance request for <b>${row.hr_date}</b> has been <b>rejected</b>.</p>`
       : `<p>Your Historical Attendance request for <b>${row.hr_date}</b> needs more information. Please review and resubmit.</p>`;
-  await sendEmail(emp?.hr_email, subj, `<p>Hi ${emp?.hr_hremployee1 || row.hr_employeename || ''},</p>${body}${comment ? `<p><b>HR comment:</b> ${comment}</p>` : ''}`);
+  await sendEmail(emp?.hr_email, subj, `<p>Hi ${emp?.hr_hremployee1 || row.hr_employeename || ''},</p>${body}${comment ? `<p><b>HR comment:</b> ${comment}</p>` : ''}`, emp?.hr_hremployeeid || row.hr_employeeid);
 }
 
 async function summary({ employeeId, month } = {}) {

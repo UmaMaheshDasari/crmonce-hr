@@ -66,7 +66,9 @@ async function getAudit({ type, id }) {
 // §B/§E: request-lifecycle emails (resubmit, cancellation request, HR cancellation decisions
 // across Leave / Late Login / Attendance Correction / Comp Off / Document Verification) route
 // from the configured HR mailbox.
-async function email(to, subject, html) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }), meta: { type: 'lifecycle' } }); } catch (e) { global.logger?.warn?.(`[lifecycle] email skipped: ${e.message}`); } }
+// `employeeId` is passed ONLY for an employee-directed lifecycle email (so category suppression
+// applies to that person); manager/HR operational notifications omit it and are never suppressed.
+async function email(to, subject, html, employeeId) { try { if (to && notif?.sendEmail) await notif.sendEmail(to, subject, html, { from: hrSender(), cc: mergeCc([infoSender()], { excludeTo: [to], from: hrSender() }), employeeId, meta: { type: 'lifecycle' } }); } catch (e) { global.logger?.warn?.(`[lifecycle] email skipped: ${e.message}`); } }
 function ping(ids, event, payload) { try { for (const id of ids || []) notif?.notifyUser?.(id, event, payload); notif?.broadcast?.(event, payload); } catch (_) {} }
 async function notifyMany(recipients, event, subject, html, payload) {
   const emails = [...new Set((recipients?.emails || []).filter(Boolean))];
@@ -214,7 +216,7 @@ async function notifyEmployeeCancellation(v, id, action, remarks) {
   try { if (v.adapter.employeeContact) emp = await v.adapter.employeeContact(v.raw) || {}; } catch (_) {}
   const subj = `${v.adapter.label} cancellation ${action}`;
   const html = `<p>Your request to cancel a ${v.adapter.label} request${v.summary ? ` (${v.summary})` : ''} has been <b>${action}</b>.</p>${remarks ? `<p><b>Remarks:</b> ${remarks}</p>` : ''}`;
-  if (emp.email) await email(emp.email, subj, html);
+  if (emp.email) await email(emp.email, subj, html, v.ownerId);   // employee-directed → category suppression applies
   ping([v.ownerId], `request:cancellation_${action}`, { type: v.adapter.type, id });
 }
 

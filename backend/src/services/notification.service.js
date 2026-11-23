@@ -124,6 +124,25 @@ const isDryRun = () => process.env.EMAIL_DRY_RUN === 'true';
  * Best-effort: never throws; returns { success } (+ error/dryRun/request).
  */
 async function sendEmail(to, subject, html, opts = {}) {
+  // ── Centralized category suppression (employee-wise email notification preferences) ──
+  // If this email is tagged with a category (explicit opts.category, else derived from
+  // opts.meta.type) AND it is directed at a specific employee (opts.employeeId), suppress it
+  // when that employee has the category disabled. FAIL-OPEN: any lookup error → send normally.
+  // Uncategorized / operational mail (no category, or no employeeId, e.g. approval requests to
+  // HR) is never suppressed, so HR/Super Admin recipients are always preserved.
+  try {
+    const emailPrefs = require('./email-preferences.service');
+    const { categoryForType } = require('./email-categories');
+    const category = opts.category || categoryForType(opts.meta?.type);
+    if (category && opts.employeeId) {
+      const enabled = await emailPrefs.isCategoryEnabled(opts.employeeId, category);
+      if (!enabled) {
+        global.logger?.info?.(`EMAIL_AUDIT ${JSON.stringify({ to, subject, type: opts.meta?.type || 'generic', category, status: 'suppressed_pref', employeeId: opts.employeeId, at: new Date().toISOString() })}`);
+        return { success: true, suppressed: true, category };
+      }
+    }
+  } catch (e) { global.logger?.warn?.(`[email] preference check failed (fail-open, sending): ${e.message}`); }
+
   const req = buildSendMailRequest({ from: opts.from, to, cc: opts.cc, subject, html, replyTo: opts.replyTo, attachments: opts.attachments, saveToSentItems: opts.saveToSentItems });
   try {
     if (req.body.message.toRecipients.length === 0) {

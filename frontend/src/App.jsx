@@ -49,6 +49,7 @@ import HRVerificationPage from './modules/employees/HRVerificationPage';
 import UsersPage from './modules/admin/UsersPage';
 import RolesPermissionsPage from './modules/admin/RolesPermissionsPage';
 import AuditLogsPage from './modules/admin/AuditLogsPage';
+import EmailPreferencesPage from './modules/admin/EmailPreferencesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 300000, refetchOnWindowFocus: false } },
@@ -143,6 +144,7 @@ function AppRoutes() {
         <Route path="users" element={<ProtectedRoute permission="users.view"><UsersPage /></ProtectedRoute>} />
         <Route path="roles-permissions" element={<ProtectedRoute permission="roles.view"><RolesPermissionsPage /></ProtectedRoute>} />
         <Route path="audit-logs" element={<ProtectedRoute permission="audit.view"><AuditLogsPage /></ProtectedRoute>} />
+        <Route path="email-notifications" element={<EmailPreferencesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
